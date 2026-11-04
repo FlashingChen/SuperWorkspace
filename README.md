@@ -4,7 +4,7 @@
 <h1 align="center">SuperWorkspace</h1>
 <p align="center"><b>从录屏到成片，在一个工作台完成。</b></p>
 <p align="center">录制与粗剪 · 可选 AI 动效 · 本地字幕 · 多段拼装</p>
-<p align="center"><code>macOS 14+</code> &nbsp; <code>Swift 6</code> &nbsp; <code>SwiftUI</code> &nbsp; <code>Source available</code></p>
+<p align="center"><code>macOS 14+</code> &nbsp; <code>Swift 6</code> &nbsp; <code>SwiftUI</code> &nbsp; <code>MIT</code></p>
 <p align="center">
   <a href="#开始使用">开始使用</a> ·
   <a href="#工作流程">工作流程</a> ·
@@ -130,4 +130,4 @@ python3 scripts/audit-public.py
 
 ## 许可证与致谢
 
-本仓库当前仅公开源码，尚未额外授予使用、修改或再分发许可，详见 [许可声明](LICENSE)。录制与粗剪基于 [DogSC](https://github.com/laogou717/dogsc)，其源码以固定版本在构建时获取；打包时保留原始 MIT 许可证与字体许可。完整依赖说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+本仓库代码采用 [MIT License](LICENSE)。录制与粗剪基于 [DogSC](https://github.com/laogou717/dogsc)，其源码以固定版本在构建时获取；打包时保留原始 MIT 许可证与字体许可。完整依赖说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
