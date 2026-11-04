@@ -25,6 +25,16 @@ final class SettingsStore: ObservableObject {
     @AppStorage("aiMotionExtraArgs") var aiMotionExtraArgs: String = ""
     @AppStorage("whisperModelPath") var whisperModelPath: String = ""
     @AppStorage("whisperLanguage") var whisperLanguage: String = "zh"
+    @AppStorage("transcriptAICorrection") var transcriptAICorrection = true
+
+    func transcriptCorrectionConfiguration() -> TranscriptCorrectionConfiguration? {
+        guard transcriptAICorrection else { return nil }
+        let launch = resolvedLaunchPath()
+        return TranscriptCorrectionConfiguration(launchPath: launch,
+            arguments: TranscriptCorrectionConfiguration.arguments(
+                isPi: selectedAgent == .pi || selectedAgent == .deepseek || URL(fileURLWithPath: launch).lastPathComponent == "pi",
+                deepSeekModel: selectedAgent == .deepseek ? deepseekMotionModel.trimmingCharacters(in: .whitespacesAndNewlines) : nil))
+    }
 
     var selectedAgent: MotionAgent { MotionAgent(rawValue: aiMotionAgent) ?? .automatic }
 

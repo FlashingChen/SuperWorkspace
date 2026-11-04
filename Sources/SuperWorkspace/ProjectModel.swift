@@ -14,6 +14,8 @@ struct Material: Identifiable, Codable, Equatable {
     var exportError: String?
     var motionError: String?
     var transcriptError: String?
+    var transcriptWarning: String?
+    var subtitleLayoutVersion: Int?
     var subtitles: [TranscriptSegment] = []
     var sourceName = "source.mp4"
 

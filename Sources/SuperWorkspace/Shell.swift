@@ -8,6 +8,7 @@ enum Shell {
         _ launchPath: String,
         arguments: [String],
         workingDirectory: URL? = nil,
+        timeout: TimeInterval? = nil,
         onLine: @escaping @Sendable (String) -> Void = { _ in }
     ) async throws -> String {
         let process = Process()
@@ -27,9 +28,13 @@ enum Shell {
         }
 
         try process.run()
+        let startedAt = Date()
         do {
             while process.isRunning {
                 try Task.checkCancellation()
+                if let timeout, Date().timeIntervalSince(startedAt) >= timeout {
+                    throw ShellError.exitStatus(-1, "任务超时，请重试。")
+                }
                 try await Task.sleep(for: .milliseconds(150))
             }
         } catch {

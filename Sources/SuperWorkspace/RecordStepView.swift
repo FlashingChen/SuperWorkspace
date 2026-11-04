@@ -78,11 +78,14 @@ struct RecordStepView: View {
                                     if let error = material.exportError ?? material.motionError ?? material.transcriptError {
                                         Text(error).font(.caption).foregroundStyle(palette.danger).textSelection(.enabled)
                                     }
+                                    if let warning = material.transcriptWarning {
+                                        Text(warning).font(.caption).foregroundStyle(palette.warning).textSelection(.enabled)
+                                    }
                                     HStack {
                                         if material.motionState == .failed {
                                             Button("重试动效") { state.enqueueMotion(project.id, material.id) }
                                         }
-                                        if material.transcriptState == .failed {
+                                        if material.transcriptState == .failed || material.transcriptWarning != nil {
                                             Button("重试字幕") { state.transcribe(project.id, material.id) }
                                         } else if material.transcriptState == .running {
                                             Label("识别字幕中", systemImage: "waveform").font(.caption).foregroundStyle(palette.textSecondary)

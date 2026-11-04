@@ -42,6 +42,8 @@ struct SettingsView: View {
             .tabItem { Label("AI 动效", systemImage: "sparkles") }
 
             Form {
+                Toggle("AI 校正字幕", isOn: $settings.transcriptAICorrection)
+                    .help("沿用 AI 动效执行器，结合字幕与视频画面文字校正。关闭后仅使用本地识别。")
                 TextField("whisper 模型路径（ggml .bin）", text: $settings.whisperModelPath, prompt: Text("留空自动查找应用支持目录"))
                 TextField("识别语言", text: $settings.whisperLanguage, prompt: Text("zh / en / auto"))
                 HStack {

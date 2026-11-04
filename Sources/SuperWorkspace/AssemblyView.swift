@@ -38,7 +38,16 @@ struct AssemblyView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     VStack(alignment: .leading, spacing: 20) {
-                        Text("字幕").font(.system(size: 17, weight: .medium))
+                        HStack {
+                            Text("字幕").font(.system(size: 17, weight: .medium))
+                            Spacer()
+                            Button("AI 校正") {
+                                for material in project.materials { state.correctSubtitles(project.id, material.id) }
+                            }
+                            .font(.caption).buttonStyle(.borderless)
+                            .disabled(project.materials.contains { $0.transcriptState == .running }
+                                || !project.materials.contains { $0.transcriptState == .complete && !$0.subtitles.isEmpty })
+                        }
                         subtitleStrip
                     }
                     .frame(width: 260)
@@ -66,6 +75,9 @@ struct AssemblyView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
                 ForEach(project.materials) { material in
+                    if let warning = material.transcriptWarning {
+                        Text(warning).font(.caption).foregroundStyle(palette.warning)
+                    }
                     if material.transcriptState == .complete {
                         ForEach(Array(material.subtitles.enumerated()), id: \.offset) { index, subtitle in
                             VStack(alignment: .leading, spacing: 8) {
@@ -84,7 +96,7 @@ struct AssemblyView: View {
                         }
                     } else {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text(material.transcriptState == .failed ? "字幕识别失败" : "等待字幕")
+                            Text(material.transcriptState == .failed ? "字幕识别失败" : material.transcriptState == .running ? "处理字幕中…" : "等待字幕")
                             if let error = material.transcriptError { Text(error).font(.caption).lineLimit(2).foregroundStyle(palette.danger) }
                             if material.exportState == .complete && material.transcriptState != .running {
                                 Button("识别字幕") { state.transcribe(project.id, material.id) }

@@ -23,6 +23,15 @@ final class AppState: ObservableObject {
         for i in projects.indices {
             let original = projects[i]
             for j in projects[i].materials.indices {
+                if !projects[i].materials[j].subtitles.isEmpty,
+                   projects[i].materials[j].subtitleLayoutVersion != SubtitleSegmentation.version {
+                    let material = projects[i].materials[j]
+                    let metadata = ProjectLayout.materialDirectory(material, in: projects[i]).appendingPathComponent("transcript.json")
+                    let saved = (try? Data(contentsOf: metadata)).flatMap { try? JSONDecoder().decode([TranscriptSegment].self, from: $0) }
+                    let source = saved.flatMap { SubtitleSegmentation.sameSpeech($0, material.subtitles) ? $0 : nil } ?? material.subtitles
+                    projects[i].materials[j].subtitles = SubtitleSegmentation.split(source)
+                    projects[i].materials[j].subtitleLayoutVersion = SubtitleSegmentation.version
+                }
                 if projects[i].materials[j].exportState == .running {
                     projects[i].materials[j].exportState = .failed
                     projects[i].materials[j].exportError = "上次素材导出中断，请在录制编辑器重新导出。"
@@ -32,8 +41,13 @@ final class AppState: ObservableObject {
                     projects[i].materials[j].motionError = "动效处理已中断，可重试。"
                 }
                 if projects[i].materials[j].transcriptState == .running {
-                    projects[i].materials[j].transcriptState = .failed
-                    projects[i].materials[j].transcriptError = "字幕识别已中断，可重试。"
+                    if projects[i].materials[j].subtitles.isEmpty {
+                        projects[i].materials[j].transcriptState = .failed
+                        projects[i].materials[j].transcriptError = "字幕识别已中断，可重试。"
+                    } else {
+                        projects[i].materials[j].transcriptState = .complete
+                        projects[i].materials[j].transcriptWarning = "字幕处理已中断，已保留已有字幕，可重试。"
+                    }
                 }
             }
             if projects[i] != original {
@@ -134,17 +148,44 @@ final class AppState: ObservableObject {
     }
     func transcribe(_ projectID: UUID, _ id: UUID) {
         guard transcriptTasks[id] == nil, let (project, material) = pair(projectID, id), material.exportState == .complete else { return }
-        updateMaterial(projectID, id) { $0.transcriptState = .running; $0.transcriptError = nil }
+        updateMaterial(projectID, id) { $0.transcriptState = .running; $0.transcriptError = nil; $0.transcriptWarning = nil }
         let model = SettingsStore.shared.whisperModel()
         let language = SettingsStore.shared.whisperLanguage
+        let correction = SettingsStore.shared.transcriptCorrectionConfiguration()
         transcriptTasks[id] = Task {
             defer { transcriptTasks[id] = nil }
             do {
                 let directory = ProjectLayout.materialDirectory(material, in: project)
-                let subtitles = try await TranscriptService.transcribe(video: ProjectLayout.source(material, in: project), directory: directory, whisperModel: model, language: language)
-                updateMaterial(projectID, id) { $0.subtitles = subtitles; $0.transcriptState = .complete }
+                let result = try await TranscriptService.transcribe(video: ProjectLayout.source(material, in: project), directory: directory, whisperModel: model, language: language, correction: correction)
+                updateMaterial(projectID, id) { $0.subtitles = result.segments; $0.subtitleLayoutVersion = SubtitleSegmentation.version; $0.transcriptWarning = result.warning; $0.transcriptState = .complete }
             } catch {
                 updateMaterial(projectID, id) { $0.transcriptState = .failed; $0.transcriptError = error.localizedDescription }
+            }
+        }
+    }
+    func correctSubtitles(_ projectID: UUID, _ id: UUID) {
+        guard transcriptTasks[id] == nil, let (project, material) = pair(projectID, id),
+              material.transcriptState == .complete, !material.subtitles.isEmpty else { return }
+        guard let configuration = SettingsStore.shared.transcriptCorrectionConfiguration() else {
+            showToast("请在字幕设置中开启 AI 校正。")
+            return
+        }
+        updateMaterial(projectID, id) { $0.transcriptState = .running; $0.transcriptWarning = nil; $0.transcriptError = nil }
+        transcriptTasks[id] = Task {
+            defer { transcriptTasks[id] = nil }
+            do {
+                let directory = ProjectLayout.materialDirectory(material, in: project)
+                let raw = directory.appendingPathComponent("transcript-raw.json")
+                if !FileManager.default.fileExists(atPath: raw.path) {
+                    try JSONEncoder().encode(material.subtitles).write(to: raw, options: .atomic)
+                }
+                let result = try await TranscriptCorrection.apply(material.subtitles,
+                    video: ProjectLayout.picture(material, in: project), directory: directory, configuration: configuration)
+                let segments = SubtitleSegmentation.split(result.segments)
+                try JSONEncoder().encode(segments).write(to: directory.appendingPathComponent("transcript.json"), options: .atomic)
+                updateMaterial(projectID, id) { $0.subtitles = segments; $0.subtitleLayoutVersion = SubtitleSegmentation.version; $0.transcriptState = .complete; $0.transcriptWarning = result.warning }
+            } catch {
+                updateMaterial(projectID, id) { $0.transcriptState = .complete; $0.transcriptWarning = "字幕校正未完成，已保留已有字幕，可重试。" }
             }
         }
     }

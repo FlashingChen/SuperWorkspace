@@ -2,7 +2,7 @@ import AVFoundation
 import Foundation
 
 /// Part 3：本地 whisper 字幕识别，产出带时间轴的 metadata（不烧进画面）。
-struct TranscriptSegment: Codable, Equatable {
+struct TranscriptSegment: Codable, Equatable, Sendable {
     var start: Double
     var end: Double
     var text: String
@@ -19,11 +19,12 @@ enum TranscriptService {
         ])
     }
 
-    static func transcribe(video: URL, directory dir: URL, whisperModel model: String, language: String) async throws -> [TranscriptSegment] {
+    static func transcribe(video: URL, directory dir: URL, whisperModel model: String, language: String,
+                           correction: TranscriptCorrectionConfiguration? = nil) async throws -> TranscriptResult {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         if try await AVURLAsset(url: video).loadTracks(withMediaType: .audio).isEmpty {
             try Data("[]".utf8).write(to: dir.appendingPathComponent("transcript.json"), options: .atomic)
-            return []
+            return TranscriptResult(segments: [], warning: nil)
         }
         guard let whisper = ToolPaths.whisperCLI else {
             throw ShellError.exitStatus(-1, "未找到 whisper-cli（brew install whisper-cpp）")
@@ -41,6 +42,7 @@ enum TranscriptService {
             "-m", model,
             "-f", wav.path,
             "-l", language,
+            "-ml", "36", "-sow",
             "-osrt", "-of", outBase.path,
         ])
         let srtURL = dir.appendingPathComponent("transcript.srt")
@@ -50,9 +52,17 @@ enum TranscriptService {
         let segments = parseSRT(srt)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let metadata = try encoder.encode(segments)
+        try encoder.encode(segments).write(to: dir.appendingPathComponent("transcript-raw.json"), options: .atomic)
+        let result: TranscriptResult
+        if let correction {
+            result = try await TranscriptCorrection.apply(segments, video: video, directory: dir, configuration: correction)
+        } else {
+            result = TranscriptResult(segments: segments, warning: nil)
+        }
+        let final = SubtitleSegmentation.split(result.segments)
+        let metadata = try encoder.encode(final)
         try metadata.write(to: dir.appendingPathComponent("transcript.json"), options: .atomic)
-        return segments
+        return TranscriptResult(segments: final, warning: result.warning)
     }
 
     static func parseSRT(_ srt: String) -> [TranscriptSegment] {
