@@ -1,0 +1,149 @@
+import AppKit
+import Combine
+import SwiftUI
+
+@MainActor
+public final class WorkspaceRecorder {
+    public static let shared = WorkspaceRecorder()
+    private var model: AppModel?
+    private var activationObserver: AnyCancellable?
+    private var permissionTask: Task<Void, Never>?
+    private var jobs: [UUID: VideoExporter] = [:]
+    private var observers: [UUID: AnyCancellable] = [:]
+    private var onStart: ((UUID, Bool) throws -> URL)?
+    private var onFinish: ((UUID, Result<URL, Error>) -> Void)?
+    public var hasOpenSession: Bool { model != nil }
+
+    public func present(
+        onStart: @escaping (UUID, Bool) throws -> URL,
+        onFinish: @escaping (UUID, Result<URL, Error>) -> Void
+    ) {
+        if let model {
+            model.resumeRequiredPermissionOnboardingAfterActivation()
+            WindowCoordinator.bringCurrentWindowFront()
+            return
+        }
+        self.onStart = onStart
+        self.onFinish = onFinish
+        WorkspaceInputPolicy.registerDefaults()
+        let model = AppModel()
+        self.model = model
+        WindowCoordinator.install(model: model)
+        model.beginRequiredPermissionOnboardingIfNeeded()
+        activationObserver = NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak model] _ in
+                MainActor.assumeIsolated { model?.resumeRequiredPermissionOnboardingAfterActivation() }
+            }
+        permissionTask = Task { @MainActor [weak self, weak model] in
+            while !Task.isCancelled, let self, let model, self.model === model {
+                if model.phase == .setup {
+                    await model.verifyRequiredRecordingPermissions()
+                    if model.hasRequiredRecordingPermissions, NSApp.isActive {
+                        model.finishRequiredPermissionOnboarding()
+                    }
+                }
+                do { try await Task.sleep(for: .seconds(1)) }
+                catch { return }
+            }
+        }
+        WindowCoordinator.bringCurrentWindowFront()
+    }
+
+    func submit(wantsMotion: Bool, makeRequest: (URL) throws -> EditorExportRequest) throws {
+        let id = UUID()
+        guard let onStart, let onFinish else { throw CocoaError(.fileWriteUnknown) }
+        // Validate before adding a persistent material or hiding the editor.
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("\(id).mp4")
+        _ = try makeRequest(temporary)
+        let output = try onStart(id, wantsMotion)
+        let request: EditorExportRequest
+        do { request = try makeRequest(output) }
+        catch { onFinish(id, .failure(error)); throw error }
+        let exporter = VideoExporter()
+        jobs[id] = exporter
+        observers[id] = exporter.$isExporting.dropFirst().receive(on: DispatchQueue.main).sink { [weak self, weak exporter] running in
+            guard !running, let self, let exporter else { return }
+            if let url = exporter.lastExportURL {
+                onFinish(id, .success(url))
+            } else {
+                onFinish(id, .failure(NSError(domain: "RecorderExport", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: exporter.errorMessage ?? "素材导出未完成，请重新打开录制工程后导出。"])))
+            }
+            self.observers[id] = nil
+            self.jobs[id] = nil
+        }
+        exporter.export(request: request)
+        permissionTask?.cancel()
+        permissionTask = nil
+        activationObserver = nil
+        let retiredModel = model
+        WindowCoordinator.shutdown()
+        model = nil
+        // Export owns its immutable request independently of capture and editor UI.
+        retiredModel?.shutdownForApplicationTermination()
+    }
+}
+
+struct IntegratedExportSheet: View {
+    let wallpaperURLResolver: EditorSessionContext.WallpaperURLResolver
+    let projectAssetURLResolver: EditorSessionContext.ProjectAssetURLResolver
+    let projectDisplayName: String
+    let exportScope: EditorExportScope
+    @ObservedObject var exporter: VideoExporter
+    @ObservedObject var editorStore: EditorStore
+    @ObservedObject var mediaSession: EditorMediaSession
+    @ObservedObject var playbackController: EditorPlaybackController
+    @Environment(\.dismiss) private var dismiss
+    @State private var wantsMotion = false
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            Text("完成录制").font(.title2.weight(.semibold))
+            Toggle("添加 AI 动效", isOn: $wantsMotion)
+            if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
+            HStack {
+                Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("确定") { submit() }
+                    .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                    .disabled(mediaSession.prepared == nil)
+            }
+        }
+        .padding(28).frame(width: 360)
+    }
+
+    private func submit() {
+        _ = editorStore.prepareForExternalAction(.export)
+        guard let media = mediaSession.prepared else { return }
+        do {
+            try WorkspaceRecorder.shared.submit(wantsMotion: wantsMotion) { output in
+                let project = editorStore.project
+                return try EditorExportRequestBuilder.make(
+                    editorSessionID: editorStore.sessionID, mediaGeneration: media.generation,
+                    project: project, preparedMedia: media,
+                    wallpaperURL: wallpaperURLResolver(project.canvas.backgroundSource),
+                    stickerURLs: Dictionary(uniqueKeysWithValues: Set(project.timeline.stickerClips.map(\.relativePath)).compactMap { path in
+                        projectAssetURLResolver(path).map { (path, $0) }
+                    }), outputURL: output, outputKind: .video, outputRange: exportScope.outputRange)
+            }
+            playbackController.pause()
+            dismiss()
+        } catch { self.error = error.localizedDescription }
+    }
+}
+
+// Updates belong to the host application, never the embedded recorder.
+@MainActor
+final class AppUpdateController: ObservableObject {
+    static let shared = AppUpdateController()
+    @Published var isReady = false
+    @Published var automaticallyChecksForUpdates = false
+    var isFormalRelease: Bool { false }
+    var currentVersionDescription: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "" }
+    var availabilityDescription: String { "录制组件随应用更新。" }
+    func startIfEligible() {}
+    func checkForUpdates() {}
+    func setAutomaticallyChecksForUpdates(_ enabled: Bool) {}
+}
