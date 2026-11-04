@@ -241,6 +241,17 @@ final class AppState: ObservableObject {
             project.materials.swapAt(index, index + delta)
         }
     }
+    func reorderMaterial(_ projectID: UUID, source: UUID, target: UUID, after: Bool) {
+        guard source != target, let project = projects.first(where: { $0.id == projectID }),
+              project.materials.contains(where: { $0.id == source }),
+              project.materials.contains(where: { $0.id == target }) else { return }
+        updateProject(projectID) { project in
+            guard let index = project.materials.firstIndex(where: { $0.id == source }) else { return }
+            let material = project.materials.remove(at: index)
+            let destination = project.materials.firstIndex(where: { $0.id == target })!
+            project.materials.insert(material, at: destination + (after ? 1 : 0))
+        }
+    }
     func export() {
         guard let project = currentProject, project.canExport, !exportingProjects.contains(project.id) else { return }
         exportingProjects.insert(project.id)

@@ -10,6 +10,9 @@ struct AssemblyView: View {
     @State private var playhead = 0.0
     @State private var observer: Any?
     @State private var loading = false
+    @State private var isPlaying = false
+    @State private var selectedMaterial: UUID?
+    @State private var selectedSubtitle: String?
 
     private var previewKey: String {
         project.materials.map { "\($0.id):\($0.exportState):\($0.motionState)" }.joined(separator: ",")
@@ -24,13 +27,14 @@ struct AssemblyView: View {
                         .buttonStyle(StudioButtonStyle(kind: .primary))
                 }
             } else {
-                HStack(alignment: .top, spacing: 28) {
+                VSplitView {
+                HStack(alignment: .top, spacing: 20) {
                     ZStack(alignment: .bottom) {
-                        VideoSurface(player: player)
+                        VideoSurface(player: player, controlsStyle: .none)
                         if let subtitle = project.assembledSubtitles.first(where: { playhead >= $0.start && playhead < $0.end }) {
                             Text(subtitle.text).font(.title3.weight(.medium)).foregroundStyle(.white)
                                 .padding(8).background(.black.opacity(0.65), in: RoundedRectangle(cornerRadius: 6))
-                                .padding(.horizontal, 40).padding(.bottom, 56).allowsHitTesting(false)
+                                .padding(.horizontal, 40).padding(.bottom, 24).allowsHitTesting(false)
                         }
                         if loading { ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity) }
                     }
@@ -52,8 +56,15 @@ struct AssemblyView: View {
                     }
                     .frame(width: 260)
                 }
-                .padding(28)
-                .frame(maxHeight: .infinity)
+                .padding(20)
+                .frame(minHeight: 220, maxHeight: .infinity)
+                AssemblyTimeline(project: project, playhead: playhead, isPlaying: isPlaying,
+                    canPlay: player.currentItem != nil && !loading,
+                    selectedMaterial: $selectedMaterial, selectedSubtitle: $selectedSubtitle,
+                    onSeek: seek, onPlay: togglePlayback,
+                    onMove: { state.reorderMaterial(project.id, source: $0, target: $1, after: $2) },
+                    onRetryMotion: { state.enqueueMotion(project.id, $0) })
+                }
                 if let previewError {
                     Text(previewError).font(.callout).foregroundStyle(palette.danger).padding(12)
                 }
@@ -64,7 +75,6 @@ struct AssemblyView: View {
                         Spacer()
                     }.font(.caption).foregroundStyle(palette.textSecondary).padding(12)
                 }
-                materialStrip
             }
         }
         .background(palette.bgBase)
@@ -72,6 +82,7 @@ struct AssemblyView: View {
         .onDisappear { stopPreview() }
     }
     private var subtitleStrip: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
                 ForEach(project.materials) { material in
@@ -83,7 +94,8 @@ struct AssemblyView: View {
                             VStack(alignment: .leading, spacing: 8) {
                                 Button {
                                     let offset = project.materials.prefix { $0.id != material.id }.reduce(0) { $0 + $1.duration }
-                                    player.seek(to: CMTime(seconds: offset + subtitle.start, preferredTimescale: 600))
+                                    selectedSubtitle = "\(material.id)-\(index)"
+                                    seek(offset + subtitle.start)
                                 } label: { Text(durationLabel(globalStart(material, subtitle.start))).font(.caption.monospacedDigit()) }
                                     .buttonStyle(.plain).foregroundStyle(palette.textSecondary)
                                 TextField("字幕", text: Binding(
@@ -91,8 +103,10 @@ struct AssemblyView: View {
                                     set: { state.editSubtitle(projectID: project.id, materialID: material.id, index: index, text: $0) }
                                 ), axis: .vertical).textFieldStyle(.plain).lineLimit(2...3)
                             }
-                            .padding(.vertical, 8)
+                            .padding(8)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(selectedSubtitle == "\(material.id)-\(index)" ? palette.surface1 : .clear, in: RoundedRectangle(cornerRadius: 6))
+                            .id("\(material.id)-\(index)")
                         }
                     } else {
                         VStack(alignment: .leading, spacing: 8) {
@@ -106,29 +120,26 @@ struct AssemblyView: View {
                 }
             }
         }
+        .onChange(of: selectedSubtitle) { _, value in
+            if let value { withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(value, anchor: .center) } }
+        }
+        }
     }
-    private var materialStrip: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 16) {
-                ForEach(Array(project.materials.enumerated()), id: \.element.id) { index, material in
-                    VStack(spacing: 6) {
-                        MaterialThumbnail(url: material.exportState == .complete ? ProjectLayout.picture(material, in: project) : nil)
-                            .frame(width: 136, height: 76)
-                        HStack {
-                            Text("\(index + 1)").font(.caption.monospacedDigit())
-                            Spacer()
-                            Button { state.moveMaterial(project.id, index: index, by: -1) } label: { Image(systemName: "chevron.left") }
-                                .disabled(index == 0).accessibilityLabel("向前移动素材")
-                            Button { state.moveMaterial(project.id, index: index, by: 1) } label: { Image(systemName: "chevron.right") }
-                                .disabled(index == project.materials.count - 1).accessibilityLabel("向后移动素材")
-                        }.buttonStyle(.borderless)
-                        if material.motionState == .failed {
-                            Button("重试动效") { state.enqueueMotion(project.id, material.id) }.font(.caption)
-                        }
-                    }.frame(width: 136)
-                }
-            }.padding(16)
-        }.background(palette.bgSidebar).frame(height: 150)
+    private func seek(_ time: Double) {
+        let duration = AssemblyTimelineLayout(materials: project.materials).duration
+        let target = min(duration, max(0, time))
+        player.pause()
+        isPlaying = false
+        playhead = target
+        player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+    }
+    private func togglePlayback() {
+        if player.rate > 0 { player.pause(); isPlaying = false }
+        else {
+            if playhead >= AssemblyTimelineLayout(materials: project.materials).duration - 0.05 { seek(0) }
+            player.play()
+            isPlaying = true
+        }
     }
     private func globalStart(_ material: Material, _ start: Double) -> Double {
         project.materials.prefix { $0.id != material.id }.reduce(start) { $0 + $1.duration }
@@ -148,14 +159,19 @@ struct AssemblyView: View {
             let item = AVPlayerItem(asset: assembly.composition)
             item.videoComposition = assembly.videoComposition
             player.replaceCurrentItem(with: item)
+            seek(playhead)
             observer = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.1, preferredTimescale: 600), queue: .main) { time in
-                Task { @MainActor in playhead = time.seconds.isFinite ? time.seconds : 0 }
+                Task { @MainActor in
+                    playhead = time.seconds.isFinite ? time.seconds : 0
+                    isPlaying = player.rate > 0
+                }
             }
         } catch is CancellationError { }
         catch { previewError = error.localizedDescription }
     }
     private func stopPreview() {
         player.pause()
+        isPlaying = false
         if let observer { player.removeTimeObserver(observer); self.observer = nil }
         player.replaceCurrentItem(with: nil)
     }

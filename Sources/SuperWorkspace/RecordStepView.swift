@@ -125,13 +125,17 @@ struct PreviewSheet: View {
 
 struct VideoSurface: NSViewRepresentable {
     let player: AVPlayer
+    var controlsStyle: AVPlayerViewControlsStyle = .inline
     func makeNSView(context: Context) -> AVPlayerView {
         let view = AVPlayerView()
         view.player = player
-        view.controlsStyle = .inline
+        view.controlsStyle = controlsStyle
         return view
     }
-    func updateNSView(_ nsView: AVPlayerView, context: Context) { nsView.player = player }
+    func updateNSView(_ nsView: AVPlayerView, context: Context) {
+        nsView.player = player
+        nsView.controlsStyle = controlsStyle
+    }
 }
 func durationLabel(_ time: Double) -> String {
     guard time.isFinite else { return "00:00" }
