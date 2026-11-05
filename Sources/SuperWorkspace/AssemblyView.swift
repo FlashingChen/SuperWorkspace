@@ -79,6 +79,12 @@ struct AssemblyView: View {
         }
         .background(palette.bgBase)
         .task(id: previewKey) { await preparePreview() }
+        .onChange(of: project.materials.map(\.id)) { _, ids in
+            if let selectedMaterial, !ids.contains(selectedMaterial) {
+                self.selectedMaterial = nil
+                selectedSubtitle = nil
+            }
+        }
         .onDisappear { stopPreview() }
     }
     private var subtitleStrip: some View {

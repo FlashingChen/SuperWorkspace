@@ -101,6 +101,7 @@ struct AssemblyTimeline: View {
         HStack(spacing: 14) {
             Text("时间线").font(.system(size: 12, weight: .semibold))
             Text("\(project.materials.count) 段素材").font(.caption).foregroundStyle(palette.textSecondary)
+            MaterialDeleteButton(projectID: project.id, materialID: selectedMaterial)
             Spacer()
             Button { onSeek(playhead - 1 / 30) } label: { Image(systemName: "backward.end") }
                 .help("上一帧").accessibilityLabel("上一帧").disabled(!canPlay)

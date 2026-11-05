@@ -74,6 +74,8 @@ struct RecordStepView: View {
                                         Spacer()
                                         Text(material.exportState == .running ? "正在导出…" : durationLabel(material.duration))
                                             .font(.caption.monospacedDigit()).foregroundStyle(palette.textSecondary)
+                                        MaterialDeleteButton(projectID: project.id, materialID: material.id)
+                                            .font(.caption)
                                     }
                                     if let error = material.exportError ?? material.motionError ?? material.transcriptError {
                                         Text(error).font(.caption).foregroundStyle(palette.danger).textSelection(.enabled)

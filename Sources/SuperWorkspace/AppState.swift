@@ -96,6 +96,7 @@ final class AppState: ObservableObject {
         catch { self.error = "保存失败：\(error.localizedDescription)" }
     }
     private func updateMaterial(_ projectID: UUID, _ id: UUID, _ mutate: (inout Material) -> Void) {
+        guard pair(projectID, id) != nil else { return }
         updateProject(projectID) { project in
             if let index = project.materials.firstIndex(where: { $0.id == id }) { mutate(&project.materials[index]) }
         }
@@ -190,7 +191,7 @@ final class AppState: ObservableObject {
         }
     }
     func enqueueMotion(_ projectID: UUID, _ id: UUID) {
-        guard activeMotion != id, !motionQueue.contains(where: { $0.1 == id }) else { return }
+        guard pair(projectID, id) != nil, activeMotion != id, !motionQueue.contains(where: { $0.1 == id }) else { return }
         updateMaterial(projectID, id) { $0.motionState = .queued; $0.motionError = nil }
         motionQueue.append((projectID, id))
         runNextMotion()
@@ -234,6 +235,27 @@ final class AppState: ObservableObject {
             guard $0.subtitles.indices.contains(index) else { return }
             $0.subtitles[index].text = text
         }
+    }
+    @discardableResult
+    func removeMaterial(_ projectID: UUID, _ id: UUID) -> Bool {
+        guard let index = projects.firstIndex(where: { $0.id == projectID }),
+              let material = projects[index].materials.first(where: { $0.id == id }),
+              material.exportState != .running, !exportingProjects.contains(projectID) else { return false }
+        var updated = projects[index]
+        updated.materials.removeAll { $0.id == id }
+        updated.updatedAt = Date()
+        do {
+            try ProjectLayout.save(updated)
+        } catch {
+            self.error = "删除素材失败：\(error.localizedDescription)"
+            return false
+        }
+        projects[index] = updated
+        motionQueue.removeAll { $0.0 == projectID && $0.1 == id }
+        motionTasks[id]?.cancel()
+        transcriptTasks[id]?.cancel()
+        showToast("素材已从项目删除")
+        return true
     }
     func moveMaterial(_ projectID: UUID, index: Int, by delta: Int) {
         updateProject(projectID) { project in
