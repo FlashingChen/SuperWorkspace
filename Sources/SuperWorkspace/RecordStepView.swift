@@ -62,20 +62,24 @@ struct RecordStepView: View {
                                     } label: {
                                         MaterialThumbnail(url: material.exportState == .complete ? ProjectLayout.picture(material, in: project) : nil)
                                             .aspectRatio(16 / 9, contentMode: .fit)
-                                            .overlay(alignment: .topTrailing) {
+                                            .overlay(alignment: .topLeading) {
                                                 if let label = material.motionLabel {
                                                     Text(label).font(.caption.weight(.medium)).padding(.horizontal, 9).padding(.vertical, 5)
                                                         .foregroundStyle(palette.ai).background(palette.bgDeep, in: Capsule()).padding(8)
                                                 }
                                             }
                                     }.buttonStyle(.plain).disabled(material.exportState != .complete)
+                                    .overlay(alignment: .topTrailing) {
+                                        MaterialActionsMenu(projectID: project.id, materialID: material.id)
+                                            .foregroundStyle(.white)
+                                            .background(.black.opacity(0.65), in: RoundedRectangle(cornerRadius: 6))
+                                            .padding(8)
+                                    }
                                     HStack {
                                         Text("素材 \(index + 1)").font(.headline)
                                         Spacer()
                                         Text(material.exportState == .running ? "正在导出…" : durationLabel(material.duration))
                                             .font(.caption.monospacedDigit()).foregroundStyle(palette.textSecondary)
-                                        MaterialDeleteButton(projectID: project.id, materialID: material.id)
-                                            .font(.caption)
                                     }
                                     if let error = material.exportError ?? material.motionError ?? material.transcriptError {
                                         Text(error).font(.caption).foregroundStyle(palette.danger).textSelection(.enabled)

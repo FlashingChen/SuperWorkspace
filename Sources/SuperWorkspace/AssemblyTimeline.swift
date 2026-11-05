@@ -51,6 +51,7 @@ struct AssemblyTimeline: View {
     let onRetryMotion: (UUID) -> Void
     @State private var zoom = 1.0
     @State private var dropTarget: UUID?
+    @State private var pendingRemoval: UUID?
     private var layout: AssemblyTimelineLayout { .init(materials: project.materials) }
     private let gutter: CGFloat = 76
 
@@ -95,13 +96,13 @@ struct AssemblyTimeline: View {
         }
         .background(palette.bgDeep)
         .frame(minHeight: 230, idealHeight: 270, maxHeight: 400)
+        .modifier(MaterialRemovalConfirmation(projectID: project.id, materialID: $pendingRemoval))
     }
 
     private var controls: some View {
         HStack(spacing: 14) {
             Text("时间线").font(.system(size: 12, weight: .semibold))
             Text("\(project.materials.count) 段素材").font(.caption).foregroundStyle(palette.textSecondary)
-            MaterialDeleteButton(projectID: project.id, materialID: selectedMaterial)
             Spacer()
             Button { onSeek(playhead - 1 / 30) } label: { Image(systemName: "backward.end") }
                 .help("上一帧").accessibilityLabel("上一帧").disabled(!canPlay)
@@ -231,6 +232,10 @@ struct AssemblyTimeline: View {
                         }
                         Button("向前移动") { if clip.index > 0 { onMove(clip.id, layout.clips[clip.index - 1].id, false) } }.disabled(clip.index == 0)
                         Button("向后移动") { if clip.index + 1 < layout.clips.count { onMove(clip.id, layout.clips[clip.index + 1].id, true) } }.disabled(clip.index + 1 == layout.clips.count)
+                        Divider()
+                        MaterialDeleteAction(projectID: project.id, materialID: clip.id) {
+                            pendingRemoval = clip.id
+                        }
                     }
                     .accessibilityLabel("素材 \(clip.index + 1)，时长 \(durationLabel(clip.duration))，可拖动排序")
                     .offset(x: clip.start * scale)
