@@ -16,6 +16,12 @@ struct SuperWorkspaceApp: App {
         .defaultSize(width: 1240, height: 800)
         .defaultPosition(.center)
         .windowToolbarStyle(.unified)
+        .commands {
+            CommandGroup(replacing: .undoRedo) {
+                Button("撤销") { appState.undo() }.keyboardShortcut("z").disabled(!appState.canUndo)
+                Button("重做") { appState.redo() }.keyboardShortcut("z", modifiers: [.command, .shift]).disabled(!appState.canRedo)
+            }
+        }
         Settings { ThemedContent { SettingsView() } }
     }
 }
@@ -25,6 +31,7 @@ struct RootView: View {
     @EnvironmentObject private var state: AppState
     @State private var visibility: NavigationSplitViewVisibility = .all
     @State private var showNew = false
+    @State private var showExport = false
 
     var body: some View {
         NavigationSplitView(columnVisibility: $visibility) {
@@ -54,13 +61,13 @@ struct RootView: View {
                             }
                         }
                         if state.stage == .assemble {
-                            Button { state.export() } label: {
+                            Button { showExport = true } label: {
                                 Label {
                                     Text(verbatim: state.exportingProjects.contains(project.id) ? "正在导出" : "导出成片")
                                 } icon: { Image(systemName: "arrow.up.right") }
                             }
                             .buttonStyle(StudioButtonStyle(kind: .primary))
-                            .disabled(!project.canExport || state.exportingProjects.contains(project.id))
+                            .disabled(project.materials.isEmpty || state.exportingProjects.contains(project.id))
                         }
                     }
                     .padding(.horizontal, 36)
@@ -71,15 +78,20 @@ struct RootView: View {
                         else { AssemblyView(project: project) }
                     }
                     .id(project.id)
+                    ExportResultBar(project: project)
                 }
             } else {
                 ProjectLibraryView(onCreate: { showNew = true })
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in state.saveSession() }
         .tint(palette.accent)
         .foregroundStyle(palette.textPrimary)
         .background(palette.bgBase)
         .sheet(isPresented: $showNew) { NewProjectSheet().environmentObject(state) }
+        .sheet(isPresented: $showExport) {
+            if let project = state.currentProject { MovieExportSheet(project: project).environmentObject(state) }
+        }
         .overlay(alignment: .bottomTrailing) {
             if let toast = state.toast {
                 Text(toast).font(.system(size: 13)).padding(.horizontal, 18).padding(.vertical, 12)

@@ -30,10 +30,19 @@ final class SettingsStore: ObservableObject {
     func transcriptCorrectionConfiguration() -> TranscriptCorrectionConfiguration? {
         guard transcriptAICorrection else { return nil }
         let launch = resolvedLaunchPath()
+        guard launch != "/bin/true" else { return nil }
         return TranscriptCorrectionConfiguration(launchPath: launch,
             arguments: TranscriptCorrectionConfiguration.arguments(
                 isPi: selectedAgent == .pi || selectedAgent == .deepseek || URL(fileURLWithPath: launch).lastPathComponent == "pi",
                 deepSeekModel: selectedAgent == .deepseek ? deepseekMotionModel.trimmingCharacters(in: .whitespacesAndNewlines) : nil))
+    }
+
+    var missingSubtitleTools: [String] {
+        var missing: [String] = []
+        if ToolPaths.ffmpeg == nil { missing.append("ffmpeg") }
+        if ToolPaths.whisperCLI == nil { missing.append("whisper.cpp") }
+        if whisperModel().isEmpty { missing.append("语音模型") }
+        return missing
     }
 
     var selectedAgent: MotionAgent { MotionAgent(rawValue: aiMotionAgent) ?? .automatic }

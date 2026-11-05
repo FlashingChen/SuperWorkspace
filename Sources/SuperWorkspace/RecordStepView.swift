@@ -40,6 +40,7 @@ struct RecordStepView: View {
                         Text("录制与粗剪在同一界面完成，导出后自动添加到项目。")
                             .font(.system(size: 13)).foregroundStyle(palette.textSecondary).lineSpacing(5)
                     }
+                    CapabilityReadinessView()
                     Button { state.record() } label: {
                         Label("录制新素材", systemImage: "record.circle").frame(maxWidth: .infinity)
                     }
@@ -47,14 +48,17 @@ struct RecordStepView: View {
                 }
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 36) {
+                    VStack(alignment: .leading, spacing: 20) {
                         HStack(alignment: .firstTextBaseline) {
-                            WorkspaceHeading(title: "录制素材。", detail: "每一段录制，都在这里准备就绪。")
+                            Text("素材").font(.system(size: 22, weight: .semibold))
+                            Text("\(project.materials.count) 段 · \(durationLabel(project.materials.reduce(0) { $0 + $1.timelineDuration }))")
+                                .font(.system(size: 12)).foregroundStyle(palette.textSecondary)
                             Spacer(minLength: 24)
                             Button("录制新素材", systemImage: "plus") { state.record() }
                                 .buttonStyle(StudioButtonStyle(kind: .primary))
                         }
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 20)], spacing: 24) {
+                        CapabilityReadinessView()
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 220, maximum: 360), spacing: 20)], alignment: .leading, spacing: 24) {
                             ForEach(Array(project.materials.enumerated()), id: \.element.id) { index, material in
                                 VStack(alignment: .leading, spacing: 10) {
                                     Button {
@@ -81,28 +85,24 @@ struct RecordStepView: View {
                                         Text(material.exportState == .running ? "正在导出…" : durationLabel(material.duration))
                                             .font(.caption.monospacedDigit()).foregroundStyle(palette.textSecondary)
                                     }
-                                    if let error = material.exportError ?? material.motionError ?? material.transcriptError {
-                                        Text(error).font(.caption).foregroundStyle(palette.danger).textSelection(.enabled)
+                                    if let error = material.exportError { Text(error).font(.caption).foregroundStyle(palette.danger).textSelection(.enabled) }
+                                    MaterialTaskStatus(projectID: project.id, material: material)
+                                    if let warning = material.transcriptWarning { Text(warning).font(.caption).foregroundStyle(palette.warning).textSelection(.enabled) }
+                                    if material.sourceReady {
+                                        Button("在时间线中编辑") {
+                                            var session = state.editorSession(project.id)
+                                            session.selectedMaterial = material.id
+                                            session.playhead = project.materials.prefix { $0.id != material.id }.reduce(0) { $0 + $1.timelineDuration }
+                                            state.rememberEditor(project.id, session, flush: true)
+                                            state.stage = .assemble
+                                        }.buttonStyle(.borderless).font(.caption)
                                     }
-                                    if let warning = material.transcriptWarning {
-                                        Text(warning).font(.caption).foregroundStyle(palette.warning).textSelection(.enabled)
-                                    }
-                                    HStack {
-                                        if material.motionState == .failed {
-                                            Button("重试动效") { state.enqueueMotion(project.id, material.id) }
-                                        }
-                                        if material.transcriptState == .failed || material.transcriptWarning != nil {
-                                            Button("重试字幕") { state.transcribe(project.id, material.id) }
-                                        } else if material.transcriptState == .running {
-                                            Label("识别字幕中", systemImage: "waveform").font(.caption).foregroundStyle(palette.textSecondary)
-                                        }
-                                    }.buttonStyle(.borderless)
                                 }
                             }
                         }
                     }
-                    .frame(maxWidth: 1100, alignment: .leading)
-                    .padding(40)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(28)
                     .frame(maxWidth: .infinity)
                 }
             }

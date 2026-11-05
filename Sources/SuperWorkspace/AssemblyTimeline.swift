@@ -15,7 +15,7 @@ struct AssemblyTimelineLayout {
     init(materials: [Material]) {
         var cursor = 0.0
         clips = materials.enumerated().map { index, material in
-            let duration = material.duration.isFinite ? max(0, material.duration) : 0
+            let duration = material.duration.isFinite ? max(0, material.outPoint - material.inPoint) : 0
             defer { cursor += duration }
             return Clip(id: material.id, index: index, start: cursor, duration: duration)
         }
@@ -39,6 +39,7 @@ struct AssemblyTimelineLayout {
 
 struct AssemblyTimeline: View {
     @Environment(\.palette) private var palette
+    @EnvironmentObject private var state: AppState
     let project: VideoProject
     let playhead: Double
     let isPlaying: Bool
@@ -48,11 +49,25 @@ struct AssemblyTimeline: View {
     let onSeek: (Double) -> Void
     let onPlay: () -> Void
     let onMove: (UUID, UUID, Bool) -> Void
-    let onRetryMotion: (UUID) -> Void
-    @State private var zoom = 1.0
+    @Binding var zoom: Double
     @State private var dropTarget: UUID?
     @State private var pendingRemoval: UUID?
-    private var layout: AssemblyTimelineLayout { .init(materials: project.materials) }
+    @State private var fittedDuration = 0.0
+    @State private var draft: RangeDraft?
+    private var displayProject: VideoProject {
+        var copy = project
+        if let draft, let index = copy.materials.firstIndex(where: { $0.id == draft.materialID }) {
+            if let subtitle = draft.subtitleIndex, copy.materials[index].subtitles.indices.contains(subtitle) {
+                copy.materials[index].subtitles[subtitle].start = draft.range.lowerBound
+                copy.materials[index].subtitles[subtitle].end = draft.range.upperBound
+            } else if draft.subtitleIndex == nil {
+                copy.materials[index].trimStart = draft.range.lowerBound
+                copy.materials[index].trimEnd = draft.range.upperBound
+            }
+        }
+        return copy
+    }
+    private var layout: AssemblyTimelineLayout { .init(materials: displayProject.materials) }
     private let gutter: CGFloat = 76
 
     var body: some View {
@@ -61,7 +76,7 @@ struct AssemblyTimeline: View {
             Rectangle().fill(palette.surface2).frame(height: 1)
             GeometryReader { geometry in
                 let viewport = max(1, geometry.size.width - gutter - 24)
-                let scale = max(0.05, viewport / max(1, layout.duration)) * zoom
+                let scale = min(600, max(0.05, viewport / max(1, fittedDuration > 0 ? fittedDuration : layout.duration)) * zoom)
                 let width = max(viewport, layout.duration * scale + 32)
                 HStack(spacing: 0) {
                     VStack(spacing: 12) {
@@ -96,13 +111,22 @@ struct AssemblyTimeline: View {
         }
         .background(palette.bgDeep)
         .frame(minHeight: 230, idealHeight: 270, maxHeight: 400)
+        .onAppear { fittedDuration = max(1, layout.duration) }
+        .onExitCommand { draft = nil }
         .modifier(MaterialRemovalConfirmation(projectID: project.id, materialID: $pendingRemoval))
     }
 
     private var controls: some View {
         HStack(spacing: 14) {
-            Text("时间线").font(.system(size: 12, weight: .semibold))
+            Text(verbatim: "时间线").font(.system(size: 12, weight: .semibold))
             Text("\(project.materials.count) 段素材").font(.caption).foregroundStyle(palette.textSecondary)
+            Button(action: splitAtPlayhead) { Image(systemName: "scissors") }
+                .help("在播放头处分割（⌘B）").accessibilityLabel("分割素材")
+                .keyboardShortcut("b", modifiers: .command).disabled(!canSplit)
+            Button { state.undo() } label: { Image(systemName: "arrow.uturn.backward") }
+                .help("撤销").accessibilityLabel("撤销").disabled(!state.canUndo)
+            Button { state.redo() } label: { Image(systemName: "arrow.uturn.forward") }
+                .help("重做").accessibilityLabel("重做").disabled(!state.canRedo)
             Spacer()
             Button { onSeek(playhead - 1 / 30) } label: { Image(systemName: "backward.end") }
                 .help("上一帧").accessibilityLabel("上一帧").disabled(!canPlay)
@@ -119,10 +143,10 @@ struct AssemblyTimeline: View {
             Spacer()
             Button { zoom = max(0.5, zoom / 1.4) } label: { Image(systemName: "minus.magnifyingglass") }
                 .accessibilityLabel("缩小时间线")
-            Slider(value: $zoom, in: 0.5...8).frame(width: 90).accessibilityLabel("时间线缩放")
-            Button { zoom = min(8, zoom * 1.4) } label: { Image(systemName: "plus.magnifyingglass") }
+            Slider(value: Binding(get: { log2(zoom) }, set: { zoom = pow(2, $0) }), in: -1...6).frame(width: 90).accessibilityLabel("时间线缩放")
+            Button { zoom = min(64, zoom * 1.4) } label: { Image(systemName: "plus.magnifyingglass") }
                 .accessibilityLabel("放大时间线")
-            Button("适应") { zoom = 1 }.help("完整显示时间线")
+            Button { zoom = 1; fittedDuration = max(1, layout.duration) } label: { Text(verbatim: "适应") }.help("完整显示时间线")
         }
         .font(.system(size: 11, design: .monospaced))
         .buttonStyle(.borderless)
@@ -174,25 +198,38 @@ struct AssemblyTimeline: View {
         ZStack(alignment: .leading) {
             palette.surface1.opacity(0.35)
             ForEach(layout.clips) { clip in
-                let material = project.materials[clip.index]
-                ForEach(Array(material.subtitles.enumerated()), id: \.offset) { index, subtitle in
+                let material = displayProject.materials[clip.index]
+                ForEach(Array(material.subtitles.enumerated()).filter { $0.element.end > material.inPoint && $0.element.start < material.outPoint }, id: \.offset) { index, subtitle in
                     let key = "\(clip.id)-\(index)"
-                    Button {
-                        selectedMaterial = clip.id
-                        selectedSubtitle = key
-                        onSeek(clip.start + subtitle.start)
-                    } label: {
-                        Text(subtitle.text).font(.system(size: 11)).lineLimit(1)
-                            .padding(.horizontal, 7)
-                            .frame(width: max(2, (subtitle.end - subtitle.start) * scale - 2), height: 32, alignment: .leading)
-                            .foregroundStyle(palette.textPrimary)
-                            .background(palette.warning.opacity(selectedSubtitle == key ? 0.38 : 0.18))
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-                            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(palette.warning.opacity(selectedSubtitle == key ? 0.9 : 0.35)))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("字幕：\(subtitle.text)，\(durationLabel(clip.start + subtitle.start))")
-                    .offset(x: (clip.start + subtitle.start) * scale)
+                    let selected = selectedSubtitle == key
+                    let visibleStart = max(material.inPoint, subtitle.start)
+                    let visibleEnd = min(material.outPoint, subtitle.end)
+                    let blockWidth = max(selected ? 24 : 2, (visibleEnd - visibleStart) * scale - 2)
+                    Text(subtitle.text).font(.system(size: 11)).lineLimit(1)
+                        .padding(.horizontal, selected ? 14 : 7)
+                        .frame(width: blockWidth, height: 32, alignment: .leading)
+                        .foregroundStyle(palette.textPrimary)
+                        .background(palette.warning.opacity(selected ? 0.38 : 0.18))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(selected ? palette.warning : palette.warning.opacity(0.35), lineWidth: selected ? 2 : 1))
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            selectedMaterial = clip.id; selectedSubtitle = key
+                            onSeek(clip.start + visibleStart - material.inPoint)
+                        }
+                        .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .named("assemblyTimeline")).onChanged {
+                            resize(materialID: clip.id, subtitle: index, edge: .move, translation: $0.translation.width, scale: scale)
+                        }.onEnded { _ in commitRange() })
+                        .overlay {
+                            if selected && blockWidth >= 22 && material.transcriptState != .running {
+                                rangeGrips(materialID: clip.id, subtitle: index, height: 32, color: palette.warning, scale: scale)
+                            }
+                        }
+                        .accessibilityElement(children: .contain)
+                        .accessibilityLabel("字幕：\(subtitle.text)，\(durationLabel(clip.start + visibleStart - material.inPoint))")
+                        .accessibilityAddTraits(.isButton)
+                        .zIndex(selected ? 2 : 0)
+                        .offset(x: (clip.start + visibleStart - material.inPoint) * scale)
                 }
             }
         }.frame(width: width, height: 34).clipped()
@@ -202,22 +239,22 @@ struct AssemblyTimeline: View {
         ZStack(alignment: .leading) {
             palette.surface1.opacity(0.35)
             ForEach(layout.clips) { clip in
-                let material = project.materials[clip.index]
-                let clipWidth = max(2, clip.duration * scale - 2)
+                let material = displayProject.materials[clip.index]
+                let clipWidth = max(selectedMaterial == clip.id ? 24 : 2, clip.duration * scale - 2)
                 TimelineFilmstrip(url: material.exportState == .complete ? ProjectLayout.picture(material, in: project) : nil,
-                    duration: clip.duration)
+                    duration: project.materials[clip.index].timelineDuration, start: project.materials[clip.index].inPoint)
                     .frame(width: clipWidth, height: 70)
                     .overlay(alignment: .topLeading) {
                         Text("素材 \(clip.index + 1) · \(durationLabel(clip.duration))")
                             .font(.system(size: 10, weight: .medium)).lineLimit(1)
                             .foregroundStyle(.white).padding(.horizontal, 6).padding(.vertical, 3)
-                            .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 3)).padding(5)
+                            .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 3)).padding(.leading, 14).padding(.top, 5)
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                     .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(
                         dropTarget == clip.id || selectedMaterial == clip.id ? palette.accent : palette.surface3, lineWidth: selectedMaterial == clip.id ? 2 : 1))
                     .contentShape(Rectangle())
-                    .onTapGesture { selectedMaterial = clip.id; onSeek(clip.start) }
+                    .onTapGesture { selectedMaterial = clip.id; selectedSubtitle = nil; onSeek(clip.start) }
                     .draggable(clip.id.uuidString)
                     .dropDestination(for: String.self) { values, location in
                         guard let value = values.first, let source = UUID(uuidString: value),
@@ -227,20 +264,105 @@ struct AssemblyTimeline: View {
                         return true
                     } isTargeted: { dropTarget = $0 ? clip.id : nil }
                     .contextMenu {
-                        if material.motionState == .failed {
-                            Button("重试动效") { onRetryMotion(clip.id) }
+                        Button("在播放头处分割") { selectedMaterial = clip.id; splitAtPlayhead(materialID: clip.id) }
+                            .disabled(!canSplit(materialID: clip.id))
+                        if material.inPoint > 0 || material.outPoint < material.duration {
+                            Button("恢复完整素材") { _ = state.setTrim(project.id, clip.id, start: 0, end: material.duration) }
                         }
+                        MaterialProcessingActions(projectID: project.id, materialID: clip.id)
                         Button("向前移动") { if clip.index > 0 { onMove(clip.id, layout.clips[clip.index - 1].id, false) } }.disabled(clip.index == 0)
                         Button("向后移动") { if clip.index + 1 < layout.clips.count { onMove(clip.id, layout.clips[clip.index + 1].id, true) } }.disabled(clip.index + 1 == layout.clips.count)
                         Divider()
-                        MaterialDeleteAction(projectID: project.id, materialID: clip.id) {
-                            pendingRemoval = clip.id
+                        MaterialDeleteAction(projectID: project.id, materialID: clip.id) { pendingRemoval = clip.id }
+                    }
+                    .overlay {
+                        if selectedMaterial == clip.id && clipWidth >= 22 && material.sourceReady {
+                            rangeGrips(materialID: clip.id, subtitle: nil, height: 70, color: palette.accent, scale: scale)
                         }
                     }
+                    .accessibilityElement(children: .contain)
                     .accessibilityLabel("素材 \(clip.index + 1)，时长 \(durationLabel(clip.duration))，可拖动排序")
                     .offset(x: clip.start * scale)
             }
         }.frame(width: width, height: 72).clipped()
+    }
+    private func rangeGrips(materialID: UUID, subtitle: Int?, height: Double, color: Color, scale: Double) -> some View {
+        HStack(spacing: 0) {
+            grip(materialID: materialID, subtitle: subtitle, edge: .start, height: height, color: color, scale: scale)
+            Spacer(minLength: 0).allowsHitTesting(false)
+            grip(materialID: materialID, subtitle: subtitle, edge: .end, height: height, color: color, scale: scale)
+        }
+    }
+    private func grip(materialID: UUID, subtitle: Int?, edge: TimelineRangeEdit.Edge, height: Double, color: Color, scale: Double) -> some View {
+        let label = (subtitle == nil ? "素材" : "字幕") + (edge == .start ? "开始边缘" : "结束边缘")
+        let material = displayProject.materials.first { $0.id == materialID }
+        let value: Double
+        if let subtitle, let material, material.subtitles.indices.contains(subtitle) {
+            value = edge == .start ? material.subtitles[subtitle].start : material.subtitles[subtitle].end
+        } else { value = edge == .start ? material?.inPoint ?? 0 : material?.outPoint ?? 0 }
+        return Capsule().fill(color).frame(width: 4, height: min(20, height * 0.55))
+            .frame(width: 12, height: height).background(color.opacity(0.12))
+            .contentShape(Rectangle())
+            .onHover { ( $0 ? NSCursor.resizeLeftRight : NSCursor.arrow ).set() }
+            .highPriorityGesture(DragGesture(minimumDistance: 1, coordinateSpace: .named("assemblyTimeline"))
+                .onChanged { resize(materialID: materialID, subtitle: subtitle, edge: edge, translation: $0.translation.width, scale: scale) }
+                .onEnded { _ in commitRange() })
+            .accessibilityLabel(label)
+            .accessibilityValue(AssemblyTimelineLayout.timecode(value))
+            .accessibilityIdentifier("assembly.\(subtitle == nil ? "clip" : "subtitle").\(materialID).\(subtitle.map(String.init) ?? "video").\(edge == .start ? "start" : "end")")
+            .accessibilityAdjustableAction { direction in
+                resize(materialID: materialID, subtitle: subtitle, edge: edge,
+                       translation: (direction == .increment ? 1 : -1) * scale / 30, scale: scale, snap: false)
+                commitRange()
+            }
+    }
+    private func resize(materialID: UUID, subtitle: Int?, edge: TimelineRangeEdit.Edge, translation: Double, scale: Double, snap: Bool = true) {
+        guard scale > 0, let material = project.materials.first(where: { $0.id == materialID }), material.sourceReady else { return }
+        selectedMaterial = materialID
+        if let subtitle { selectedSubtitle = "\(materialID)-\(subtitle)" } else { selectedSubtitle = nil }
+        let start: Double, end: Double, lower: Double, upper: Double
+        if let subtitle {
+            guard material.transcriptState != .running, material.subtitles.indices.contains(subtitle) else { return }
+            start = material.subtitles[subtitle].start; end = material.subtitles[subtitle].end
+            lower = max(material.inPoint, subtitle == 0 ? 0 : material.subtitles[subtitle - 1].end)
+            upper = min(material.outPoint, subtitle + 1 == material.subtitles.count ? material.duration : material.subtitles[subtitle + 1].start)
+        } else { start = material.inPoint; end = material.outPoint; lower = 0; upper = material.duration }
+        let clipStart = AssemblyTimelineLayout(materials: project.materials).clips.first(where: { $0.id == materialID })?.start ?? 0
+        let sourcePlayhead = playhead - clipStart + material.inPoint
+        let snaps = snap && !NSEvent.modifierFlags.contains(.option) ? [lower, upper, sourcePlayhead] : []
+        let range = TimelineRangeEdit.range(start: start, end: end, edge: edge, delta: translation / scale,
+                                           lower: lower, upper: upper, snapPoints: snaps, snapDistance: 6 / scale)
+        draft = RangeDraft(materialID: materialID, subtitleIndex: subtitle, range: range)
+    }
+    private func commitRange() {
+        guard let change = draft else { return }
+        draft = nil
+        let saved: Bool
+        if let index = change.subtitleIndex {
+            saved = state.setSubtitleTiming(project.id, change.materialID, index: index, start: change.range.lowerBound, end: change.range.upperBound)
+        } else {
+            saved = state.setTrim(project.id, change.materialID, start: change.range.lowerBound, end: change.range.upperBound)
+        }
+        if !saved { state.showToast("未能应用拖动，请等待字幕处理完成后重试。") }
+    }
+    private var canSplit: Bool { canSplit(materialID: selectedMaterial) }
+    private func canSplit(materialID: UUID?) -> Bool {
+        let clips = AssemblyTimelineLayout(materials: project.materials).clips
+        guard let clip = clips.first(where: { materialID == nil ? playhead >= $0.start && playhead < $0.end : $0.id == materialID }),
+              project.materials[clip.index].sourceReady else { return false }
+        return playhead - clip.start >= TimelineRangeEdit.frame - 0.000_001 && clip.end - playhead >= TimelineRangeEdit.frame - 0.000_001
+    }
+    private func splitAtPlayhead() { splitAtPlayhead(materialID: selectedMaterial) }
+    private func splitAtPlayhead(materialID: UUID?) {
+        let clips = AssemblyTimelineLayout(materials: project.materials).clips
+        guard let clip = clips.first(where: { materialID == nil ? playhead >= $0.start && playhead < $0.end : $0.id == materialID }),
+              let right = state.splitMaterial(project.id, clip.id, at: project.materials[clip.index].inPoint + playhead - clip.start) else { return }
+        selectedMaterial = right; selectedSubtitle = nil
+    }
+    private struct RangeDraft {
+        let materialID: UUID
+        let subtitleIndex: Int?
+        let range: ClosedRange<Double>
     }
 
     private func playheadView(height: CGFloat) -> some View {
@@ -262,6 +384,7 @@ struct AssemblyTimeline: View {
 private struct TimelineFilmstrip: View {
     let url: URL?
     let duration: Double
+    var start: Double = 0
     @State private var frames: [NSImage] = []
     var body: some View {
         GeometryReader { geometry in
@@ -276,7 +399,7 @@ private struct TimelineFilmstrip: View {
                 }
             }
         }
-        .task(id: url) {
+        .task(id: "\(url?.path ?? ""): \(start):\(duration)") {
             frames = []
             guard let url, duration > 0 else { return }
             let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
@@ -286,7 +409,7 @@ private struct TimelineFilmstrip: View {
             var images: [NSImage] = []
             for index in 0..<count {
                 guard !Task.isCancelled else { return }
-                if let frame = try? await generator.image(at: CMTime(seconds: duration * (Double(index) + 0.1) / Double(count), preferredTimescale: 600)) {
+                if let frame = try? await generator.image(at: CMTime(seconds: start + duration * (Double(index) + 0.1) / Double(count), preferredTimescale: 600)) {
                     images.append(NSImage(cgImage: frame.image, size: .zero))
                 }
             }

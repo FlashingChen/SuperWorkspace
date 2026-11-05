@@ -25,7 +25,7 @@ final class WorkflowTests: XCTestCase {
         XCTAssertEqual(restored.assembledSubtitles.first?.text, "已校对")
     }
 
-    func testRequiredMotionAndTranscriptGateExport() {
+    func testMotionFallsBackToOriginalAndCaptionsCanBeExcluded() {
         var project = VideoProject(name: "Test")
         var material = Material()
         material.duration = 1
@@ -34,11 +34,16 @@ final class WorkflowTests: XCTestCase {
         material.wantsMotion = true
         material.motionState = .failed
         project.materials = [material]
-        XCTAssertFalse(project.canExport)
+        XCTAssertTrue(project.canExport, "Failed optional motion must use the source")
+        XCTAssertEqual(ProjectLayout.picture(material, in: project), ProjectLayout.source(material, in: project))
         project.materials[0].motionState = .complete
         XCTAssertTrue(project.canExport)
         project.materials[0].transcriptState = .running
         XCTAssertFalse(project.canExport)
+        project.includeSubtitles = false
+        XCTAssertTrue(project.canExport)
+        project.materials[0].exportState = .failed
+        XCTAssertFalse(project.canExport, "Source export remains required")
     }
 
     func testLegacyMetadataStillDecodes() throws {

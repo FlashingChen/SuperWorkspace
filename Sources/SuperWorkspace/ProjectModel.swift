@@ -1,6 +1,6 @@
 import Foundation
 
-enum WorkStage: String, CaseIterable { case record = "录制", assemble = "拼装" }
+enum WorkStage: String, Codable, CaseIterable { case record = "录制", assemble = "拼装" }
 enum JobState: String, Codable { case idle, queued, running, complete, failed }
 
 struct Material: Identifiable, Codable, Equatable {
@@ -18,9 +18,25 @@ struct Material: Identifiable, Codable, Equatable {
     var subtitleLayoutVersion: Int?
     var subtitles: [TranscriptSegment] = []
     var sourceName = "source.mp4"
+    var storageID: UUID?
+    var mediaID: UUID { storageID ?? id }
+    var useOriginal: Bool?
+    var trimStart: Double?
+    var trimEnd: Double?
+
+    var sourceReady: Bool { duration.isFinite && duration > 0 && exportState == .complete }
+    var inPoint: Double { min(max(0, trimStart ?? 0), max(0, duration)) }
+    var outPoint: Double { min(duration, max(inPoint, trimEnd ?? duration)) }
+    var timelineDuration: Double { sourceReady ? max(0, outPoint - inPoint) : 0 }
+    var visibleSubtitles: [TranscriptSegment] {
+        subtitles.compactMap {
+            let start = max(inPoint, $0.start), end = min(outPoint, $0.end)
+            return end > start ? TranscriptSegment(start: start - inPoint, end: end - inPoint, text: $0.text) : nil
+        }
+    }
 
     var isReady: Bool {
-        duration.isFinite && duration > 0 && exportState == .complete && (!wantsMotion || motionState == .complete)
+        sourceReady && timelineDuration > 0
     }
     var motionLabel: String? {
         guard wantsMotion else { return nil }
@@ -39,8 +55,14 @@ struct VideoProject: Identifiable, Codable, Equatable {
     var createdAt = Date()
     var updatedAt = Date()
     var materials: [Material] = []
+    var includeSubtitles = true
+    var exportSRT: Bool?
+    var lastExportSRTName: String?
+    var canvasWidth: Double?
+    var canvasHeight: Double?
+    var lastExportName: String?
 
-    enum CodingKeys: String, CodingKey { case id, name, createdAt, updatedAt, materials }
+    enum CodingKeys: String, CodingKey { case id, name, createdAt, updatedAt, materials, includeSubtitles, canvasWidth, canvasHeight, lastExportName, exportSRT, lastExportSRTName }
     init(name: String) { self.name = name }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -49,15 +71,21 @@ struct VideoProject: Identifiable, Codable, Equatable {
         createdAt = try c.decode(Date.self, forKey: .createdAt)
         updatedAt = try c.decode(Date.self, forKey: .updatedAt)
         materials = try c.decodeIfPresent([Material].self, forKey: .materials) ?? []
+        includeSubtitles = try c.decodeIfPresent(Bool.self, forKey: .includeSubtitles) ?? true
+        canvasWidth = try c.decodeIfPresent(Double.self, forKey: .canvasWidth)
+        canvasHeight = try c.decodeIfPresent(Double.self, forKey: .canvasHeight)
+        exportSRT = try c.decodeIfPresent(Bool.self, forKey: .exportSRT)
+        lastExportSRTName = try c.decodeIfPresent(String.self, forKey: .lastExportSRTName)
+        lastExportName = try c.decodeIfPresent(String.self, forKey: .lastExportName)
     }
     var canExport: Bool {
-        !materials.isEmpty && materials.allSatisfy { $0.isReady && $0.transcriptState == .complete }
+        !materials.isEmpty && materials.allSatisfy { $0.isReady && (!(includeSubtitles || exportSRT == true) || $0.transcriptState == .complete) }
     }
     var assembledSubtitles: [TranscriptSegment] {
         var offset = 0.0
         return materials.flatMap { material -> [TranscriptSegment] in
-            defer { offset += material.duration }
-            return material.subtitles.map { TranscriptSegment(start: $0.start + offset, end: $0.end + offset, text: $0.text) }
+            defer { offset += material.timelineDuration }
+            return material.visibleSubtitles.map { TranscriptSegment(start: $0.start + offset, end: $0.end + offset, text: $0.text) }
         }
     }
 }
@@ -75,7 +103,7 @@ enum ProjectLayout {
     }
     static func url(_ name: String, for project: VideoProject) -> URL { directory(for: project).appendingPathComponent(name) }
     static func materialDirectory(_ material: Material, in project: VideoProject) -> URL {
-        directory(for: project).appendingPathComponent("materials/\(material.id.uuidString)", isDirectory: true)
+        directory(for: project).appendingPathComponent("materials/\(material.mediaID.uuidString)", isDirectory: true)
     }
     static func source(_ material: Material, in project: VideoProject) -> URL {
         materialDirectory(material, in: project).appendingPathComponent(material.sourceName).standardizedFileURL
@@ -84,7 +112,7 @@ enum ProjectLayout {
         materialDirectory(material, in: project).appendingPathComponent("motion.mp4")
     }
     static func picture(_ material: Material, in project: VideoProject) -> URL {
-        material.wantsMotion && material.motionState == .complete ? motion(material, in: project) : source(material, in: project)
+        material.wantsMotion && material.useOriginal != true && material.motionState == .complete ? motion(material, in: project) : source(material, in: project)
     }
     static func save(_ project: VideoProject) throws {
         try FileManager.default.createDirectory(at: directory(for: project), withIntermediateDirectories: true)

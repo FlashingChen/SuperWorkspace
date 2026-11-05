@@ -20,7 +20,8 @@ enum TranscriptService {
     }
 
     static func transcribe(video: URL, directory dir: URL, whisperModel model: String, language: String,
-                           correction: TranscriptCorrectionConfiguration? = nil) async throws -> TranscriptResult {
+                           correction: TranscriptCorrectionConfiguration? = nil,
+                           onPhase: @escaping @Sendable (String) -> Void = { _ in }) async throws -> TranscriptResult {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         if try await AVURLAsset(url: video).loadTracks(withMediaType: .audio).isEmpty {
             try Data("[]".utf8).write(to: dir.appendingPathComponent("transcript.json"), options: .atomic)
@@ -37,6 +38,7 @@ enum TranscriptService {
         try await extractAudio(from: video, to: wav)
 
         // whisper-cli 输出 srt 到 <outbase>.srt
+        onPhase("识别字幕")
         let outBase = dir.appendingPathComponent("transcript")
         _ = try await Shell.run(whisper, arguments: [
             "-m", model,
@@ -55,6 +57,7 @@ enum TranscriptService {
         try encoder.encode(segments).write(to: dir.appendingPathComponent("transcript-raw.json"), options: .atomic)
         let result: TranscriptResult
         if let correction {
+            onPhase("校正字幕")
             result = try await TranscriptCorrection.apply(segments, video: video, directory: dir, configuration: correction)
         } else {
             result = TranscriptResult(segments: segments, warning: nil)
