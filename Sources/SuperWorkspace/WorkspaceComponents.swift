@@ -40,15 +40,17 @@ struct StudioSelectionStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     @State private var hovering = false
     let selected: Bool
+    var cornerRadius: CGFloat = 8
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .foregroundStyle(palette.textPrimary)
-            .background(selected ? palette.accent.opacity(0.10) : (hovering || configuration.isPressed ? palette.surface1 : palette.bgBase), in: RoundedRectangle(cornerRadius: 8))
+            .background(selected ? palette.accent.opacity(0.10) : (hovering || configuration.isPressed ? palette.surface1 : palette.bgBase), in: RoundedRectangle(cornerRadius: cornerRadius))
             .overlay {
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: cornerRadius)
                     .strokeBorder(selected ? palette.accent : palette.surface2, lineWidth: 1)
             }
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
             .opacity(isEnabled ? (configuration.isPressed ? 0.75 : 1) : 0.38)
             .onHover { hovering = $0 }
     }

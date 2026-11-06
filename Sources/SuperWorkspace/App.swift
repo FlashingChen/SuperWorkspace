@@ -36,59 +36,33 @@ struct SuperWorkspaceApp: App {
 struct RootView: View {
     @Environment(\.palette) private var palette
     @EnvironmentObject private var state: AppState
-    @State private var visibility: NavigationSplitViewVisibility = .all
+    @AppStorage("projectPanelExpanded") private var projectPanelExpanded = true
     @State private var showNew = false
     @State private var showExport = false
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $visibility) {
-            SidebarView(onCreate: { showNew = true })
-                .navigationSplitViewColumnWidth(min: 200, ideal: 218, max: 260)
-        } detail: {
-            if let project = state.currentProject {
-                VStack(spacing: 0) {
-                    HStack(spacing: 24) {
-                        Text(project.name)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(palette.textSecondary)
-                            .lineLimit(1)
-                        Spacer(minLength: 20)
-                        HStack(spacing: 4) {
-                            ForEach(WorkStage.allCases, id: \.self) { stage in
-                                Button { state.stage = stage } label: {
-                                    Label(stage.rawValue, systemImage: stage == .record ? "record.circle" : "square.stack")
-                                        .font(.system(size: 12, weight: state.stage == stage ? .semibold : .regular))
-                                        .foregroundStyle(state.stage == stage ? palette.textPrimary : palette.textSecondary)
-                                        .padding(.horizontal, 16)
-                                        .frame(height: 34)
-                                        .background(state.stage == stage ? palette.surface1 : .clear, in: RoundedRectangle(cornerRadius: 8))
-                                }
-                                .buttonStyle(StudioContentButtonStyle())
-                                .accessibilityAddTraits(state.stage == stage ? .isSelected : [])
+        VStack(spacing: 0) {
+            workspaceHeader
+            HStack(spacing: 0) {
+                CompactProjectPanel(expanded: $projectPanelExpanded, onCreate: { showNew = true })
+                    .padding(.leading, 20)
+                    .padding(.trailing, projectPanelExpanded ? 12 : 4)
+                    .frame(maxHeight: .infinity)
+                Group {
+                    if let project = state.currentProject {
+                        VStack(spacing: 0) {
+                            Group {
+                                if state.stage == .record { RecordStepView(project: project) }
+                                else { AssemblyView(project: project) }
                             }
+                            .id(project.id)
+                            ExportResultBar(project: project)
                         }
-                        if state.stage == .assemble {
-                            Button { showExport = true } label: {
-                                Label {
-                                    Text(verbatim: state.exportingProjects.contains(project.id) ? "正在导出" : "导出成片")
-                                } icon: { Image(systemName: "arrow.up.right") }
-                            }
-                            .buttonStyle(StudioButtonStyle(kind: .primary))
-                            .disabled(project.materials.isEmpty || state.exportingProjects.contains(project.id))
-                        }
+                    } else {
+                        ProjectLibraryView(onCreate: { showNew = true })
                     }
-                    .padding(.horizontal, 36)
-                    .frame(height: 76)
-                    Rectangle().fill(palette.surface2.opacity(0.7)).frame(height: 1)
-                    Group {
-                        if state.stage == .record { RecordStepView(project: project) }
-                        else { AssemblyView(project: project) }
-                    }
-                    .id(project.id)
-                    ExportResultBar(project: project)
                 }
-            } else {
-                ProjectLibraryView(onCreate: { showNew = true })
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in state.saveSession() }
@@ -113,6 +87,57 @@ struct RootView: View {
             }
         }
     }
+
+    private var workspaceHeader: some View {
+        ZStack {
+            HStack(spacing: 10) {
+                ForEach(Array(WorkStage.allCases.enumerated()), id: \.element) { index, stage in
+                    if index > 0 {
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 14, weight: .light))
+                            .foregroundStyle(palette.textMuted).accessibilityHidden(true)
+                    }
+                    Button { state.stage = stage } label: {
+                        HStack(spacing: 8) {
+                            Text("\(index + 1)").monospacedDigit()
+                            Text(stage.rawValue)
+                        }
+                        .font(.system(size: 13, weight: .medium))
+                        .padding(.horizontal, 24).frame(height: 36)
+                    }
+                    .buttonStyle(StudioSelectionStyle(selected: state.currentProject != nil && state.stage == stage, cornerRadius: 18))
+                    .accessibilityAddTraits(state.currentProject != nil && state.stage == stage ? .isSelected : [])
+                    .disabled(state.currentProject == nil)
+                }
+            }
+            HStack {
+                Button { state.selectedProjectID = nil } label: {
+                    HStack(spacing: 8) {
+                        Image(nsImage: WorkspaceBrand.image(size: 28)).resizable().frame(width: 28, height: 28)
+                            .accessibilityHidden(true)
+                        Text(state.currentProject?.name ?? "SuperWorkspace")
+                            .font(.system(size: 12, weight: .medium))
+                            .lineLimit(1).frame(maxWidth: 180, alignment: .leading)
+                    }.padding(4)
+                }
+                .buttonStyle(StudioContentButtonStyle())
+                .accessibilityLabel("返回所有项目")
+                Spacer()
+                if let project = state.currentProject, state.stage == .assemble {
+                    Button { showExport = true } label: {
+                        Label(state.exportingProjects.contains(project.id) ? "正在导出" : "导出成片", systemImage: "arrow.up.right")
+                    }
+                    .buttonStyle(StudioButtonStyle(kind: .primary))
+                    .disabled(project.materials.isEmpty || state.exportingProjects.contains(project.id))
+                }
+                SettingsLink { Image(systemName: "slider.horizontal.3") }
+                    .buttonStyle(StudioButtonStyle(kind: .quiet))
+                    .accessibilityLabel("设置").help("设置")
+            }
+        }
+        .padding(.horizontal, 24).frame(height: 80)
+    }
+
 }
 
 struct ProjectLibraryView: View {
@@ -181,104 +206,4 @@ struct WindowConfigurator: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {}
-}
-
-struct SidebarView: View {
-    @Environment(\.palette) private var palette
-    @EnvironmentObject private var appState: AppState
-    var onCreate: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                Image(nsImage: WorkspaceBrand.image(size: 32))
-                    .resizable()
-                    .frame(width: 32, height: 32)
-                    .accessibilityHidden(true)
-                Text("SuperWorkspace")
-                    .font(.system(size: 14, weight: .semibold))
-                    .tracking(-0.3)
-            }
-            .foregroundStyle(palette.textPrimary)
-            .padding(.horizontal, 22)
-            .frame(height: 76)
-
-            Button(action: onCreate) {
-                HStack {
-                    Image(systemName: "plus").font(.system(size: 12, weight: .medium))
-                    Text("新建项目")
-                    Spacer()
-                    Text("⌘N").font(.system(size: 11)).foregroundStyle(palette.textMuted)
-                }
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(StudioButtonStyle())
-            .keyboardShortcut("n", modifiers: .command)
-            .padding(.horizontal, 18)
-            .padding(.bottom, 34)
-
-            Button { appState.selectedProjectID = nil } label: {
-                Label("所有项目", systemImage: "square.grid.2x2")
-                    .font(.system(size: 13, weight: appState.currentProject == nil ? .medium : .regular))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .buttonStyle(StudioButtonStyle(kind: .quiet))
-            .foregroundStyle(palette.textPrimary)
-            .padding(.horizontal, 18)
-            .padding(.bottom, 24)
-
-            Text(verbatim: "项目")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(palette.textMuted)
-                .padding(.horizontal, 26)
-                .padding(.bottom, 12)
-            ScrollView {
-                LazyVStack(spacing: 4) {
-                    ForEach(appState.projects) { project in
-                        let selected = appState.currentProject?.id == project.id
-                        Button { appState.select(project.id) } label: {
-                            HStack(spacing: 10) {
-                                Image(systemName: "film")
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(palette.textSecondary)
-                                Text(project.name)
-                                    .font(.system(size: 13, weight: selected ? .medium : .regular))
-                                    .lineLimit(1)
-                                Spacer(minLength: 0)
-                                if selected {
-                                    Circle().fill(palette.textSecondary).frame(width: 4, height: 4)
-                                }
-                            }
-                            .foregroundStyle(palette.textPrimary)
-                            .padding(.horizontal, 12)
-                            .frame(height: 42)
-                            .background(selected ? palette.bgBase : .clear, in: RoundedRectangle(cornerRadius: 8))
-                            .contentShape(RoundedRectangle(cornerRadius: 8))
-                        }
-                        .buttonStyle(StudioContentButtonStyle())
-                        .accessibilityAddTraits(selected ? .isSelected : [])
-                    }
-                    if appState.projects.isEmpty {
-                        Text("项目会保存在这里")
-                            .font(.system(size: 12))
-                            .foregroundStyle(palette.textMuted)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                    }
-                }
-                .padding(.horizontal, 14)
-            }
-            Spacer(minLength: 24)
-            SettingsLink {
-                Label { Text(verbatim: "设置") } icon: { Image(systemName: "slider.horizontal.3") }
-                    .font(.system(size: 12))
-                    .foregroundStyle(palette.textSecondary)
-            }
-            .buttonStyle(StudioButtonStyle(kind: .quiet))
-            .padding(.horizontal, 18)
-            .padding(.bottom, 20)
-        }
-        .background(palette.bgSidebar)
-    }
 }
