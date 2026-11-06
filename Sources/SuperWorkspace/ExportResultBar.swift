@@ -19,7 +19,7 @@ struct ExportResultBar: View {
                 }
                 Button("在 Finder 中显示", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
             }
-            .buttonStyle(.borderless).font(.system(size: 12)).padding(.horizontal, 20).frame(height: 42)
+            .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact)).font(.system(size: 12)).padding(.horizontal, 20).frame(height: 42)
             .background(palette.surface1)
         }
     }
@@ -34,6 +34,6 @@ private struct ExportProgressBar: View {
             if progress.fraction > 0 { Text(progress.fraction, format: .percent.precision(.fractionLength(0))).monospacedDigit() }
             Spacer()
             Button("取消导出") { progress.cancel() }.disabled(progress.isCancelled)
-        }.font(.system(size: 12)).padding(.horizontal, 20).frame(height: 42)
+        }.buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact)).font(.system(size: 12)).padding(.horizontal, 20).frame(height: 42)
     }
 }

@@ -86,3 +86,11 @@
 
 
 Avoid unnecessary secondary labels and descriptions. Let the layout do the explaining
+
+## 4. 控件与界面一致性
+
+- 应用及自有集成界面不得直接使用系统默认外观的按钮、开关、选择器、输入框、滑块或折叠控件。统一使用 `Studio*` 组件和 `Palette`；详细用法见 `docs/DESIGN.md`。
+- 常规按钮使用 `StudioButtonStyle`；工具栏和辅助操作使用 compact 尺寸；缩略图、导航等自定义内容按钮使用 `StudioContentButtonStyle`，不得用裸 `.plain` 或 `.borderless` 代替交互反馈。
+- 新增控件缺少对应组件时，先完善共享组件，再接入界面。禁止逐页面复制样式；浅色、深色、悬停、按下、禁用和键盘焦点均须可用，保留快捷键和辅助功能语义。
+- `.plain`、`.borderlessButton` 等底层样式仅可在共享组件内部用于绘制实现。系统菜单内容、文件选择器及权限提示保留 macOS 管理的行为和呈现，不重画系统界面。
+- 录制器的自有集成面板通过宿主提供的样式桥接接入共享组件；已有第三方定制控件保持其专用设计系统，不直接修改忽略目录或生成副本。

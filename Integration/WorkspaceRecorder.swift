@@ -12,6 +12,8 @@ public final class WorkspaceRecorder {
     private var observers: [UUID: AnyCancellable] = [:]
     private var onStart: ((UUID, Bool) throws -> URL)?
     private var onFinish: ((UUID, Result<URL, Error>) -> Void)?
+    public var exportSheetStyle: @MainActor (AnyView) -> AnyView = { $0 }
+    public var exportPrimaryActionStyle: @MainActor (AnyView) -> AnyView = { $0 }
     public var hasOpenSession: Bool { model != nil }
 
     public func present(
@@ -99,6 +101,10 @@ struct IntegratedExportSheet: View {
     @State private var error: String?
 
     var body: some View {
+        WorkspaceRecorder.shared.exportSheetStyle(AnyView(content))
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 24) {
             Text("完成录制").font(.title2.weight(.semibold))
             Toggle("添加 AI 动效", isOn: $wantsMotion)
@@ -106,9 +112,11 @@ struct IntegratedExportSheet: View {
             HStack {
                 Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
-                Button("确定") { submit() }
-                    .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-                    .disabled(mediaSession.prepared == nil)
+                WorkspaceRecorder.shared.exportPrimaryActionStyle(AnyView(
+                    Button("确定") { submit() }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(mediaSession.prepared == nil)
+                ))
             }
         }
         .padding(28).frame(width: 360)

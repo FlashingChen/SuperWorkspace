@@ -2,6 +2,7 @@ import AVFoundation
 import AppKit
 import Foundation
 import RecorderKit
+import SwiftUI
 
 @MainActor
 final class AppState: ObservableObject {
@@ -181,6 +182,12 @@ final class AppState: ObservableObject {
     }
     func record() {
         guard let projectID = selectedProjectID else { return }
+        WorkspaceRecorder.shared.exportSheetStyle = { content in
+            AnyView(ThemedContent { StudioSheetSurface { content } })
+        }
+        WorkspaceRecorder.shared.exportPrimaryActionStyle = { content in
+            AnyView(content.buttonStyle(StudioButtonStyle(kind: .primary)))
+        }
         WorkspaceRecorder.shared.present { [weak self] id, wantsMotion in
             guard let self, let project = self.projects.first(where: { $0.id == projectID }) else {
                 throw CocoaError(.fileNoSuchFile)

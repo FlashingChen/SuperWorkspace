@@ -72,7 +72,7 @@ struct RecordStepView: View {
                                                         .foregroundStyle(palette.ai).background(palette.bgDeep, in: Capsule()).padding(8)
                                                 }
                                             }
-                                    }.buttonStyle(.plain).disabled(material.exportState != .complete)
+                                    }.buttonStyle(StudioContentButtonStyle()).disabled(material.exportState != .complete)
                                     .overlay(alignment: .topTrailing) {
                                         MaterialActionsMenu(projectID: project.id, materialID: material.id)
                                             .foregroundStyle(.white)
@@ -95,7 +95,7 @@ struct RecordStepView: View {
                                             session.playhead = project.materials.prefix { $0.id != material.id }.reduce(0) { $0 + $1.timelineDuration }
                                             state.rememberEditor(project.id, session, flush: true)
                                             state.stage = .assemble
-                                        }.buttonStyle(.borderless).font(.caption)
+                                        }.buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact)).font(.caption)
                                     }
                                 }
                             }
@@ -122,7 +122,7 @@ struct PreviewSheet: View {
     @State private var player = AVPlayer()
     var body: some View {
         VStack {
-            VideoSurface(player: player).frame(minWidth: 700, minHeight: 400)
+            StudioPlayer(player: player).frame(minWidth: 700, minHeight: 400)
             Button("关闭", action: close).buttonStyle(StudioButtonStyle()).keyboardShortcut(.cancelAction).padding(12)
         }.onAppear { player.replaceCurrentItem(with: AVPlayerItem(url: url)) }
             .onDisappear { player.pause() }

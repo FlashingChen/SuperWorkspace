@@ -42,6 +42,7 @@ struct AssemblyView: View {
                                     VStack(spacing: 12) {
                                         Text(previewError).multilineTextAlignment(.center)
                                         Button("重试预览") { schedulePreview() }
+                                            .buttonStyle(StudioButtonStyle())
                                     }.foregroundStyle(.white).padding(24)
                                 }
                             }
@@ -105,13 +106,13 @@ struct AssemblyView: View {
                             Spacer()
                             Menu { MaterialProcessingActions(projectID: project.id, materialID: material.id) } label: {
                                 Image(systemName: "ellipsis")
-                            }.menuStyle(.borderlessButton).fixedSize().accessibilityLabel("素材处理操作")
+                            }.menuStyle(StudioMenuStyle()).fixedSize().accessibilityLabel("素材处理操作")
                         }
                         if material.wantsMotion {
-                            Picker("画面", selection: Binding(get: { material.useOriginal ?? false }, set: { state.setUseOriginal(project.id, material.id, $0) })) {
-                                Text("原片").tag(true)
-                                Text(verbatim: material.motionState == .complete ? "动效" : "动效处理中").tag(false)
-                            }.pickerStyle(.segmented).labelsHidden().accessibilityLabel("画面版本")
+                            StudioChoice(title: "画面版本", selection: Binding(
+                                get: { material.useOriginal ?? false },
+                                set: { state.setUseOriginal(project.id, material.id, $0) }),
+                                options: [(true, "原片"), (false, material.motionState == .complete ? "动效" : "动效处理中")])
                             if material.motionState != .complete { Text(material.motionError ?? material.motionLabel ?? "使用原片预览").font(.caption).foregroundStyle(palette.textSecondary) }
                         }
                         Divider()
@@ -120,7 +121,7 @@ struct AssemblyView: View {
                         Text("字幕").font(.system(size: 17, weight: .medium))
                         Spacer()
                         Button("AI 校正") { for material in project.materials { state.correctSubtitles(project.id, material.id) } }
-                            .font(.caption).buttonStyle(.borderless)
+                            .font(.caption).buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
                             .disabled(project.materials.contains { $0.transcriptState == .running }
                                 || !project.materials.contains { $0.transcriptState == .complete && !$0.subtitles.isEmpty })
                     }
@@ -138,11 +139,11 @@ struct AssemblyView: View {
                                     selectedSubtitle = key
                                     seek(globalStart(material, subtitle.start))
                                 } label: { Text(durationLabel(globalStart(material, subtitle.start))).font(.caption.monospacedDigit()) }
-                                    .buttonStyle(.plain).foregroundStyle(palette.textSecondary)
+                                    .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact)).foregroundStyle(palette.textSecondary)
                                 TextField("字幕", text: Binding(
                                     get: { state.projects.first(where: { $0.id == project.id })?.materials.first(where: { $0.id == material.id })?.subtitles[safe: index]?.text ?? subtitle.text },
                                     set: { state.editSubtitle(projectID: project.id, materialID: material.id, index: index, text: $0) }
-                                ), axis: .vertical).textFieldStyle(.plain).lineLimit(2...4)
+                                ), axis: .vertical).textFieldStyle(StudioTextFieldStyle()).lineLimit(2...4)
                                     .disabled(material.transcriptState == .running)
                                     .onTapGesture { selectedMaterial = material.id; selectedSubtitle = key }
 

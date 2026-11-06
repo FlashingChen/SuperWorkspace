@@ -3,6 +3,7 @@ import SwiftUI
 struct MovieExportSheet: View {
     @EnvironmentObject private var state: AppState
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.palette) private var palette
     let project: VideoProject
     @State private var burnIn = true
     @State private var separateSRT = false
@@ -24,26 +25,33 @@ struct MovieExportSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
             Text(verbatim: "导出成片").font(.system(size: 22, weight: .semibold))
-            Form {
-                Picker("画幅", selection: $canvas) {
-                    if let width = project.canvasWidth, let height = project.canvasHeight {
-                        Text("当前 · \(Int(width)) × \(Int(height))").tag("current")
-                    } else { Text("原始素材").tag("current") }
-                    Text("横屏 · 1920 × 1080").tag("landscape")
-                    Text("竖屏 · 1080 × 1920").tag("portrait")
-                    Text("方形 · 1080 × 1080").tag("square")
-                    Text("跟随原始素材").tag("source")
+            VStack(alignment: .leading, spacing: 12) {
+                Text("画幅").font(.system(size: 13, weight: .medium))
+                HStack(spacing: 10) {
+                    canvasOption("current", title: "当前画幅", dimensions: currentDimensions)
+                    canvasOption("source", title: "原始素材", dimensions: "跟随素材")
                 }
+                HStack(spacing: 10) {
+                    canvasOption("landscape", title: "横屏", dimensions: "1920 × 1080", ratio: 16.0 / 9.0)
+                    canvasOption("portrait", title: "竖屏", dimensions: "1080 × 1920", ratio: 9.0 / 16.0)
+                    canvasOption("square", title: "方形", dimensions: "1080 × 1080", ratio: 1)
+                }
+            }
+            VStack(spacing: 0) {
                 Toggle("嵌入样式字幕", isOn: $burnIn)
+                Rectangle().fill(palette.surface2).frame(height: 1)
                 Toggle("另存 SRT 字幕文件", isOn: $separateSRT)
                     .help("SRT 保存文字与时间码；画面中的字幕样式通过嵌入字幕保留。")
             }
+            .toggleStyle(StudioToggleStyle())
             if !configured.canExport {
                 Text(configured.materials.contains(where: { !$0.isReady }) ? "请先完成素材导出或移除失败素材。" : "字幕仍在处理，可等待完成，或关闭字幕选项后导出视频。")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.system(size: 12)).foregroundStyle(palette.textSecondary)
             }
             HStack {
-                Button { dismiss() } label: { Text(verbatim: "取消") }.keyboardShortcut(.cancelAction)
+                Button { dismiss() } label: { Text(verbatim: "取消") }
+                    .buttonStyle(StudioButtonStyle(kind: .secondary))
+                    .keyboardShortcut(.cancelAction)
                 Spacer()
                 Button {
                     let output = configured
@@ -55,12 +63,63 @@ struct MovieExportSheet: View {
                         state.export()
                         dismiss()
                     }
-                } label: { Text(verbatim: "导出成片") }
+                } label: { Label("导出成片", systemImage: "arrow.up.right") }
                     .buttonStyle(StudioButtonStyle(kind: .primary)).keyboardShortcut(.defaultAction)
                     .disabled(!configured.canExport || state.exportingProjects.contains(project.id))
             }
         }
-        .padding(28).frame(width: 460)
+        .padding(28).frame(width: 520)
+        .foregroundStyle(palette.textPrimary)
+        .background(palette.bgBase)
         .onAppear { burnIn = project.includeSubtitles; separateSRT = project.exportSRT ?? false }
+    }
+
+    private var currentDimensions: String {
+        if let width = project.canvasWidth, let height = project.canvasHeight {
+            return "\(Int(width)) × \(Int(height))"
+        }
+        return "跟随素材"
+    }
+
+    private func canvasOption(_ value: String, title: String, dimensions: String, ratio: CGFloat? = nil) -> some View {
+        let selected = canvas == value
+        return Button { canvas = value } label: {
+            VStack(alignment: .leading, spacing: 12) {
+                if let ratio {
+                    HStack {
+                        RoundedRectangle(cornerRadius: 3)
+                            .strokeBorder(selected ? palette.accent : palette.textSecondary, lineWidth: 1.5)
+                            .frame(width: ratio >= 1 ? 28 : 28 * ratio, height: ratio >= 1 ? 28 / ratio : 28)
+                            .frame(width: 30, height: 30)
+                            .accessibilityHidden(true)
+                        Spacer(minLength: 0)
+                        selectionMark(selected)
+                    }
+                }
+                HStack(alignment: .top, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(title).font(.system(size: 13, weight: .medium))
+                        Text(dimensions).font(.system(size: 11)).monospacedDigit()
+                            .foregroundStyle(palette.textSecondary)
+                    }
+                    if ratio == nil {
+                        Spacer(minLength: 0)
+                        selectionMark(selected)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(12)
+        }
+        .buttonStyle(StudioSelectionStyle(selected: selected))
+        .accessibilityLabel("\(title)，\(dimensions)")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private func selectionMark(_ selected: Bool) -> some View {
+        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+            .font(.system(size: 14, weight: .medium))
+            .foregroundStyle(selected ? palette.accent : palette.surface3)
+            .accessibilityHidden(true)
     }
 }

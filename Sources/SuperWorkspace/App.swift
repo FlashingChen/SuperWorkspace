@@ -9,6 +9,10 @@ struct SuperWorkspaceApp: App {
         WindowGroup {
             ThemedContent {
                 RootView().environmentObject(appState).background(WindowConfigurator())
+                    .buttonStyle(StudioButtonStyle())
+                    .toggleStyle(StudioToggleStyle())
+                    .textFieldStyle(StudioTextFieldStyle())
+                    .menuStyle(StudioMenuStyle())
             }
             .frame(minWidth: 1100, minHeight: 700)
             .preferredColorScheme(AppearanceResolver.scheme(for: appearanceMode))
@@ -22,7 +26,10 @@ struct SuperWorkspaceApp: App {
                 Button("重做") { appState.redo() }.keyboardShortcut("z", modifiers: [.command, .shift]).disabled(!appState.canRedo)
             }
         }
-        Settings { ThemedContent { SettingsView() } }
+        Settings {
+            ThemedContent { SettingsView() }
+                .preferredColorScheme(AppearanceResolver.scheme(for: appearanceMode))
+        }
     }
 }
 
@@ -56,7 +63,7 @@ struct RootView: View {
                                         .frame(height: 34)
                                         .background(state.stage == stage ? palette.surface1 : .clear, in: RoundedRectangle(cornerRadius: 8))
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(StudioContentButtonStyle())
                                 .accessibilityAddTraits(state.stage == stage ? .isSelected : [])
                             }
                         }
@@ -100,9 +107,11 @@ struct RootView: View {
                     .padding(24)
             }
         }
-        .alert("操作未完成", isPresented: Binding(get: { state.error != nil }, set: { if !$0 { state.error = nil } })) {
-            Button("确定") { state.error = nil }
-        } message: { Text(state.error ?? "") }
+        .sheet(isPresented: Binding(get: { state.error != nil }, set: { if !$0 { state.error = nil } })) {
+            StudioMessageSheet(title: "操作未完成", message: state.error ?? "", actionTitle: "确定") {
+                state.error = nil
+            }
+        }
     }
 }
 
@@ -142,7 +151,7 @@ struct ProjectLibraryView: View {
                                     }
                                     .contentShape(Rectangle())
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(StudioContentButtonStyle())
                             }
                         }
                     }
@@ -246,7 +255,7 @@ struct SidebarView: View {
                             .background(selected ? palette.bgBase : .clear, in: RoundedRectangle(cornerRadius: 8))
                             .contentShape(RoundedRectangle(cornerRadius: 8))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(StudioContentButtonStyle())
                         .accessibilityAddTraits(selected ? .isSelected : [])
                     }
                     if appState.projects.isEmpty {

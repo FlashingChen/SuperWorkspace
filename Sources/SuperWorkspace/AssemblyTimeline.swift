@@ -117,7 +117,7 @@ struct AssemblyTimeline: View {
     }
 
     private var controls: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 6) {
             Text(verbatim: "时间线").font(.system(size: 12, weight: .semibold))
             Text("\(project.materials.count) 段素材").font(.caption).foregroundStyle(palette.textSecondary)
             Button(action: splitAtPlayhead) { Image(systemName: "scissors") }
@@ -143,13 +143,13 @@ struct AssemblyTimeline: View {
             Spacer()
             Button { zoom = max(0.5, zoom / 1.4) } label: { Image(systemName: "minus.magnifyingglass") }
                 .accessibilityLabel("缩小时间线")
-            Slider(value: Binding(get: { log2(zoom) }, set: { zoom = pow(2, $0) }), in: -1...6).frame(width: 90).accessibilityLabel("时间线缩放")
+            StudioSlider(value: Binding(get: { log2(zoom) }, set: { zoom = pow(2, $0) }), range: -1...6).frame(width: 90).accessibilityLabel("时间线缩放")
             Button { zoom = min(64, zoom * 1.4) } label: { Image(systemName: "plus.magnifyingglass") }
                 .accessibilityLabel("放大时间线")
             Button { zoom = 1; fittedDuration = max(1, layout.duration) } label: { Text(verbatim: "适应") }.help("完整显示时间线")
         }
         .font(.system(size: 11, design: .monospaced))
-        .buttonStyle(.borderless)
+        .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
         .padding(.horizontal, 18).frame(height: 44)
     }
 

@@ -16,7 +16,7 @@ struct MaterialActionsMenu: View {
                 .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(StudioMenuStyle())
         .menuIndicator(.hidden)
         .fixedSize()
         .help("更多操作")
@@ -49,13 +49,14 @@ struct MaterialRemovalConfirmation: ViewModifier {
     @Binding var materialID: UUID?
 
     func body(content: Content) -> some View {
-        content.confirmationDialog("删除这段素材？", isPresented: Binding(
-            get: { materialID != nil }, set: { if !$0 { materialID = nil } }),
-            titleVisibility: .visible, presenting: materialID) { id in
-            Button("删除素材", role: .destructive) { state.removeMaterial(projectID, id) }
-            Button("取消", role: .cancel) { }
-        } message: { _ in
-            Text("素材及其字幕将从当前项目移除，相关后台任务会取消。原始文件保留。")
+        content.sheet(isPresented: Binding(
+            get: { materialID != nil }, set: { if !$0 { materialID = nil } })) {
+            StudioMessageSheet(title: "删除这段素材？",
+                message: "素材及其字幕将从当前项目移除，相关后台任务会取消。原始文件保留。",
+                actionTitle: "删除素材", cancelTitle: "取消", destructive: true) {
+                if let id = materialID { state.removeMaterial(projectID, id) }
+                materialID = nil
+            }
         }
     }
 }
@@ -123,6 +124,6 @@ struct MaterialTaskStatus: View {
                     SettingsLink { Text("字幕设置") }
                 }
             }
-        }.font(.caption).buttonStyle(.borderless)
+        }.font(.caption).buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
     }
 }
