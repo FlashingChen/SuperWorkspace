@@ -200,39 +200,54 @@ struct AssemblyTimeline: View {
             ForEach(layout.clips) { clip in
                 let material = displayProject.materials[clip.index]
                 ForEach(Array(material.subtitles.enumerated()).filter { $0.element.end > material.inPoint && $0.element.start < material.outPoint }, id: \.offset) { index, subtitle in
-                    let key = "\(clip.id)-\(index)"
-                    let selected = selectedSubtitle == key
-                    let visibleStart = max(material.inPoint, subtitle.start)
-                    let visibleEnd = min(material.outPoint, subtitle.end)
-                    let blockWidth = max(selected ? 24 : 2, (visibleEnd - visibleStart) * scale - 2)
-                    Text(subtitle.text).font(.studio(.caption)).lineLimit(1)
-                        .padding(.horizontal, selected ? Metrics.space3 : Metrics.space2)
-                        .frame(width: blockWidth, height: 32, alignment: .leading)
-                        .foregroundStyle(palette.textPrimary)
-                        .background(palette.warning.opacity(selected ? 0.38 : 0.18))
-                        .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusXS))
-                        .overlay(RoundedRectangle(cornerRadius: Metrics.radiusXS).strokeBorder(selected ? palette.warning : palette.warning.opacity(0.35), lineWidth: selected ? 2 : 1))
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            selectedMaterial = clip.id; selectedSubtitle = key
-                            onSeek(clip.start + visibleStart - material.inPoint)
-                        }
-                        .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .named("assemblyTimeline")).onChanged {
-                            resize(materialID: clip.id, subtitle: index, edge: .move, translation: $0.translation.width, scale: scale)
-                        }.onEnded { _ in commitRange() })
-                        .overlay {
-                            if selected && blockWidth >= 22 && material.transcriptState != .running {
-                                rangeGrips(materialID: clip.id, subtitle: index, height: 32, color: palette.warning, scale: scale)
-                            }
-                        }
-                        .accessibilityElement(children: .contain)
-                        .accessibilityLabel("字幕：\(subtitle.text)，\(durationLabel(clip.start + visibleStart - material.inPoint))")
-                        .accessibilityAddTraits(.isButton)
-                        .zIndex(selected ? 2 : 0)
-                        .offset(x: (clip.start + visibleStart - material.inPoint) * scale)
+                    subtitleBlock(subtitle, index: index, material: material, clip: clip, scale: scale)
                 }
             }
         }.frame(width: width, height: 34).clipped()
+    }
+
+    private func subtitleBlock(_ subtitle: TranscriptSegment, index: Int, material: Material,
+                               clip: AssemblyTimelineLayout.Clip, scale: Double) -> some View {
+        let key = "\(clip.id)-\(index)"
+        let selected = selectedSubtitle == key
+        let visibleStart = max(material.inPoint, subtitle.start)
+        let visibleEnd = min(material.outPoint, subtitle.end)
+        let start = clip.start + visibleStart - material.inPoint
+        let width = CGFloat(max(selected ? 24 : 2, (visibleEnd - visibleStart) * scale - 2))
+        let shape = RoundedRectangle(cornerRadius: Metrics.radiusXS)
+        let borderColor = selected ? palette.warning : palette.warning.opacity(0.35)
+        let label = Text(subtitle.text).font(.studio(.caption)).lineLimit(1)
+        let block = label
+            .padding(.horizontal, selected ? Metrics.space3 : Metrics.space2)
+            .frame(width: width, height: 32, alignment: .leading)
+            .foregroundStyle(palette.textPrimary)
+            .background(palette.warning.opacity(selected ? 0.38 : 0.18))
+            .clipShape(shape)
+            .overlay(shape.strokeBorder(borderColor, lineWidth: selected ? 2 : 1))
+        let drag = DragGesture(minimumDistance: 4, coordinateSpace: .named("assemblyTimeline"))
+            .onChanged { value in
+                resize(materialID: clip.id, subtitle: index, edge: .move, translation: value.translation.width, scale: scale)
+            }
+            .onEnded { _ in commitRange() }
+
+        return block
+            .contentShape(Rectangle())
+            .onTapGesture {
+                selectedMaterial = clip.id
+                selectedSubtitle = key
+                onSeek(start)
+            }
+            .gesture(drag)
+            .overlay {
+                if selected && width >= 22 && material.transcriptState != .running {
+                    rangeGrips(materialID: clip.id, subtitle: index, height: 32, color: palette.warning, scale: scale)
+                }
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("字幕：\(subtitle.text)，\(durationLabel(start))")
+            .accessibilityAddTraits(.isButton)
+            .zIndex(selected ? 2 : 0)
+            .offset(x: start * scale)
     }
 
     private func videoTrack(width: CGFloat, scale: Double) -> some View {
