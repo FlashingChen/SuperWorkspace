@@ -1,0 +1,10 @@
+{
+  "name": "superworkspace-remotion-runtime",
+  "private": true,
+  "dependencies": {
+    "@remotion/cli": "4.0.540",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "remotion": "4.0.540"
+  }
+}

@@ -127,6 +127,10 @@ final class SettingsStore: ObservableObject {
         for c in candidates where FileManager.default.fileExists(atPath: c) {
             return c
         }
+        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("MediaRuntime/ggml-base.bin"),
+           FileManager.default.isReadableFile(atPath: bundled.path) {
+            return bundled.path
+        }
         return ""
     }
 }

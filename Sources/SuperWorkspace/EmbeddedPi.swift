@@ -26,12 +26,17 @@ enum EmbeddedPi {
         guard let runtime else {
             throw ShellError.exitStatus(-1, "内置 Pi 组件缺失，请重新安装应用。")
         }
-        let request = Request(baseURL: connection.endpoint.baseURL.absoluteString, model: connection.model,
-                              key: connection.key, system: system, prompt: prompt, tools: tools, images: images)
         let permittedVariables: Set<String> = ["HOME", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL"]
         var environment = ProcessInfo.processInfo.environment.filter { permittedVariables.contains($0.key) }
-        environment["PATH"] = ([runtime.node.deletingLastPathComponent().path] + ToolPaths.installDirectories
+        let bundledPaths = [runtime.node.deletingLastPathComponent().path, ToolPaths.bundledMediaDirectory?.path].compactMap { $0 }
+        environment["PATH"] = (bundledPaths + ToolPaths.installDirectories
             + ["/bin", "/usr/sbin", "/sbin"]).joined(separator: ":")
+        if tools {
+            try await RemotionRuntime.prepare(in: directory, node: runtime.node, environment: environment)
+        }
+        let instructions = tools ? system + "\n\n" + RemotionRuntime.instructions : system
+        let request = Request(baseURL: connection.endpoint.baseURL.absoluteString, model: connection.model,
+                              key: connection.key, system: instructions, prompt: prompt, tools: tools, images: images)
         return try await Shell.run(runtime.node.path, arguments: [runtime.runner.path],
                                    workingDirectory: directory, timeout: timeout,
                                    standardInput: JSONEncoder().encode(request), environment: environment)

@@ -15,10 +15,8 @@
 - [Pi](https://github.com/earendil-works/pi) SDK 采用 MIT License，固定依赖见 `Integration/PiRuntime/package-lock.json`。应用携带上游许可证 `PiRuntime/Pi-LICENSE` 和 npm 依赖附带的许可证。
 - [Node.js](https://nodejs.org/) 和随其发行的 npm 来自官方发行包，版本和校验值由 `scripts/prepare-pi.py` 固定。应用携带发行包附带的许可证。
 
-## 另行安装的工具
+## 本地媒体工具
 
-- [whisper.cpp](https://github.com/ggml-org/whisper.cpp) 用于本地字幕识别。
-- [FFmpeg](https://ffmpeg.org/) 用于字幕任务的音频提取。
-- [Remotion](https://github.com/remotion-dev/remotion) 用于外部执行器生成动效。
-
-这些工具、模型及外部 AI 执行器不随本仓库分发，各自适用其许可证与服务条款。
+- [FFmpeg](https://ffmpeg.org/) 和 FFprobe 以独立命令行程序运行。应用包含 LGPL 2.1 许可证。每个包含 FFmpeg 的 [GitHub Release](https://github.com/FlashingChen/SuperWorkspace/releases) 同时提供对应源码和构建参数。
+- [whisper.cpp](https://github.com/ggml-org/whisper.cpp) 与 [Whisper Base](https://github.com/openai/whisper) 用于本地字幕识别。应用保留两者的 MIT 许可证。
+- [Remotion](https://github.com/remotion-dev/remotion) 及其浏览器在首次动效任务中安装，适用各自的许可证与服务条款。

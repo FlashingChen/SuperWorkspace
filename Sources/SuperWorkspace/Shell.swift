@@ -127,12 +127,22 @@ enum ShellError: LocalizedError {
 
 enum ToolPaths {
     static let installDirectories = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]
+    static var bundledMediaDirectory: URL? {
+        Bundle.main.resourceURL?.appendingPathComponent("MediaRuntime/bin")
+    }
 
     static func locate(_ name: String) -> String? {
         let candidates = installDirectories.map { "\($0)/\(name)" }
         return candidates.first { Shell.check($0) }
     }
 
-    static var ffmpeg: String? { locate("ffmpeg") }
-    static var whisperCLI: String? { locate("whisper-cli") }
+    private static func locateMediaTool(_ name: String) -> String? {
+        if let path = bundledMediaDirectory?.appendingPathComponent(name).path, Shell.check(path) {
+            return path
+        }
+        return locate(name)
+    }
+
+    static var ffmpeg: String? { locateMediaTool("ffmpeg") }
+    static var whisperCLI: String? { locateMediaTool("whisper-cli") }
 }

@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
 
 permissions: {}
 
@@ -13,7 +14,7 @@ concurrency:
 
 jobs:
   build:
-    if: ${{ github.event.created }}
+    if: ${{ github.ref_type == 'tag' && (github.event.created || github.event_name == 'workflow_dispatch') }}
     runs-on: macos-26
     timeout-minutes: 40
     permissions:
@@ -34,9 +35,8 @@ jobs:
       - name: Run Swift tests
         shell: bash
         run: |
-          if ! command -v ffmpeg >/dev/null; then
-            brew install ffmpeg
-          fi
+          if ! command -v ffmpeg >/dev/null; then brew install ffmpeg; fi
+          if ! command -v cmake >/dev/null; then brew install cmake; fi
           python3 scripts/prepare-recorder.py
           swift test
 
@@ -49,6 +49,7 @@ jobs:
           SUPERWORKSPACE_RELEASE_VERSION="${GITHUB_REF_NAME#v}" ./build-app.sh release
           app=".build/app/SuperWorkspace.app"
           python3 Tests/PiRuntime/smoke.py "$app/Contents/Resources/PiRuntime"
+          python3 Tests/MediaRuntime/smoke.py "$app/Contents/Resources/MediaRuntime"
 
       - name: Archive the app and checksum
         shell: bash
@@ -56,6 +57,7 @@ jobs:
           mkdir release
           asset="SuperWorkspace-$GITHUB_REF_NAME-macos-arm64.zip"
           ditto -c -k --sequesterRsrc --keepParent .build/app/SuperWorkspace.app "release/$asset"
+          cp .build/ffmpeg-8.0.1-source.tar.gz release/
           cd release
           shasum -a 256 "$asset" > "$asset.sha256"
 
@@ -86,17 +88,24 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           asset="SuperWorkspace-$GITHUB_REF_NAME-macos-arm64.zip"
+          source=ffmpeg-8.0.1-source.tar.gz
           sha256sum -c "$asset.sha256"
+          test -s "$source"
           if existing=$(gh release view "$GITHUB_REF_NAME" --json isDraft,assets 2>/dev/null); then
-            if jq -e --arg zip "$asset" --arg checksum "$asset.sha256" '
-              (.isDraft | not) and ([.assets[].name] | index($zip) != null and index($checksum) != null)
+            if jq -e --arg zip "$asset" --arg checksum "$asset.sha256" --arg source "$source" '
+              (.isDraft | not) and ([.assets[].name] | index($zip) != null and index($checksum) != null and index($source) != null)
             ' <<< "$existing" >/dev/null; then
-              echo "Release already published with both assets."
+              echo "Release already published with the expected assets."
               exit 0
             fi
             echo "::error::A release exists for this tag without the expected published assets."
             exit 1
           fi
-          gh release create "$GITHUB_REF_NAME" "$asset" "$asset.sha256" \
+          tutorial="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/docs/QUICKSTART.md"
+          notes=$(printf '%s\n\n%s\n\n%s' \
+            'Apple Silicon build for macOS 14 or later. Ad-hoc signed and unnotarized.' \
+            "Download the ZIP and follow the [setup and tutorial]($tutorial)." \
+            'The app includes FFmpeg under the LGPL 2.1 or later. Its corresponding source and build instructions are in the FFmpeg source archive below.')
+          gh release create "$GITHUB_REF_NAME" "$asset" "$asset.sha256" "$source" \
             --verify-tag --generate-notes --title "SuperWorkspace $GITHUB_REF_NAME" \
-            --notes 'Apple Silicon build for macOS 14 or later. This build is ad-hoc signed and is not notarized.'
+            --notes "$notes"

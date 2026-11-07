@@ -21,6 +21,9 @@ struct SuperWorkspaceApp: App {
         .defaultPosition(.center)
         .windowToolbarStyle(.unified)
         .commands {
+            CommandGroup(after: .help) {
+                Link("快速入门", destination: URL(string: "https://github.com/FlashingChen/SuperWorkspace/blob/main/docs/QUICKSTART.md")!)
+            }
             CommandGroup(replacing: .undoRedo) {
                 Button("撤销") { appState.undo() }.keyboardShortcut("z").disabled(!appState.canUndo)
                 Button("重做") { appState.redo() }.keyboardShortcut("z", modifiers: [.command, .shift]).disabled(!appState.canRedo)

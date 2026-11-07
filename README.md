@@ -28,14 +28,14 @@ SuperWorkspace 是一个原生 macOS 视频工作台。把屏幕演示与讲解�
 | 拼装与导出 | 视频与字幕双轨时间线、拖放排序、播放头定位与缩放，以原生 AVFoundation 合成带字幕的 MP4 |
 | 原生体验 | SwiftUI 界面，支持跟随系统、浅色和深色外观 |
 
-Apple Silicon 应用包发布于 [GitHub Releases](https://github.com/FlashingChen/SuperWorkspace/releases)，也可从源码构建。应用自带 Pi 和 Node.js。字幕设置可检查和安装工具，语音模型需另行准备。
+从 [GitHub Releases](https://github.com/FlashingChen/SuperWorkspace/releases) 下载 Apple Silicon 应用包，按[快速入门](docs/QUICKSTART.md)安装并完成第一段视频。从 v0.2.0 起，应用自带 Pi、Node.js、FFmpeg、whisper.cpp 和默认语音模型。启用 AI 时填写服务地址、模型和密钥。
 
 ## 开始使用
 
-### 环境
+### 源码构建环境
 
 - macOS 14 或更新版本；本地已在 Apple Silicon 上验证。
-- Xcode 26+、Python 3 和 Git。首次运行 Xcode，完成其工具安装与许可设置。
+- Xcode 26+、Python 3、Git 和 CMake。首次运行 Xcode，完成其工具安装与许可设置。
 - 打包 `.app` 需要本机可用且未过期的代码签名证书。构建会优先选择 Developer ID、Apple Development 或 Mac Developer 身份，也可用 `CODE_SIGN_IDENTITY` 指定。
 
 ### 构建并启动
@@ -84,13 +84,7 @@ flowchart LR
 
 ### 字幕
 
-安装命令行工具：
-
-```bash
-brew install ffmpeg whisper-cpp
-```
-
-在「设置 → 字幕」中选择 whisper.cpp 的 GGML `.bin` 模型和识别语言，再点击「测试字幕识别」验证工具及模型。已有 Homebrew 时可在设置中安装字幕工具。工具会从常见 Homebrew 与系统可执行目录中查找。
+应用默认使用内置的 FFmpeg、whisper.cpp 和多语言 Whisper Base。可在「设置 → 字幕」中更换 GGML `.bin` 模型或识别语言，再点击「测试字幕识别」验证配置。
 
 语音识别在本机执行。「AI 校正字幕」默认开启，沿用已配置的 AI 执行器，将字幕与本机提取的视频画面文字分批交给模型，辅助纠正同音词、术语与英文拼写。拼装页的「AI 校正」也可处理已有字幕，无需重新识别声音。
 
@@ -105,7 +99,7 @@ AI 仅返回文字，原时间段由应用保留；结果缺项、明显改写�
 | 内置 Pi | 填写兼容 OpenAI Chat Completions 的 API 基础地址、模型和密钥，测试后保存。密钥保存在 macOS 钥匙串。使用支持图片的模型时可开启「模型支持图片」。 |
 | Claude CLI | 使用已安装并完成认证的 Claude 执行器。 |
 
-应用包含 Pi SDK、Node.js 和 npm。内置 Pi 使用应用内配置同时处理字幕校正和 Remotion 动效。动效需要提供工具调用的模型，并沿用应用内置的 `workspace-tutorial-motion` 技能。渲染工程仍需安装其 Remotion 和浏览器等依赖。字幕校正仅使用文本请求。
+应用包含 Pi SDK、Node.js 和 npm。内置 Pi 使用应用内配置同时处理字幕校正和 Remotion 动效。动效需要提供工具调用的模型，并沿用应用内置的 `workspace-tutorial-motion` 技能。首次动效任务会自动下载 Remotion 和浏览器。字幕校正仅使用文本请求。
 
 Claude CLI 模式的追加参数每行一个，支持 `{source1}`、`{source2}`、`{brief}`、`{workdir}` 占位符。应用会检查动效结果的时长和音轨。画面内容仍需预览确认。
 

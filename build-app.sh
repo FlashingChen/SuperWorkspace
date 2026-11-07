@@ -24,6 +24,7 @@ fi
 
 python3 scripts/prepare-recorder.py
 python3 scripts/prepare-pi.py
+python3 scripts/prepare-media.py
 swift build -c "$config" --product SuperWorkspace
 binary_dir="$(swift build -c "$config" --show-bin-path)"
 [[ -f "$binary_dir/SuperWorkspace" ]]
@@ -44,6 +45,8 @@ iconutil -c icns .build/Workspace.iconset -o "$app/Contents/Resources/Workspace.
 ditto Sources/SuperWorkspace/AgentSkills "$app/Contents/Resources/AgentSkills"
 ditto .build/PiRuntime "$app/Contents/Resources/PiRuntime"
 cp Integration/PiRuntime/run.mjs "$app/Contents/Resources/PiRuntime/run.mjs"
+ditto .build/MediaRuntime "$app/Contents/Resources/MediaRuntime"
+ditto Integration/RemotionRuntime "$app/Contents/Resources/RemotionRuntime"
 for resource in Fonts Onboarding en.lproj zh-Hans.lproj; do
   ditto "dogsc-source/Resources/$resource" "$app/Contents/Resources/$resource"
 done
