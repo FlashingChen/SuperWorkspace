@@ -21,7 +21,7 @@ final class SettingsStore: ObservableObject {
     @AppStorage("aiMotionLaunchPath") var aiMotionLaunchPath: String = ""
     @AppStorage("aiMotionExtraArgs") var aiMotionExtraArgs: String = ""
     @AppStorage("whisperModelPath") var whisperModelPath: String = ""
-    @AppStorage("whisperLanguage") var whisperLanguage: String = "zh"
+    @AppStorage("whisperLanguage") var whisperLanguage: String = "auto"
     @AppStorage("transcriptAICorrection") var transcriptAICorrection = true
     @AppStorage("aiAPIBaseURL") var aiAPIBaseURL = ""
     @AppStorage("aiAPIModel") var aiAPIModel = ""

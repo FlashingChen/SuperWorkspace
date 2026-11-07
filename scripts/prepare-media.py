@@ -84,6 +84,8 @@ def main():
         whisper_source = stage / "whisper"
         extract(ffmpeg, ffmpeg_source)
         extract(whisper, whisper_source)
+        # The version script also searches parent Git directories in source archives.
+        shutil.copyfile(ffmpeg_source / "RELEASE", ffmpeg_source / "VERSION")
         recipe = "MACOSX_DEPLOYMENT_TARGET=14.0 ./configure " + " ".join(FFMPEG_FLAGS) + "\nmake\n"
         (ffmpeg_source / "SUPERWORKSPACE-BUILD.txt").write_text(recipe)
         source_archive = stage / FFMPEG_SOURCE.name

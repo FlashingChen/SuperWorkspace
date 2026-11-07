@@ -10,6 +10,8 @@ def main(runtime):
     binaries = runtime / "bin"
     model = runtime / "ggml-base.bin"
     environment = {"PATH": str(binaries) + ":/usr/bin:/bin"}
+    version = subprocess.check_output([binaries / "ffmpeg", "-version"], env=environment, text=True)
+    assert version.startswith("ffmpeg version 8.0.1 "), version.splitlines()[0]
     with tempfile.TemporaryDirectory() as temporary:
         audio = Path(temporary) / "audio.wav"
         subprocess.run([binaries / "ffmpeg", "-v", "error", "-f", "lavfi",

@@ -28,7 +28,7 @@ SuperWorkspace 是一个原生 macOS 视频工作台。把屏幕演示与讲解�
 | 拼装与导出 | 视频与字幕双轨时间线、拖放排序、播放头定位与缩放，以原生 AVFoundation 合成带字幕的 MP4 |
 | 原生体验 | SwiftUI 界面，支持跟随系统、浅色和深色外观 |
 
-从 [GitHub Releases](https://github.com/FlashingChen/SuperWorkspace/releases) 下载 Apple Silicon 应用包，按[快速入门](docs/QUICKSTART.md)安装并完成第一段视频。从 v0.2.0 起，应用自带 Pi、Node.js、FFmpeg、whisper.cpp 和默认语音模型。启用 AI 时填写服务地址、模型和密钥。
+从 [GitHub Releases](https://github.com/FlashingChen/SuperWorkspace/releases) 下载 Apple Silicon 应用包，按[快速入门](docs/QUICKSTART.md)安装并完成第一段视频。从 v0.2.1 起，应用自带 Pi、Node.js、FFmpeg、whisper.cpp 和默认语音模型。启用 AI 时填写服务地址、模型和密钥。
 
 ## 开始使用
 
