@@ -13,7 +13,7 @@ struct MaterialActionsMenu: View {
         } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 14, weight: .semibold))
-                .frame(width: 28, height: 28)
+                .frame(width: Metrics.controlCompact, height: Metrics.controlCompact)
                 .contentShape(Rectangle())
         }
         .menuStyle(StudioMenuStyle())
@@ -96,7 +96,7 @@ struct MaterialTaskStatus: View {
     let projectID: UUID
     let material: Material
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: Metrics.space2) {
             if material.wantsMotion && material.motionState != .complete {
                 HStack {
                     if material.motionState == .running { ProgressView().controlSize(.small) }
@@ -124,6 +124,6 @@ struct MaterialTaskStatus: View {
                     SettingsLink { Text("字幕设置") }
                 }
             }
-        }.font(.caption).buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
+        }.font(.studio(.small)).buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
     }
 }

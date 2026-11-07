@@ -79,7 +79,7 @@ struct AssemblyTimeline: View {
                 let scale = min(600, max(0.05, viewport / max(1, fittedDuration > 0 ? fittedDuration : layout.duration)) * zoom)
                 let width = max(viewport, layout.duration * scale + 32)
                 HStack(spacing: 0) {
-                    VStack(spacing: 12) {
+                    VStack(spacing: Metrics.space3) {
                         Color.clear.frame(height: 28)
                         trackLabel("字幕", symbol: "captions.bubble").frame(height: 34)
                         trackLabel("视频", symbol: "film").frame(height: 72)
@@ -90,7 +90,7 @@ struct AssemblyTimeline: View {
                     ScrollView(.horizontal) {
                         ZStack(alignment: .topLeading) {
                             grid(width: width, height: geometry.size.height - 16, scale: scale)
-                            VStack(alignment: .leading, spacing: 12) {
+                            VStack(alignment: .leading, spacing: Metrics.space3) {
                                 ruler(width: width, scale: scale)
                                 subtitleTrack(width: width, scale: scale)
                                 videoTrack(width: width, scale: scale)
@@ -103,7 +103,7 @@ struct AssemblyTimeline: View {
                         }
                         .frame(width: width, height: max(190, geometry.size.height - 16), alignment: .topLeading)
                         .coordinateSpace(name: "assemblyTimeline")
-                        .padding(.horizontal, 12)
+                        .padding(.horizontal, Metrics.space3)
                     }
                     .scrollIndicators(.visible)
                 }
@@ -117,9 +117,9 @@ struct AssemblyTimeline: View {
     }
 
     private var controls: some View {
-        HStack(spacing: 6) {
-            Text(verbatim: "时间线").font(.system(size: 12, weight: .semibold))
-            Text("\(project.materials.count) 段素材").font(.caption).foregroundStyle(palette.textSecondary)
+        HStack(spacing: Metrics.space1_5) {
+            Text(verbatim: "时间线").font(.studio(.smallStrong))
+            Text("\(project.materials.count) 段素材").font(.studio(.small)).foregroundStyle(palette.textSecondary)
             Button(action: splitAtPlayhead) { Image(systemName: "scissors") }
                 .help("在播放头处分割（⌘B）").accessibilityLabel("分割素材")
                 .keyboardShortcut("b", modifiers: .command).disabled(!canSplit)
@@ -148,13 +148,13 @@ struct AssemblyTimeline: View {
                 .accessibilityLabel("放大时间线")
             Button { zoom = 1; fittedDuration = max(1, layout.duration) } label: { Text(verbatim: "适应") }.help("完整显示时间线")
         }
-        .font(.system(size: 11, design: .monospaced))
+        .font(.studio(.timecode))
         .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
-        .padding(.horizontal, 18).frame(height: 44)
+        .padding(.horizontal, Metrics.space4).frame(height: 44)
     }
 
     private func trackLabel(_ title: String, symbol: String) -> some View {
-        Label(title, systemImage: symbol).font(.system(size: 11))
+        Label(title, systemImage: symbol).font(.studio(.caption))
             .foregroundStyle(palette.textSecondary).frame(maxWidth: .infinity)
     }
 
@@ -181,9 +181,9 @@ struct AssemblyTimeline: View {
                 var tick = Path()
                 tick.move(to: CGPoint(x: x, y: size.height - (major ? 9 : 4)))
                 tick.addLine(to: CGPoint(x: x, y: size.height))
-                context.stroke(tick, with: .color(palette.textMuted.opacity(0.6)), lineWidth: 1)
+                context.stroke(tick, with: .color(palette.surface3), lineWidth: 1)
                 if major {
-                    context.draw(Text(durationLabel(time)).font(.system(size: 10, design: .monospaced)).foregroundStyle(palette.textSecondary),
+                    context.draw(Text(durationLabel(time)).font(.studio(.timecode)).foregroundStyle(palette.textSecondary),
                         at: CGPoint(x: x + 4, y: 8), anchor: .leading)
                 }
             }
@@ -205,13 +205,13 @@ struct AssemblyTimeline: View {
                     let visibleStart = max(material.inPoint, subtitle.start)
                     let visibleEnd = min(material.outPoint, subtitle.end)
                     let blockWidth = max(selected ? 24 : 2, (visibleEnd - visibleStart) * scale - 2)
-                    Text(subtitle.text).font(.system(size: 11)).lineLimit(1)
-                        .padding(.horizontal, selected ? 14 : 7)
+                    Text(subtitle.text).font(.studio(.caption)).lineLimit(1)
+                        .padding(.horizontal, selected ? Metrics.space3 : Metrics.space2)
                         .frame(width: blockWidth, height: 32, alignment: .leading)
                         .foregroundStyle(palette.textPrimary)
                         .background(palette.warning.opacity(selected ? 0.38 : 0.18))
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(selected ? palette.warning : palette.warning.opacity(0.35), lineWidth: selected ? 2 : 1))
+                        .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusXS))
+                        .overlay(RoundedRectangle(cornerRadius: Metrics.radiusXS).strokeBorder(selected ? palette.warning : palette.warning.opacity(0.35), lineWidth: selected ? 2 : 1))
                         .contentShape(Rectangle())
                         .onTapGesture {
                             selectedMaterial = clip.id; selectedSubtitle = key
@@ -246,12 +246,12 @@ struct AssemblyTimeline: View {
                     .frame(width: clipWidth, height: 70)
                     .overlay(alignment: .topLeading) {
                         Text("素材 \(clip.index + 1) · \(durationLabel(clip.duration))")
-                            .font(.system(size: 10, weight: .medium)).lineLimit(1)
-                            .foregroundStyle(.white).padding(.horizontal, 6).padding(.vertical, 3)
-                            .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 3)).padding(.leading, 14).padding(.top, 5)
+                            .font(.studio(.micro)).lineLimit(1)
+                            .foregroundStyle(.white).padding(.horizontal, Metrics.space1_5).padding(.vertical, Metrics.space0_5)
+                            .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: Metrics.radiusXS)).padding(.leading, Metrics.space3).padding(.top, Metrics.space1_5)
                     }
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(
+                    .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusS))
+                    .overlay(RoundedRectangle(cornerRadius: Metrics.radiusS).strokeBorder(
                         dropTarget == clip.id || selectedMaterial == clip.id ? palette.accent : palette.surface3, lineWidth: selectedMaterial == clip.id ? 2 : 1))
                     .contentShape(Rectangle())
                     .onTapGesture { selectedMaterial = clip.id; selectedSubtitle = nil; onSeek(clip.start) }
@@ -367,7 +367,7 @@ struct AssemblyTimeline: View {
 
     private func playheadView(height: CGFloat) -> some View {
         VStack(spacing: 0) {
-            Image(systemName: "arrowtriangle.down.fill").font(.system(size: 12)).frame(height: 16)
+            Image(systemName: "arrowtriangle.down.fill").font(.studio(.small)).frame(height: 16)
             Rectangle().frame(width: 1, height: max(0, height - 16))
         }
         .foregroundStyle(palette.accent)
@@ -382,6 +382,7 @@ struct AssemblyTimeline: View {
 }
 
 private struct TimelineFilmstrip: View {
+    @Environment(\.palette) private var palette
     let url: URL?
     let duration: Double
     var start: Double = 0
@@ -390,7 +391,7 @@ private struct TimelineFilmstrip: View {
         GeometryReader { geometry in
             HStack(spacing: 0) {
                 if frames.isEmpty {
-                    Color.black.opacity(0.7).overlay { Image(systemName: "film").foregroundStyle(.white.opacity(0.5)) }
+                    palette.mediaGround.overlay { Image(systemName: "film").foregroundStyle(.white.opacity(0.5)) }
                 } else {
                     ForEach(frames.indices, id: \.self) { index in
                         Image(nsImage: frames[index]).resizable().scaledToFill()

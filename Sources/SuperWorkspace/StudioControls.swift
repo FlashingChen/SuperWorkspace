@@ -13,7 +13,7 @@ struct StudioPlayer: View {
     var body: some View {
         VStack(spacing: 0) {
             VideoSurface(player: player, controlsStyle: .none)
-            HStack(spacing: 10) {
+            HStack(spacing: Metrics.space2_5) {
                 Button {
                     if player.rate > 0 { player.pause(); playing = false }
                     else {
@@ -30,8 +30,8 @@ struct StudioPlayer: View {
                 .accessibilityLabel("预览播放位置").disabled(duration <= 0)
                 Text(durationLabel(duration)).monospacedDigit().foregroundStyle(palette.textSecondary)
             }
-            .font(.system(size: 11)).buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
-            .padding(.horizontal, 10).frame(height: 38).background(palette.bgBase)
+            .font(.studio(.timecode)).buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
+            .padding(.horizontal, Metrics.space2_5).frame(height: Metrics.control).background(palette.bgBase)
         }
         .onAppear {
             guard observer == nil else { return }
@@ -75,9 +75,9 @@ struct StudioMessageSheet: View {
     let action: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            Text(title).font(.system(size: 22, weight: .semibold))
-            Text(message).font(.system(size: 13)).foregroundStyle(palette.textSecondary)
+        VStack(alignment: .leading, spacing: Metrics.space6) {
+            Text(title).font(.studio(.heading))
+            Text(message).font(.studio(.body)).foregroundStyle(palette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
             HStack {
                 if let cancelTitle {
@@ -95,7 +95,7 @@ struct StudioMessageSheet: View {
                 }
             }
         }
-        .padding(28).frame(width: 440)
+        .padding(Metrics.space7).frame(width: 440)
         .foregroundStyle(palette.textPrimary).background(palette.bgBase)
     }
 }
@@ -108,8 +108,8 @@ struct StudioContentButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .background(hovering ? palette.surface1 : .clear, in: RoundedRectangle(cornerRadius: 8))
-            .opacity(isEnabled ? (configuration.isPressed ? 0.72 : 1) : 0.38)
+            .background(hovering ? palette.surface1 : .clear, in: RoundedRectangle(cornerRadius: Metrics.radiusM))
+            .opacity(isEnabled ? (configuration.isPressed ? Metrics.opacityPressed : 1) : Metrics.opacityDisabled)
             .onHover { hovering = $0 }
     }
 }
@@ -120,13 +120,13 @@ struct StudioChoice<Value: Hashable>: View {
     let options: [(Value, String)]
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Metrics.space2) {
             ForEach(options.indices, id: \.self) { index in
                 let option = options[index]
                 Button { selection = option.0 } label: {
                     Text(option.1)
-                        .font(.system(size: 12, weight: .medium))
-                        .padding(.horizontal, 10).frame(maxWidth: .infinity, minHeight: 36)
+                        .font(.studio(.small, weight: .medium))
+                        .padding(.horizontal, Metrics.space2_5).frame(maxWidth: .infinity, minHeight: Metrics.choice)
                 }
                 .buttonStyle(StudioSelectionStyle(selected: selection == option.0))
                 .accessibilityAddTraits(selection == option.0 ? .isSelected : [])
@@ -146,28 +146,28 @@ struct StudioTextFieldStyle: TextFieldStyle {
         configuration
             .textFieldStyle(.plain)
             .focused($focused)
-            .font(.system(size: 13))
-            .padding(10)
+            .font(.studio(.body))
+            .padding(Metrics.space2_5)
             .foregroundStyle(palette.textPrimary)
             .tint(palette.accent)
-            .background(palette.surface1, in: RoundedRectangle(cornerRadius: 8))
+            .background(palette.surface1, in: RoundedRectangle(cornerRadius: Metrics.radiusM))
             .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(focused ? palette.accent : palette.surface2, lineWidth: 1)
+                RoundedRectangle(cornerRadius: Metrics.radiusM)
+                    .strokeBorder(focused ? palette.accent : palette.borderStrong, lineWidth: 1)
             }
-            .opacity(isEnabled ? 1 : 0.38)
+            .opacity(isEnabled ? 1 : Metrics.opacityDisabled)
     }
 }
 
 struct StudioDisclosureStyle: DisclosureGroupStyle {
     func makeBody(configuration: Configuration) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: Metrics.space3) {
             Button { configuration.isExpanded.toggle() } label: {
                 HStack {
                     configuration.label
                     Spacer()
                     Image(systemName: configuration.isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 10, weight: .semibold)).accessibilityHidden(true)
+                        .font(.studio(.micro, weight: .semibold)).accessibilityHidden(true)
                 }.frame(maxWidth: .infinity)
             }
             .buttonStyle(StudioButtonStyle(kind: .quiet))
@@ -185,9 +185,9 @@ struct StudioMenuStyle: MenuStyle {
         Menu(configuration)
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
-            .padding(6)
-            .frame(minWidth: 28, minHeight: 28)
-            .background(hovering ? palette.surface1 : .clear, in: RoundedRectangle(cornerRadius: 8))
+            .padding(Metrics.space1_5)
+            .frame(minWidth: Metrics.controlCompact, minHeight: Metrics.controlCompact)
+            .background(hovering ? palette.surface1 : .clear, in: RoundedRectangle(cornerRadius: Metrics.radiusM))
             .onHover { hovering = $0 }
     }
 }

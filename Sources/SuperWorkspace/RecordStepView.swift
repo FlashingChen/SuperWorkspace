@@ -2,15 +2,16 @@ import AVKit
 import SwiftUI
 
 struct MaterialThumbnail: View {
+    @Environment(\.palette) private var palette
     let url: URL?
     @State private var image: NSImage?
     var body: some View {
         ZStack {
-            Color.black
+            palette.mediaGround
             if let image { Image(nsImage: image).resizable().scaledToFit() }
-            else { Image(systemName: "video").font(.largeTitle).foregroundStyle(.secondary) }
+            else { Image(systemName: "video").font(.largeTitle).foregroundStyle(Color.white.opacity(0.5)) }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusL))
         .task(id: url) {
             image = nil
             guard let url else { return }
@@ -35,10 +36,10 @@ struct RecordStepView: View {
                 StudioWorkspace(title: "开始创作。", detail: "录下屏幕里的想法，让每一段内容成为作品。") {
                     StudioPreview(symbol: "macwindow", title: "录制完成后，在这里查看素材")
                 } controls: {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("录制素材").font(.system(size: 18, weight: .medium))
+                    VStack(alignment: .leading, spacing: Metrics.space2_5) {
+                        Text("录制素材").font(.studio(.subhead))
                         Text("录制与粗剪在同一界面完成，导出后自动添加到项目。")
-                            .font(.system(size: 13)).foregroundStyle(palette.textSecondary).lineSpacing(5)
+                            .font(.studio(.body)).foregroundStyle(palette.textSecondary).lineSpacing(Metrics.space1_5)
                     }
                     CapabilityReadinessView()
                     Button { state.record() } label: {
@@ -48,19 +49,19 @@ struct RecordStepView: View {
                 }
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: Metrics.space5) {
                         HStack(alignment: .firstTextBaseline) {
-                            Text("素材").font(.system(size: 22, weight: .semibold))
+                            Text("素材").font(.studio(.heading))
                             Text("\(project.materials.count) 段 · \(durationLabel(project.materials.reduce(0) { $0 + $1.timelineDuration }))")
-                                .font(.system(size: 12)).foregroundStyle(palette.textSecondary)
-                            Spacer(minLength: 24)
+                                .font(.studio(.small)).foregroundStyle(palette.textSecondary)
+                            Spacer(minLength: Metrics.space6)
                             Button("录制新素材", systemImage: "plus") { state.record() }
                                 .buttonStyle(StudioButtonStyle(kind: .primary))
                         }
                         CapabilityReadinessView()
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 300, maximum: 420), spacing: 20)], alignment: .leading, spacing: 24) {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 300, maximum: 420), spacing: Metrics.space5)], alignment: .leading, spacing: Metrics.space6) {
                             ForEach(Array(project.materials.enumerated()), id: \.element.id) { index, material in
-                                VStack(alignment: .leading, spacing: 10) {
+                                VStack(alignment: .leading, spacing: Metrics.space2_5) {
                                     Button {
                                         preview = ProjectLayout.picture(material, in: project)
                                     } label: {
@@ -68,26 +69,26 @@ struct RecordStepView: View {
                                             .aspectRatio(16 / 9, contentMode: .fit)
                                             .overlay(alignment: .topLeading) {
                                                 if let label = material.motionLabel {
-                                                    Text(label).font(.caption.weight(.medium)).padding(.horizontal, 9).padding(.vertical, 5)
-                                                        .foregroundStyle(palette.ai).background(palette.bgDeep, in: Capsule()).padding(8)
+                                                    Text(label).font(.studio(.small, weight: .medium)).padding(.horizontal, Metrics.space2_5).padding(.vertical, Metrics.space1_5)
+                                                        .foregroundStyle(palette.ai).background(palette.bgDeep, in: Capsule()).padding(Metrics.space2)
                                                 }
                                             }
                                     }.buttonStyle(StudioContentButtonStyle()).disabled(material.exportState != .complete)
                                     .overlay(alignment: .topTrailing) {
                                         MaterialActionsMenu(projectID: project.id, materialID: material.id)
                                             .foregroundStyle(.white)
-                                            .background(.black.opacity(0.65), in: RoundedRectangle(cornerRadius: 6))
-                                            .padding(8)
+                                            .background(.black.opacity(0.65), in: RoundedRectangle(cornerRadius: Metrics.radiusS))
+                                            .padding(Metrics.space2)
                                     }
                                     HStack {
-                                        Text("素材 \(index + 1)").font(.headline)
+                                        Text("素材 \(index + 1)").font(.studio(.bodyLargeMedium))
                                         Spacer()
                                         Text(material.exportState == .running ? "正在导出…" : durationLabel(material.duration))
-                                            .font(.caption.monospacedDigit()).foregroundStyle(palette.textSecondary)
+                                            .font(.studio(.small).monospacedDigit()).foregroundStyle(palette.textSecondary)
                                     }
-                                    if let error = material.exportError { Text(error).font(.caption).foregroundStyle(palette.danger).textSelection(.enabled) }
+                                    if let error = material.exportError { Text(error).font(.studio(.small)).foregroundStyle(palette.danger).textSelection(.enabled) }
                                     MaterialTaskStatus(projectID: project.id, material: material)
-                                    if let warning = material.transcriptWarning { Text(warning).font(.caption).foregroundStyle(palette.warning).textSelection(.enabled) }
+                                    if let warning = material.transcriptWarning { Text(warning).font(.studio(.small)).foregroundStyle(palette.warning).textSelection(.enabled) }
                                     if material.sourceReady {
                                         Button("在时间线中编辑") {
                                             var session = state.editorSession(project.id)
@@ -95,14 +96,14 @@ struct RecordStepView: View {
                                             session.playhead = project.materials.prefix { $0.id != material.id }.reduce(0) { $0 + $1.timelineDuration }
                                             state.rememberEditor(project.id, session, flush: true)
                                             state.stage = .assemble
-                                        }.buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact)).font(.caption)
+                                        }.buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact)).font(.studio(.small))
                                     }
                                 }
                             }
                         }
                     }
-                    .frame(maxWidth: 1200, alignment: .leading)
-                    .padding(32)
+                    .frame(maxWidth: Metrics.contentWide, alignment: .leading)
+                    .padding(Metrics.space8)
                     .frame(maxWidth: .infinity)
                 }
             }
@@ -123,7 +124,7 @@ struct PreviewSheet: View {
     var body: some View {
         VStack {
             StudioPlayer(player: player).frame(minWidth: 700, minHeight: 400)
-            Button("关闭", action: close).buttonStyle(StudioButtonStyle()).keyboardShortcut(.cancelAction).padding(12)
+            Button("关闭", action: close).buttonStyle(StudioButtonStyle()).keyboardShortcut(.cancelAction).padding(Metrics.space3)
         }.onAppear { player.replaceCurrentItem(with: AVPlayerItem(url: url)) }
             .onDisappear { player.pause() }
     }

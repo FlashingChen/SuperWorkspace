@@ -72,10 +72,10 @@ struct RootView: View {
         }
         .overlay(alignment: .bottomTrailing) {
             if let toast = state.toast {
-                Text(toast).font(.system(size: 13)).padding(.horizontal, 18).padding(.vertical, 12)
-                    .background(palette.surface1, in: RoundedRectangle(cornerRadius: 12))
-                    .shadow(color: .black.opacity(0.12), radius: 16, y: 6)
-                    .padding(24)
+                Text(toast).font(.studio(.body)).padding(.horizontal, Metrics.space4).padding(.vertical, Metrics.space3)
+                    .background(palette.surface1, in: RoundedRectangle(cornerRadius: Metrics.radiusL))
+                    .shadow(color: .black.opacity(0.12), radius: Metrics.space4, y: Metrics.space1_5)
+                    .padding(Metrics.space6)
             }
         }
         .sheet(isPresented: Binding(get: { state.error != nil }, set: { if !$0 { state.error = nil } })) {
@@ -87,7 +87,7 @@ struct RootView: View {
 
     private var workspaceHeader: some View {
         ZStack {
-            HStack(spacing: 10) {
+            HStack(spacing: Metrics.space2_5) {
                 ForEach(Array(WorkStage.allCases.enumerated()), id: \.element) { index, stage in
                     if index > 0 {
                         Image(systemName: "arrow.right")
@@ -95,21 +95,21 @@ struct RootView: View {
                             .foregroundStyle(palette.textMuted).accessibilityHidden(true)
                     }
                     Button { state.stage = stage } label: {
-                        HStack(spacing: 8) {
+                        HStack(spacing: Metrics.space2) {
                             Text("\(index + 1)").monospacedDigit()
                             Text(stage.rawValue)
                         }
-                        .font(.system(size: 13, weight: .medium))
-                        .padding(.horizontal, 24).frame(height: 36)
+                        .font(.studio(.bodyMedium))
+                        .padding(.horizontal, Metrics.space6).frame(height: Metrics.choice)
                     }
-                    .buttonStyle(StudioSelectionStyle(selected: state.currentProject != nil && state.stage == stage, cornerRadius: 18))
+                    .buttonStyle(StudioSelectionStyle(selected: state.currentProject != nil && state.stage == stage, cornerRadius: Metrics.choice / 2))
                     .accessibilityAddTraits(state.currentProject != nil && state.stage == stage ? .isSelected : [])
                     .disabled(state.currentProject == nil)
                 }
             }
             HStack {
                 Text(state.currentProject?.name ?? "项目库")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.studio(.bodyMedium))
                     .foregroundStyle(palette.textSecondary)
                     .lineLimit(1).frame(maxWidth: 180, alignment: .leading)
                 Spacer()
@@ -123,7 +123,7 @@ struct RootView: View {
 
             }
         }
-        .padding(.horizontal, 24).frame(height: 80)
+        .padding(.horizontal, Metrics.space6).frame(height: Metrics.header)
     }
 
 }
@@ -139,27 +139,27 @@ struct ProjectLibraryView: View {
                 StudioWorkspace(title: "开始创作。", detail: "新建一个项目，录下屏幕里的想法。") {
                     StudioPreview(symbol: "macwindow", title: "你的作品，从这里开始")
                 } controls: {
-                    Text("第一期视频").font(.system(size: 18, weight: .medium))
+                    Text("第一期视频").font(.studio(.subhead))
                     Text("录制素材，再按顺序拼装成片。")
-                        .font(.system(size: 13)).foregroundStyle(palette.textSecondary)
+                        .font(.studio(.body)).foregroundStyle(palette.textSecondary)
                     Button("新建项目", systemImage: "plus", action: onCreate)
                         .buttonStyle(StudioButtonStyle(kind: .primary))
                 }
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 40) {
+                    VStack(alignment: .leading, spacing: Metrics.space10) {
                         WorkspaceHeading(title: "作品集。", detail: "每一期视频，都从这里开始。")
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 28)], alignment: .leading, spacing: 32) {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: Metrics.inspector), spacing: Metrics.space7)], alignment: .leading, spacing: Metrics.space8) {
                             ForEach(state.projects) { project in
                                 Button { state.select(project.id) } label: {
-                                    VStack(alignment: .leading, spacing: 14) {
+                                    VStack(alignment: .leading, spacing: Metrics.space3) {
                                         MaterialThumbnail(url: project.materials.first.map { ProjectLayout.picture($0, in: project) })
                                             .aspectRatio(16.0 / 9.0, contentMode: .fit)
                                         HStack(alignment: .firstTextBaseline) {
-                                            Text(project.name).font(.system(size: 15, weight: .medium)).lineLimit(1)
+                                            Text(project.name).font(.studio(.bodyLargeMedium)).lineLimit(1)
                                             Spacer()
                                             Text(project.updatedAt, style: .date)
-                                                .font(.system(size: 11)).foregroundStyle(palette.textMuted)
+                                                .font(.studio(.caption)).foregroundStyle(palette.textMuted)
                                         }
                                     }
                                     .contentShape(Rectangle())
@@ -169,7 +169,7 @@ struct ProjectLibraryView: View {
                         }
                     }
                     .frame(maxWidth: 1100, alignment: .leading)
-                    .padding(44)
+                    .padding(Metrics.space11)
                     .frame(maxWidth: .infinity)
                 }
                 .background(palette.bgBase)

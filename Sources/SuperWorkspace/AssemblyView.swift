@@ -34,25 +34,25 @@ struct AssemblyView: View {
                 GeometryReader { geometry in
                     let height = min(max(220, geometry.size.height * previewFraction), max(220, geometry.size.height - 238))
                     VStack(spacing: 0) {
-                        HStack(alignment: .top, spacing: 16) {
+                        HStack(alignment: .top, spacing: Metrics.space4) {
                             ZStack {
                                 VideoSurface(player: player, controlsStyle: .none)
                                 if loading { ProgressView() }
                                 if let previewError {
-                                    VStack(spacing: 12) {
+                                    VStack(spacing: Metrics.space3) {
                                         Text(previewError).multilineTextAlignment(.center)
                                         Button("重试预览") { schedulePreview() }
                                             .buttonStyle(StudioButtonStyle())
-                                    }.foregroundStyle(.white).padding(24)
+                                    }.foregroundStyle(.white).padding(Metrics.space6)
                                 }
                             }
-                            .background(.black).clipShape(RoundedRectangle(cornerRadius: 10))
+                            .background(palette.mediaGround).clipShape(RoundedRectangle(cornerRadius: Metrics.radiusL))
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            inspector.frame(width: 260)
+                            inspector.frame(width: Metrics.inspector)
                         }
-                        .padding(16).frame(height: height)
+                        .padding(Metrics.space4).frame(height: height)
                         Rectangle().fill(palette.surface2).frame(height: 6)
-                            .overlay { Capsule().fill(palette.textMuted).frame(width: 32, height: 2) }
+                            .overlay { Capsule().fill(palette.surface3).frame(width: 32, height: 2) }
                             .contentShape(Rectangle())
                             .gesture(DragGesture().onChanged { value in
                                 if dragOrigin == nil { dragOrigin = height }
@@ -98,11 +98,11 @@ struct AssemblyView: View {
     private var inspector: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: Metrics.space4) {
                     if let material = project.materials.first(where: { $0.id == selectedMaterial }) {
                         HStack {
                             Text("素材 \((project.materials.firstIndex(where: { $0.id == material.id }) ?? 0) + 1)")
-                                .font(.headline)
+                                .font(.studio(.bodyLargeMedium))
                             Spacer()
                             Menu { MaterialProcessingActions(projectID: project.id, materialID: material.id) } label: {
                                 Image(systemName: "ellipsis")
@@ -113,32 +113,32 @@ struct AssemblyView: View {
                                 get: { material.useOriginal ?? false },
                                 set: { state.setUseOriginal(project.id, material.id, $0) }),
                                 options: [(true, "原片"), (false, material.motionState == .complete ? "动效" : "动效处理中")])
-                            if material.motionState != .complete { Text(material.motionError ?? material.motionLabel ?? "使用原片预览").font(.caption).foregroundStyle(palette.textSecondary) }
+                            if material.motionState != .complete { Text(material.motionError ?? material.motionLabel ?? "使用原片预览").font(.studio(.small)).foregroundStyle(palette.textSecondary) }
                         }
                         Divider()
                     }
                     HStack {
-                        Text("字幕").font(.system(size: 17, weight: .medium))
+                        Text("字幕").font(.studio(.subhead))
                         Spacer()
                         Button("AI 校正") { for material in project.materials { state.correctSubtitles(project.id, material.id) } }
-                            .font(.caption).buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
+                            .font(.studio(.small)).buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
                             .disabled(project.materials.contains { $0.transcriptState == .running }
                                 || !project.materials.contains { $0.transcriptState == .complete && !$0.subtitles.isEmpty })
                     }
                     ForEach(Array(project.materials.enumerated()), id: \.element.id) { number, material in
-                        if project.materials.count > 1 { Text("素材 \(number + 1)").font(.caption).foregroundStyle(palette.textMuted) }
-                        if let warning = material.transcriptWarning { Text(warning).font(.caption).foregroundStyle(palette.warning) }
+                        if project.materials.count > 1 { Text("素材 \(number + 1)").font(.studio(.small)).foregroundStyle(palette.textMuted) }
+                        if let warning = material.transcriptWarning { Text(warning).font(.studio(.small)).foregroundStyle(palette.warning) }
                         if material.transcriptState == .running || material.transcriptState != .complete {
                             MaterialTaskStatus(projectID: project.id, material: material)
                         }
                         ForEach(Array(material.subtitles.enumerated()).filter { $0.element.end > material.inPoint && $0.element.start < material.outPoint }, id: \.offset) { index, subtitle in
                             let key = "\(material.id)-\(index)"
-                            VStack(alignment: .leading, spacing: 8) {
+                            VStack(alignment: .leading, spacing: Metrics.space2) {
                                 Button {
                                     selectedMaterial = material.id
                                     selectedSubtitle = key
                                     seek(globalStart(material, subtitle.start))
-                                } label: { Text(durationLabel(globalStart(material, subtitle.start))).font(.caption.monospacedDigit()) }
+                                } label: { Text(durationLabel(globalStart(material, subtitle.start))).font(.studio(.small).monospacedDigit()) }
                                     .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact)).foregroundStyle(palette.textSecondary)
                                 TextField("字幕", text: Binding(
                                     get: { state.projects.first(where: { $0.id == project.id })?.materials.first(where: { $0.id == material.id })?.subtitles[safe: index]?.text ?? subtitle.text },
@@ -148,12 +148,12 @@ struct AssemblyView: View {
                                     .onTapGesture { selectedMaterial = material.id; selectedSubtitle = key }
 
                             }
-                            .padding(8).frame(maxWidth: .infinity, alignment: .leading)
-                            .background(selectedSubtitle == key ? palette.surface1 : .clear, in: RoundedRectangle(cornerRadius: 6))
+                            .padding(Metrics.space2).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(selectedSubtitle == key ? palette.surface1 : .clear, in: RoundedRectangle(cornerRadius: Metrics.radiusS))
                             .id(key)
                         }
                         if material.transcriptState == .complete && material.subtitles.isEmpty {
-                            Text("未检测到语音").font(.caption).foregroundStyle(palette.textSecondary)
+                            Text("未检测到语音").font(.studio(.small)).foregroundStyle(palette.textSecondary)
                         }
                     }
                 }

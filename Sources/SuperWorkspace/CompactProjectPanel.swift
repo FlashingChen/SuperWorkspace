@@ -8,13 +8,13 @@ struct CompactProjectPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 4) {
+            HStack(spacing: Metrics.space1) {
                 if expanded {
                     Button { state.selectedProjectID = nil } label: {
-                        HStack(spacing: 8) {
+                        HStack(spacing: Metrics.space2) {
                             Image(nsImage: WorkspaceBrand.image(size: 24))
                                 .resizable().frame(width: 24, height: 24).accessibilityHidden(true)
-                            Text("SuperWorkspace").font(.system(size: 12, weight: .semibold))
+                            Text("SuperWorkspace").font(.studio(.smallStrong))
                         }.frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .buttonStyle(StudioContentButtonStyle())
@@ -25,15 +25,15 @@ struct CompactProjectPanel: View {
                     .accessibilityLabel(expanded ? "收起侧栏" : "展开侧栏")
                     .help(expanded ? "收起侧栏" : "展开侧栏")
             }
-            .frame(maxWidth: .infinity).frame(height: 80)
+            .frame(maxWidth: .infinity).frame(height: Metrics.header)
 
             Button(action: onCreate) {
-                HStack(spacing: 10) {
+                HStack(spacing: Metrics.space2_5) {
                     Image(systemName: "plus")
                     if expanded {
                         Text("新建项目")
                         Spacer(minLength: 0)
-                        Text("⌘N").font(.system(size: 10)).foregroundStyle(palette.textMuted)
+                        Text("⌘N").font(.studio(.micro)).foregroundStyle(palette.textMuted)
                     }
                 }.frame(maxWidth: .infinity, alignment: expanded ? .leading : .center)
             }
@@ -42,41 +42,41 @@ struct CompactProjectPanel: View {
             .accessibilityLabel("新建项目").help("新建项目")
 
             Button { state.selectedProjectID = nil } label: {
-                HStack(spacing: 10) {
+                HStack(spacing: Metrics.space2_5) {
                     Image(systemName: "square.grid.2x2")
                     if expanded { Text("项目库"); Spacer(minLength: 0) }
                 }.frame(maxWidth: .infinity, alignment: expanded ? .leading : .center)
-                    .padding(.horizontal, 8).frame(height: 36)
+                    .padding(.horizontal, Metrics.space2).frame(height: Metrics.choice)
                     .background(state.currentProject == nil ? palette.surface2.opacity(0.55) : .clear,
-                                in: RoundedRectangle(cornerRadius: 7))
+                                in: RoundedRectangle(cornerRadius: Metrics.radiusM))
             }
             .buttonStyle(StudioContentButtonStyle())
             .accessibilityLabel("项目库").help("项目库")
             .accessibilityAddTraits(state.currentProject == nil ? .isSelected : [])
-            .padding(.top, 4)
+            .padding(.top, Metrics.space1)
 
             if expanded {
-                Text("最近项目").font(.system(size: 11, weight: .medium))
+                Text("最近项目").font(.studio(.caption))
                     .foregroundStyle(palette.textMuted)
-                    .padding(.horizontal, 8).padding(.top, 28).padding(.bottom, 10)
+                    .padding(.horizontal, Metrics.space2).padding(.top, Metrics.space7).padding(.bottom, Metrics.space2_5)
                 ScrollView {
-                    LazyVStack(spacing: 3) {
+                    LazyVStack(spacing: Metrics.space0_5) {
                         ForEach(state.projects) { project in
                             let selected = state.selectedProjectID == project.id
                             Button { state.select(project.id) } label: {
-                                HStack(spacing: 10) {
+                                HStack(spacing: Metrics.space2_5) {
                                     Image(systemName: "film")
                                         .font(.system(size: 12)).foregroundStyle(palette.textMuted)
                                         .accessibilityHidden(true)
                                     Text(project.name)
-                                        .font(.system(size: 13, weight: selected ? .medium : .regular))
+                                        .font(.studio(selected ? .bodyMedium : .body))
                                         .foregroundStyle(selected ? palette.textPrimary : palette.textSecondary)
                                         .lineLimit(1).truncationMode(.middle)
                                     Spacer(minLength: 0)
                                 }
-                                .padding(.horizontal, 8).frame(height: 34)
+                                .padding(.horizontal, Metrics.space2).frame(height: Metrics.row)
                                 .background(selected ? palette.surface2.opacity(0.55) : .clear,
-                                            in: RoundedRectangle(cornerRadius: 7))
+                                            in: RoundedRectangle(cornerRadius: Metrics.radiusM))
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(StudioContentButtonStyle())
@@ -84,25 +84,25 @@ struct CompactProjectPanel: View {
                             .help(project.name)
                         }
                         if state.projects.isEmpty {
-                            Text("还没有项目").font(.system(size: 12)).foregroundStyle(palette.textMuted)
-                                .padding(8).frame(maxWidth: .infinity, alignment: .leading)
+                            Text("还没有项目").font(.studio(.small)).foregroundStyle(palette.textMuted)
+                                .padding(Metrics.space2).frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
                 }
             }
-            Spacer(minLength: 16)
+            Spacer(minLength: Metrics.space4)
             SettingsLink {
-                HStack(spacing: 10) {
+                HStack(spacing: Metrics.space2_5) {
                     Image(systemName: "slider.horizontal.3")
                     if expanded { Text("设置"); Spacer(minLength: 0) }
                 }.frame(maxWidth: .infinity, alignment: expanded ? .leading : .center)
             }
             .buttonStyle(StudioButtonStyle(kind: .quiet))
             .accessibilityLabel("设置").help("设置")
-            .padding(.bottom, 16)
+            .padding(.bottom, Metrics.space4)
         }
-        .padding(.horizontal, expanded ? 14 : 8)
-        .frame(width: expanded ? 220 : 56, alignment: .leading)
+        .padding(.horizontal, expanded ? Metrics.space3 : Metrics.space2)
+        .frame(width: expanded ? Metrics.sidebar : Metrics.sidebarRail, alignment: .leading)
         .frame(maxHeight: .infinity, alignment: .topLeading)
         .foregroundStyle(palette.textPrimary)
         .background(palette.bgSidebar)

@@ -23,15 +23,15 @@ struct MovieExportSheet: View {
         return copy
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            Text(verbatim: "导出成片").font(.system(size: 22, weight: .semibold))
-            VStack(alignment: .leading, spacing: 12) {
-                Text("画幅").font(.system(size: 13, weight: .medium))
-                HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: Metrics.space6) {
+            Text(verbatim: "导出成片").font(.studio(.heading))
+            VStack(alignment: .leading, spacing: Metrics.space3) {
+                Text("画幅").font(.studio(.bodyMedium))
+                HStack(spacing: Metrics.space2_5) {
                     canvasOption("current", title: "当前画幅", dimensions: currentDimensions)
                     canvasOption("source", title: "原始素材", dimensions: "跟随素材")
                 }
-                HStack(spacing: 10) {
+                HStack(spacing: Metrics.space2_5) {
                     canvasOption("landscape", title: "横屏", dimensions: "1920 × 1080", ratio: 16.0 / 9.0)
                     canvasOption("portrait", title: "竖屏", dimensions: "1080 × 1920", ratio: 9.0 / 16.0)
                     canvasOption("square", title: "方形", dimensions: "1080 × 1080", ratio: 1)
@@ -46,7 +46,7 @@ struct MovieExportSheet: View {
             .toggleStyle(StudioToggleStyle())
             if !configured.canExport {
                 Text(configured.materials.contains(where: { !$0.isReady }) ? "请先完成素材导出或移除失败素材。" : "字幕仍在处理，可等待完成，或关闭字幕选项后导出视频。")
-                    .font(.system(size: 12)).foregroundStyle(palette.textSecondary)
+                    .font(.studio(.small)).foregroundStyle(palette.textSecondary)
             }
             HStack {
                 Button { dismiss() } label: { Text(verbatim: "取消") }
@@ -68,7 +68,7 @@ struct MovieExportSheet: View {
                     .disabled(!configured.canExport || state.exportingProjects.contains(project.id))
             }
         }
-        .padding(28).frame(width: 520)
+        .padding(Metrics.space7).frame(width: 520)
         .foregroundStyle(palette.textPrimary)
         .background(palette.bgBase)
         .onAppear { burnIn = project.includeSubtitles; separateSRT = project.exportSRT ?? false }
@@ -84,10 +84,10 @@ struct MovieExportSheet: View {
     private func canvasOption(_ value: String, title: String, dimensions: String, ratio: CGFloat? = nil) -> some View {
         let selected = canvas == value
         return Button { canvas = value } label: {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: Metrics.space3) {
                 if let ratio {
                     HStack {
-                        RoundedRectangle(cornerRadius: 3)
+                        RoundedRectangle(cornerRadius: Metrics.radiusXS)
                             .strokeBorder(selected ? palette.accent : palette.textSecondary, lineWidth: 1.5)
                             .frame(width: ratio >= 1 ? 28 : 28 * ratio, height: ratio >= 1 ? 28 / ratio : 28)
                             .frame(width: 30, height: 30)
@@ -96,10 +96,10 @@ struct MovieExportSheet: View {
                         selectionMark(selected)
                     }
                 }
-                HStack(alignment: .top, spacing: 4) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(title).font(.system(size: 13, weight: .medium))
-                        Text(dimensions).font(.system(size: 11)).monospacedDigit()
+                HStack(alignment: .top, spacing: Metrics.space1) {
+                    VStack(alignment: .leading, spacing: Metrics.space1_5) {
+                        Text(title).font(.studio(.bodyMedium))
+                        Text(dimensions).font(.studio(.caption)).monospacedDigit()
                             .foregroundStyle(palette.textSecondary)
                     }
                     if ratio == nil {
@@ -109,7 +109,7 @@ struct MovieExportSheet: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(12)
+            .padding(Metrics.space3)
         }
         .buttonStyle(StudioSelectionStyle(selected: selected))
         .accessibilityLabel("\(title)，\(dimensions)")

@@ -13,19 +13,19 @@ struct SettingsView: View {
     @State private var selectedTab = "appearance"
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            Text("设置").font(.system(size: 24, weight: .medium))
+        VStack(alignment: .leading, spacing: Metrics.space6) {
+            Text("设置").font(.studio(.title))
             StudioChoice(title: "设置分类", selection: $selectedTab,
                 options: [("appearance", "外观"), ("motion", "AI 动效"), ("subtitles", "字幕")])
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: Metrics.space6) {
                     if selectedTab == "appearance" { appearanceSettings }
                     else if selectedTab == "motion" { motionSettings }
                     else { subtitleSettings }
-                }.frame(maxWidth: .infinity, alignment: .leading).padding(2)
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(Metrics.space0_5)
             }
         }
-        .padding(28).frame(width: 660, height: 620)
+        .padding(Metrics.space7).frame(width: 660, height: 620)
         .foregroundStyle(palette.textPrimary).background(palette.bgBase)
         .buttonStyle(StudioButtonStyle())
         .toggleStyle(StudioToggleStyle())
@@ -44,7 +44,7 @@ struct SettingsView: View {
         }
     }
     private var appearanceSettings: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: Metrics.space4) {
             settingLabel("外观")
             StudioChoice(title: "外观", selection: $appearanceMode,
                 options: [("system", "跟随系统"), ("light", "浅色"), ("dark", "深色")])
@@ -53,7 +53,7 @@ struct SettingsView: View {
     }
 
     private var motionSettings: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: Metrics.space4) {
             settingLabel("动效执行器")
             StudioChoice(title: "动效执行器", selection: $settings.aiMotionAgent,
                 options: MotionAgent.allCases.map { ($0.rawValue, $0.label) })
@@ -62,21 +62,21 @@ struct SettingsView: View {
             LabeledContent("动效风格", value: "内置教程动效")
             DisclosureGroup("高级配置") {
                 field("执行文件", text: $settings.aiMotionLaunchPath, prompt: "留空自动寻找")
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: Metrics.space2) {
                     settingLabel("追加参数（每行一个）")
                     TextField("追加参数", text: $settings.aiMotionExtraArgs, axis: .vertical)
                         .lineLimit(3...6)
                 }
                 Text("支持 {source1}、{source2}、{brief} 和 {workdir}。")
-                    .font(.caption).foregroundStyle(palette.textSecondary)
+                    .font(.studio(.small)).foregroundStyle(palette.textSecondary)
             }
             Text("动效处理期间可以使用原片。完成后可在时间线中对比并选择。")
-                .font(.caption).foregroundStyle(palette.textSecondary)
+                .font(.studio(.small)).foregroundStyle(palette.textSecondary)
         }
     }
 
     private var subtitleSettings: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: Metrics.space4) {
             LabeledContent("ffmpeg", value: ToolPaths.ffmpeg == nil ? "未安装" : "已找到")
             LabeledContent("whisper.cpp", value: ToolPaths.whisperCLI == nil ? "未安装" : "已找到")
             HStack {
@@ -87,7 +87,7 @@ struct SettingsView: View {
                 Button("安装字幕工具") { installTools() }.disabled(working || ToolPaths.locate("brew") == nil)
                 if ToolPaths.locate("brew") == nil {
                     Text("安装 Homebrew 后即可在这里安装字幕工具。录制和无字幕导出仍可使用。")
-                        .font(.caption).foregroundStyle(palette.textSecondary)
+                        .font(.studio(.small)).foregroundStyle(palette.textSecondary)
                 }
             }
             HStack {
@@ -95,7 +95,7 @@ struct SettingsView: View {
                 if working { ProgressView().controlSize(.small) }
             }
             if let result {
-                Text(result).font(.caption).foregroundStyle(failed ? palette.danger : palette.textSecondary).textSelection(.enabled)
+                Text(result).font(.studio(.small)).foregroundStyle(failed ? palette.danger : palette.textSecondary).textSelection(.enabled)
             }
             Rectangle().fill(palette.surface2).frame(height: 1)
             settingLabel("识别语言")
@@ -104,7 +104,7 @@ struct SettingsView: View {
             Toggle("AI 校正字幕", isOn: $settings.transcriptAICorrection)
             if settings.transcriptAICorrection {
                 Text(settings.resolvedLaunchPath() == "/bin/true" ? "未配置 AI 执行器，当前仅使用本地字幕。" : "校正会将字幕和提取的画面文字发送给已配置的模型服务。")
-                    .font(.caption).foregroundStyle(palette.textSecondary)
+                    .font(.studio(.small)).foregroundStyle(palette.textSecondary)
             }
             DisclosureGroup("高级配置") {
                 field("模型路径", text: $settings.whisperModelPath)
@@ -114,11 +114,11 @@ struct SettingsView: View {
     }
 
     private func settingLabel(_ title: String) -> some View {
-        Text(title).font(.system(size: 13, weight: .medium))
+        Text(title).font(.studio(.bodyMedium))
     }
 
     private func field(_ title: String, text: Binding<String>, prompt: String = "") -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: Metrics.space2) {
             settingLabel(title)
             TextField(title, text: text, prompt: Text(prompt))
         }
@@ -153,15 +153,16 @@ struct SettingsView: View {
 }
 
 struct CapabilityReadinessView: View {
+    @Environment(\.palette) private var palette
     @ObservedObject private var settings = SettingsStore.shared
     var body: some View {
         if !settings.missingSubtitleTools.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: Metrics.space2) {
                 Text("字幕待配置：\(settings.missingSubtitleTools.joined(separator: "、"))")
-                    .font(.system(size: 12))
-                SettingsLink { Text("配置字幕") }.buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact)).font(.system(size: 12))
+                    .font(.studio(.small))
+                SettingsLink { Text("配置字幕") }.buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact)).font(.studio(.small))
             }
-            .foregroundStyle(.secondary)
+            .foregroundStyle(palette.textSecondary)
         }
     }
 }
