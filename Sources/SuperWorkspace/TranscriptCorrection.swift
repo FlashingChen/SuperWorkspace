@@ -2,19 +2,28 @@ import AVFoundation
 import Foundation
 import Vision
 
-struct TranscriptCorrectionConfiguration: Sendable {
-    let launchPath: String
-    let arguments: [String]
+enum TranscriptCorrectionConfiguration: Sendable {
+    case pi(AIConnection)
+    case cli(launchPath: String, arguments: [String])
 
-    static func arguments(isPi: Bool, deepSeekModel: String? = nil) -> [String] {
-        var args = isPi
-            ? ["--print", "--no-session", "--no-tools", "--no-extensions", "--no-mcp", "--no-skills", "--no-context-files", "--no-prompt-templates"]
-            : ["-p", "--no-session-persistence", "--tools", "", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}", "--setting-sources", "", "--output-format", "text"]
-        if let deepSeekModel {
-            args += ["--provider", "deepseek", "--model", deepSeekModel.isEmpty ? "deepseek-flash" : deepSeekModel, "--thinking", "low"]
-        }
-        return args + ["--system-prompt", TranscriptCorrection.instructions]
+    init(launchPath: String, arguments: [String]) {
+        self = .cli(launchPath: launchPath, arguments: arguments)
     }
+
+    func correct(_ prompt: String, in directory: URL) async throws -> String {
+        switch self {
+        case .pi(let connection):
+            return try await EmbeddedPi.run(connection, system: TranscriptCorrection.instructions, prompt: prompt,
+                                            directory: directory, tools: false, timeout: 120)
+        case .cli(let launchPath, let arguments):
+            return try await Shell.run(launchPath, arguments: arguments + [prompt],
+                                       workingDirectory: directory, timeout: 120)
+        }
+    }
+
+    static let claudeArguments = ["-p", "--no-session-persistence", "--tools", "", "--strict-mcp-config",
+        "--mcp-config", "{\"mcpServers\":{}}", "--setting-sources", "", "--output-format", "text",
+        "--system-prompt", TranscriptCorrection.instructions]
 }
 
 struct TranscriptResult: Sendable {
@@ -45,9 +54,6 @@ enum TranscriptCorrection {
     static func apply(_ segments: [TranscriptSegment], video: URL, directory: URL,
                       configuration: TranscriptCorrectionConfiguration) async throws -> TranscriptResult {
         guard !segments.isEmpty else { return TranscriptResult(segments: [], warning: nil) }
-        guard configuration.launchPath != "/bin/true" else {
-            return TranscriptResult(segments: segments, warning: "未配置 AI 执行器，已保留本地识别字幕。")
-        }
         var corrected = segments
         var failed = false
         for offset in stride(from: 0, to: segments.count, by: 30) {
@@ -60,8 +66,7 @@ enum TranscriptCorrection {
                     surroundingSpeech: segments[max(0, offset - 2)..<min(segments.count, end + 2)].map(\.text),
                     visibleVideoText: context)
                 let prompt = String(decoding: try JSONEncoder().encode(request), as: UTF8.self)
-                let output = try await Shell.run(configuration.launchPath,
-                    arguments: configuration.arguments + [prompt], workingDirectory: directory, timeout: 120)
+                let output = try await configuration.correct(prompt, in: directory)
                 let texts = try validate(output, original: batch)
                 for index in batch.indices { corrected[offset + index].text = texts[index] }
             } catch is CancellationError {

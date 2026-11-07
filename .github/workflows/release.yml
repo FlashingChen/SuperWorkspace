@@ -1,0 +1,102 @@
+name: Release SuperWorkspace
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: ${{ github.event.created }}
+    runs-on: macos-26
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Validate release tag and source
+        shell: bash
+        run: |
+          [[ "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "$(uname -m)" == arm64 ]]
+          python3 scripts/audit-public.py --ref HEAD
+
+      - name: Run Swift tests
+        shell: bash
+        run: |
+          if ! command -v ffmpeg >/dev/null; then
+            brew install ffmpeg
+          fi
+          python3 scripts/prepare-recorder.py
+          swift test
+
+      - name: Build and verify the app
+        shell: bash
+        env:
+          SUPERWORKSPACE_SIGNING: adhoc
+          SUPERWORKSPACE_BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          SUPERWORKSPACE_RELEASE_VERSION="${GITHUB_REF_NAME#v}" ./build-app.sh release
+          app=".build/app/SuperWorkspace.app"
+          python3 Tests/PiRuntime/smoke.py "$app/Contents/Resources/PiRuntime"
+
+      - name: Archive the app and checksum
+        shell: bash
+        run: |
+          mkdir release
+          asset="SuperWorkspace-$GITHUB_REF_NAME-macos-arm64.zip"
+          ditto -c -k --sequesterRsrc --keepParent .build/app/SuperWorkspace.app "release/$asset"
+          cd release
+          shasum -a 256 "$asset" > "$asset.sha256"
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: superworkspace-macos-arm64
+          path: release/*
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified release assets
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: superworkspace-macos-arm64
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          asset="SuperWorkspace-$GITHUB_REF_NAME-macos-arm64.zip"
+          sha256sum -c "$asset.sha256"
+          if existing=$(gh release view "$GITHUB_REF_NAME" --json isDraft,assets 2>/dev/null); then
+            if jq -e --arg zip "$asset" --arg checksum "$asset.sha256" '
+              (.isDraft | not) and ([.assets[].name] | index($zip) != null and index($checksum) != null)
+            ' <<< "$existing" >/dev/null; then
+              echo "Release already published with both assets."
+              exit 0
+            fi
+            echo "::error::A release exists for this tag without the expected published assets."
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" "$asset" "$asset.sha256" \
+            --verify-tag --generate-notes --title "SuperWorkspace $GITHUB_REF_NAME" \
+            --notes 'Apple Silicon build for macOS 14 or later. This build is ad-hoc signed and is not notarized.'

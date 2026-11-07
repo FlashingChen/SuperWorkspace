@@ -2,17 +2,23 @@ import SwiftUI
 
 struct MaterialActionsMenu: View {
     let projectID: UUID
-    let materialID: UUID
+    let material: Material
+    let onEdit: () -> Void
     @State private var pendingRemoval: UUID?
 
     var body: some View {
         Menu {
-            MaterialProcessingActions(projectID: projectID, materialID: materialID)
+            Button("在时间线中编辑", systemImage: "timeline.selection", action: onEdit)
+                .disabled(!material.sourceReady)
+            MaterialProcessingActions(projectID: projectID, materialID: material.id)
+            if [.failed, .idle].contains(material.transcriptState), material.sourceReady {
+                SettingsLink { Text("字幕设置") }
+            }
             Divider()
-            MaterialDeleteAction(projectID: projectID, materialID: materialID) { pendingRemoval = materialID }
+            MaterialDeleteAction(projectID: projectID, materialID: material.id) { pendingRemoval = material.id }
         } label: {
             Image(systemName: "ellipsis")
-                .font(.system(size: 14, weight: .semibold))
+                .font(.studio(.body, weight: .semibold))
                 .frame(width: Metrics.controlCompact, height: Metrics.controlCompact)
                 .contentShape(Rectangle())
         }
@@ -84,6 +90,9 @@ struct MaterialProcessingActions: View {
             if material.transcriptState == .running {
                 Button("取消字幕处理") { state.cancelProcessing(projectID, materialID, motion: false) }
             } else if material.exportState == .complete {
+                if material.transcriptWarning != nil, material.transcriptState == .complete, !material.subtitles.isEmpty {
+                    Button("重试字幕校正") { state.correctSubtitles(projectID, materialID) }
+                }
                 Button(material.transcriptState == .complete ? "重新识别字幕" : "识别字幕") { state.transcribe(projectID, materialID) }
             }
         }

@@ -182,18 +182,30 @@ final class AppState: ObservableObject {
     }
     func record() {
         guard let projectID = selectedProjectID else { return }
-        WorkspaceRecorder.shared.exportSheetStyle = { content in
+        let recorder = WorkspaceRecorder.shared
+        if recorder.hasOpenSession {
+            recorder.bringToFront()
+            return
+        }
+        let transition = WorkspaceRecordingTransition.shared
+        transition.prepare()
+        recorder.returnActionStyle = { content in
+            AnyView(ThemedContent {
+                content.buttonStyle(StudioButtonStyle(kind: .secondary, size: .compact))
+            })
+        }
+        recorder.exportSheetStyle = { content in
             AnyView(ThemedContent { StudioSheetSurface { content } })
         }
-        WorkspaceRecorder.shared.exportPrimaryActionStyle = { content in
+        recorder.exportPrimaryActionStyle = { content in
             AnyView(content.buttonStyle(StudioButtonStyle(kind: .primary)))
         }
-        WorkspaceRecorder.shared.present { [weak self] id, wantsMotion in
+        recorder.present(onPresent: transition.collapse, onReturn: transition.restore) { [weak self] id, wantsMotion in
             guard let self, let project = self.projects.first(where: { $0.id == projectID }) else {
                 throw CocoaError(.fileNoSuchFile)
             }
-            if wantsMotion, SettingsStore.shared.resolvedLaunchPath() == "/bin/true" {
-                throw ShellError.exitStatus(-1, "AI 动效尚未配置，请先在设置中选择执行器，或关闭动效后继续。")
+            if wantsMotion, !SettingsStore.shared.hasAIConnection {
+                throw ShellError.exitStatus(-1, "AI 动效尚未配置，请先在设置中连接 API 或选择执行器。")
             }
             var material = Material()
             material.id = id
@@ -318,19 +330,30 @@ final class AppState: ObservableObject {
                 let output = ProjectLayout.motion(material, in: project)
                 let temporary = output.deletingLastPathComponent().appendingPathComponent("motion-pending.mp4")
                 try? FileManager.default.removeItem(at: temporary)
-                let brief = output.deletingLastPathComponent().appendingPathComponent("motion-brief.txt")
-                try "为输入视频叠加 Remotion 讲解动效，保留原有声音、画面内容和全部时间关系，不改变时长。输入：\(source.path)。输出：\(temporary.path)。".write(to: brief, atomically: true, encoding: .utf8)
                 let settings = SettingsStore.shared
-                let launch = settings.resolvedLaunchPath()
-                guard launch != "/bin/true" else { throw ShellError.exitStatus(-1, "请在设置中配置可用的 AI agent。") }
-                _ = try await Shell.run(launch, arguments: settings.aiMotionArguments(source1: source, source2: temporary, brief: brief), workingDirectory: output.deletingLastPathComponent(), timeout: 1800)
+                let directory = output.deletingLastPathComponent()
+                let brief = directory.appendingPathComponent("motion-brief.txt")
+                try "为输入视频叠加 Remotion 讲解动效，保留原有声音、画面内容和全部时间关系，不改变时长。输入：\(source.path)。输出：\(temporary.path)。".write(to: brief, atomically: true, encoding: .utf8)
+                if settings.selectedAgent == .api {
+                    let connection = try settings.apiConnection()
+                    let request = try settings.motionRequest(source1: source, source2: temporary, brief: brief)
+                    _ = try await EmbeddedPi.run(connection, system: request.system, prompt: request.prompt,
+                                                 directory: directory, tools: true, images: settings.aiAPIImages, timeout: 1800)
+                } else {
+                    let launch = settings.resolvedLaunchPath()
+                    guard launch != "/bin/true" else { throw ShellError.exitStatus(-1, "请在设置中连接内置 Pi 或配置 Claude。") }
+                    _ = try await Shell.run(launch, arguments: settings.claudeMotionArguments(source1: source, source2: temporary, brief: brief),
+                                            workingDirectory: directory, timeout: 1800)
+                }
                 try Task.checkCancellation()
-                guard let duration = await RoughCutService.duration(of: temporary), duration.isFinite,
-                      abs(duration - material.duration) <= 0.1 else {
-                    throw ShellError.exitStatus(-1, "动效视频缺失或时长与原片不同，请重试。")
+                let result = AVURLAsset(url: temporary)
+                guard let (playable, duration) = try? await result.load(.isPlayable, .duration),
+                      playable, duration.seconds.isFinite, abs(duration.seconds - material.duration) <= 0.1,
+                      let video = try? await result.loadTracks(withMediaType: .video), !video.isEmpty else {
+                    throw ShellError.exitStatus(-1, "动效视频缺失、无法播放或时长与原片不同，请重试。")
                 }
                 let sourceAudio = try await AVURLAsset(url: source).loadTracks(withMediaType: .audio)
-                let motionAudio = try await AVURLAsset(url: temporary).loadTracks(withMediaType: .audio)
+                let motionAudio = try await result.loadTracks(withMediaType: .audio)
                 guard sourceAudio.isEmpty || !motionAudio.isEmpty else {
                     throw ShellError.exitStatus(-1, "动效结果丢失了原片声音，已停止使用该结果，请重试。")
                 }

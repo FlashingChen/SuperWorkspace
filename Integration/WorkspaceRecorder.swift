@@ -7,16 +7,23 @@ public final class WorkspaceRecorder {
     public static let shared = WorkspaceRecorder()
     private var model: AppModel?
     private var activationObserver: AnyCancellable?
+    private var phaseObserver: AnyCancellable?
     private var permissionTask: Task<Void, Never>?
     private var jobs: [UUID: VideoExporter] = [:]
     private var observers: [UUID: AnyCancellable] = [:]
     private var onStart: ((UUID, Bool) throws -> URL)?
     private var onFinish: ((UUID, Result<URL, Error>) -> Void)?
+    private var onReturn: ((NSRect?) -> Void)?
+    private var returnsAfterEditorClose = false
+    private var isReturning = false
+    public var returnActionStyle: @MainActor (AnyView) -> AnyView = { $0 }
     public var exportSheetStyle: @MainActor (AnyView) -> AnyView = { $0 }
     public var exportPrimaryActionStyle: @MainActor (AnyView) -> AnyView = { $0 }
     public var hasOpenSession: Bool { model != nil }
 
     public func present(
+        onPresent: (NSRect?) -> Void,
+        onReturn: @escaping (NSRect?) -> Void,
         onStart: @escaping (UUID, Bool) throws -> URL,
         onFinish: @escaping (UUID, Result<URL, Error>) -> Void
     ) {
@@ -27,11 +34,20 @@ public final class WorkspaceRecorder {
         }
         self.onStart = onStart
         self.onFinish = onFinish
+        self.onReturn = onReturn
         WorkspaceInputPolicy.registerDefaults()
         let model = AppModel()
         self.model = model
         WindowCoordinator.install(model: model)
         model.beginRequiredPermissionOnboardingIfNeeded()
+        onPresent(WindowCoordinator.presentIntegratedSession())
+        phaseObserver = model.$phase.dropFirst().receive(on: DispatchQueue.main).sink { [weak self, weak model] phase in
+            guard let self, let model, self.model === model else { return }
+            if phase == .editor { self.returnsAfterEditorClose = false }
+            if phase == .setup, model.phase == .setup, self.returnsAfterEditorClose {
+                self.finishSession()
+            }
+        }
         activationObserver = NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
             .receive(on: DispatchQueue.main)
             .sink { [weak model] _ in
@@ -49,7 +65,51 @@ public final class WorkspaceRecorder {
                 catch { return }
             }
         }
+    }
+
+    public func bringToFront() {
         WindowCoordinator.bringCurrentWindowFront()
+    }
+
+    func requestWorkspaceReturn() {
+        guard let model, !isReturning, !AppDialogPresenter.isPresenting else { return }
+        if let editor = WindowCoordinator.activeEditorModel {
+            guard !editor.isMediaExchangeRunning, !editor.exporter.isExporting else { return }
+            if editor === model {
+                editor.requestCloseProject { [weak self, weak model] in
+                    guard let self, let model, self.model === model else { return }
+                    self.returnsAfterEditorClose = true
+                }
+            } else if model.phase == .setup {
+                isReturning = true
+                Task { @MainActor in
+                    let closed = await WindowCoordinator.closeRecordingProjectEditorForReplacement()
+                    isReturning = false
+                    if closed, self.model === model, model.phase == .setup { finishSession() }
+                }
+            }
+        } else if model.phase == .setup, model.currentSession == nil, model.recordingRuns.active == nil {
+            finishSession()
+        }
+    }
+
+    private func finishSession() {
+        let origin = WindowCoordinator.integratedRecorderFrame
+        let retiredModel = model
+        let restore = onReturn
+        model = nil
+        onReturn = nil
+        onStart = nil
+        onFinish = nil
+        returnsAfterEditorClose = false
+        phaseObserver = nil
+        activationObserver = nil
+        permissionTask?.cancel()
+        permissionTask = nil
+        WindowCoordinator.shutdown()
+        // An export job keeps its own immutable request and completion callback.
+        retiredModel?.shutdownForApplicationTermination()
+        restore?(origin)
     }
 
     func submit(wantsMotion: Bool, makeRequest: (URL) throws -> EditorExportRequest) throws {
@@ -76,14 +136,20 @@ public final class WorkspaceRecorder {
             self.jobs[id] = nil
         }
         exporter.export(request: request)
-        permissionTask?.cancel()
-        permissionTask = nil
-        activationObserver = nil
-        let retiredModel = model
-        WindowCoordinator.shutdown()
-        model = nil
-        // Export owns its immutable request independently of capture and editor UI.
-        retiredModel?.shutdownForApplicationTermination()
+        finishSession()
+    }
+}
+
+struct WorkspaceReturnButton: View {
+    var body: some View {
+        WorkspaceRecorder.shared.returnActionStyle(AnyView(
+            Button("返回工作台", systemImage: "arrow.uturn.backward") {
+                WorkspaceRecorder.shared.requestWorkspaceReturn()
+            }
+            .accessibilityLabel("返回工作台")
+            .accessibilityIdentifier("workspace.return")
+        ))
+        .fixedSize()
     }
 }
 

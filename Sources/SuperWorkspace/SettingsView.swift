@@ -11,6 +11,13 @@ struct SettingsView: View {
     @State private var result: String?
     @State private var failed = false
     @State private var selectedTab = "appearance"
+    @State private var apiURL = ""
+    @State private var apiModel = ""
+    @State private var apiKey = ""
+    @State private var hasSavedKey = false
+    @State private var testingAPI = false
+    @State private var apiStatus: String?
+    @State private var apiFailed = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Metrics.space6) {
@@ -54,11 +61,18 @@ struct SettingsView: View {
 
     private var motionSettings: some View {
         VStack(alignment: .leading, spacing: Metrics.space4) {
-            settingLabel("动效执行器")
-            StudioChoice(title: "动效执行器", selection: $settings.aiMotionAgent,
+            settingLabel("AI 连接")
+            StudioChoice(title: "AI 连接", selection: Binding(
+                get: { settings.selectedAgent.rawValue }, set: { settings.aiMotionAgent = $0 }),
                 options: MotionAgent.allCases.map { ($0.rawValue, $0.label) })
-            LabeledContent("执行器", value: settings.resolvedLaunchPath() == "/bin/true" ? "未找到，请先安装并登录 Pi 或 Claude" : "已找到")
-            if settings.selectedAgent == .deepseek { field("DeepSeek 模型", text: $settings.deepseekMotionModel) }
+            if settings.selectedAgent == .api { apiSettings }
+            else { cliSettings }
+        }
+    }
+
+    private var cliSettings: some View {
+        VStack(alignment: .leading, spacing: Metrics.space4) {
+            LabeledContent("执行器", value: settings.resolvedLaunchPath() == "/bin/true" ? "未找到 Claude CLI" : "已找到")
             LabeledContent("动效风格", value: "内置教程动效")
             DisclosureGroup("高级配置") {
                 field("执行文件", text: $settings.aiMotionLaunchPath, prompt: "留空自动寻找")
@@ -72,6 +86,95 @@ struct SettingsView: View {
             }
             Text("动效处理期间可以使用原片。完成后可在时间线中对比并选择。")
                 .font(.studio(.small)).foregroundStyle(palette.textSecondary)
+        }
+    }
+
+    private var apiSettings: some View {
+        VStack(alignment: .leading, spacing: Metrics.space4) {
+            Group {
+                field("API 地址", text: $apiURL, prompt: "OpenAI 兼容接口的基础地址")
+                field("模型", text: $apiModel, prompt: "服务提供的模型 ID")
+                VStack(alignment: .leading, spacing: Metrics.space2) {
+                    settingLabel("API 密钥")
+                    SecureField("API 密钥", text: $apiKey,
+                                prompt: Text(hasSavedKey ? "已存入钥匙串，留空保留" : "输入密钥"))
+                }
+                Toggle("模型支持图片", isOn: $settings.aiAPIImages)
+            }
+            .disabled(testingAPI)
+
+            HStack(spacing: Metrics.space2) {
+                Button("测试连接") { testAPI() }.disabled(testingAPI)
+                Button("保存") {
+                    updateAPIStatus {
+                        try settings.saveAPI(baseURL: apiURL, model: apiModel, key: apiKey)
+                        apiKey = ""
+                        refreshAPIKey()
+                        return "已保存"
+                    }
+                }
+                .buttonStyle(StudioButtonStyle(kind: .primary))
+                .disabled(testingAPI)
+                if testingAPI { ProgressView().controlSize(.small) }
+                Spacer()
+                if hasSavedKey {
+                    Button("移除密钥") {
+                        updateAPIStatus {
+                            try AIKeychain.remove(AIEndpoint(apiURL))
+                            refreshAPIKey()
+                            settings.objectWillChange.send()
+                            return "已移除密钥"
+                        }
+                    }
+                    .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
+                    .disabled(testingAPI)
+                }
+            }
+            if let apiStatus {
+                Text(apiStatus).font(.studio(.small))
+                    .foregroundStyle(apiFailed ? palette.danger : palette.textSecondary)
+            }
+            Text("用于字幕校正和 Remotion 动效。动效在本机渲染。")
+                .font(.studio(.small)).foregroundStyle(palette.textSecondary)
+        }
+        .onAppear {
+            apiURL = settings.aiAPIBaseURL
+            apiModel = settings.aiAPIModel
+            refreshAPIKey()
+        }
+        .onChange(of: apiURL) { _, _ in refreshAPIKey() }
+        .onDisappear { apiKey = ""; apiStatus = nil }
+    }
+
+    private func refreshAPIKey() {
+        hasSavedKey = (try? AIEndpoint(apiURL)).flatMap { try? AIKeychain.read($0) } != nil
+    }
+
+    private func updateAPIStatus(_ action: () throws -> String) {
+        do { apiStatus = try action(); apiFailed = false }
+        catch { apiStatus = error.localizedDescription; apiFailed = true }
+    }
+
+    private func testAPI() {
+        do {
+            let connection = try settings.apiConnection(baseURL: apiURL, model: apiModel, key: apiKey)
+            testingAPI = true
+            apiStatus = nil
+            Task {
+                defer { testingAPI = false }
+                do {
+                    _ = try await EmbeddedPi.run(connection, system: "Reply with OK only.", prompt: "Connection test",
+                                                 directory: FileManager.default.temporaryDirectory, tools: false, timeout: 30)
+                    apiStatus = "连接成功"
+                    apiFailed = false
+                } catch {
+                    apiStatus = error.localizedDescription
+                    apiFailed = true
+                }
+            }
+        } catch {
+            apiStatus = error.localizedDescription
+            apiFailed = true
         }
     }
 
@@ -103,7 +206,7 @@ struct SettingsView: View {
                 options: [("zh", "中文"), ("en", "English"), ("auto", "自动检测")])
             Toggle("AI 校正字幕", isOn: $settings.transcriptAICorrection)
             if settings.transcriptAICorrection {
-                Text(settings.resolvedLaunchPath() == "/bin/true" ? "未配置 AI 执行器，当前仅使用本地字幕。" : "校正会将字幕和提取的画面文字发送给已配置的模型服务。")
+                Text(!settings.hasAIConnection ? "未配置 AI 连接，当前仅使用本地字幕。" : "校正会将字幕和提取的画面文字发送给已配置的模型服务。")
                     .font(.studio(.small)).foregroundStyle(palette.textSecondary)
             }
             DisclosureGroup("高级配置") {

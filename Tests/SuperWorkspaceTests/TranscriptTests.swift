@@ -92,14 +92,12 @@ final class TranscriptTests: XCTestCase {
         }
     }
 
-    func testCorrectionConfigurationDoesNotLoadMotionSkillsOrTools() {
-        let pi = TranscriptCorrectionConfiguration.arguments(isPi: true, deepSeekModel: "test-model")
-        for flag in ["--no-tools", "--no-session", "--no-mcp", "--no-skills", "--no-context-files"] { XCTAssertTrue(pi.contains(flag)) }
-        XCTAssertTrue(pi.contains("test-model"))
-        XCTAssertFalse(pi.contains("--skill"))
-        let claude = TranscriptCorrectionConfiguration.arguments(isPi: false)
-        XCTAssertTrue(claude.contains("--no-session-persistence"))
-        XCTAssertFalse(claude.contains("--provider"))
+    func testClaudeCorrectionDisablesToolsAndContext() {
+        let arguments = TranscriptCorrectionConfiguration.claudeArguments
+        XCTAssertTrue(arguments.contains("--no-session-persistence"))
+        XCTAssertTrue(arguments.contains("--strict-mcp-config"))
+        XCTAssertTrue(arguments.contains("--setting-sources"))
+        XCTAssertEqual(arguments.last, TranscriptCorrection.instructions)
     }
 
     func testExternalCorrectionTimeoutIsBounded() async throws {

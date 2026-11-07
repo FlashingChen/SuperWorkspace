@@ -32,7 +32,7 @@ checks = {
     'literal IPv4 address': re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b'),
     'literal UUID': re.compile(r'\b[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\b'),
 }
-public_hosts = {'github.com', 'www.apple.com', 'www.w3.org', 'ffmpeg.org'}
+public_hosts = {'github.com', 'www.apple.com', 'www.w3.org', 'ffmpeg.org', 'nodejs.org', 'registry.npmjs.org'}
 blocked_suffixes = {'.pem', '.key', '.p12', '.pfx', '.db', '.sqlite', '.sqlite3',
                     '.log', '.wav', '.mp3', '.mp4', '.mov', '.srt', '.vtt', '.dogscproject'}
 failures = []

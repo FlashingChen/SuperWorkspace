@@ -50,7 +50,7 @@ struct RecordStepView: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: Metrics.space5) {
-                        HStack(alignment: .firstTextBaseline) {
+                        HStack {
                             Text("素材").font(.studio(.heading))
                             Text("\(project.materials.count) 段 · \(durationLabel(project.materials.reduce(0) { $0 + $1.timelineDuration }))")
                                 .font(.studio(.small)).foregroundStyle(palette.textSecondary)
@@ -61,43 +61,11 @@ struct RecordStepView: View {
                         CapabilityReadinessView()
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 300, maximum: 420), spacing: Metrics.space5)], alignment: .leading, spacing: Metrics.space6) {
                             ForEach(Array(project.materials.enumerated()), id: \.element.id) { index, material in
-                                VStack(alignment: .leading, spacing: Metrics.space2_5) {
-                                    Button {
-                                        preview = ProjectLayout.picture(material, in: project)
-                                    } label: {
-                                        MaterialThumbnail(url: material.exportState == .complete ? ProjectLayout.picture(material, in: project) : nil)
-                                            .aspectRatio(16 / 9, contentMode: .fit)
-                                            .overlay(alignment: .topLeading) {
-                                                if let label = material.motionLabel {
-                                                    Text(label).font(.studio(.small, weight: .medium)).padding(.horizontal, Metrics.space2_5).padding(.vertical, Metrics.space1_5)
-                                                        .foregroundStyle(palette.ai).background(palette.bgDeep, in: Capsule()).padding(Metrics.space2)
-                                                }
-                                            }
-                                    }.buttonStyle(StudioContentButtonStyle()).disabled(material.exportState != .complete)
-                                    .overlay(alignment: .topTrailing) {
-                                        MaterialActionsMenu(projectID: project.id, materialID: material.id)
-                                            .foregroundStyle(.white)
-                                            .background(.black.opacity(0.65), in: RoundedRectangle(cornerRadius: Metrics.radiusS))
-                                            .padding(Metrics.space2)
-                                    }
-                                    HStack {
-                                        Text("素材 \(index + 1)").font(.studio(.bodyLargeMedium))
-                                        Spacer()
-                                        Text(material.exportState == .running ? "正在导出…" : durationLabel(material.duration))
-                                            .font(.studio(.small).monospacedDigit()).foregroundStyle(palette.textSecondary)
-                                    }
-                                    if let error = material.exportError { Text(error).font(.studio(.small)).foregroundStyle(palette.danger).textSelection(.enabled) }
-                                    MaterialTaskStatus(projectID: project.id, material: material)
-                                    if let warning = material.transcriptWarning { Text(warning).font(.studio(.small)).foregroundStyle(palette.warning).textSelection(.enabled) }
-                                    if material.sourceReady {
-                                        Button("在时间线中编辑") {
-                                            var session = state.editorSession(project.id)
-                                            session.selectedMaterial = material.id
-                                            session.playhead = project.materials.prefix { $0.id != material.id }.reduce(0) { $0 + $1.timelineDuration }
-                                            state.rememberEditor(project.id, session, flush: true)
-                                            state.stage = .assemble
-                                        }.buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact)).font(.studio(.small))
-                                    }
+                                MaterialCard(projectID: project.id, material: material, number: index + 1,
+                                             picture: ProjectLayout.picture(material, in: project)) {
+                                    preview = ProjectLayout.picture(material, in: project)
+                                } onEdit: {
+                                    openTimeline(for: material)
                                 }
                             }
                         }
@@ -114,6 +82,115 @@ struct RecordStepView: View {
                 PreviewSheet(url: preview) { self.preview = nil }
             }
         }
+    }
+
+    private func openTimeline(for material: Material) {
+        var session = state.editorSession(project.id)
+        session.selectedMaterial = material.id
+        session.playhead = project.materials.prefix { $0.id != material.id }.reduce(0) { $0 + $1.timelineDuration }
+        state.rememberEditor(project.id, session, flush: true)
+        state.stage = .assemble
+    }
+}
+
+private struct MaterialCard: View {
+    @Environment(\.palette) private var palette
+    let projectID: UUID
+    let material: Material
+    let number: Int
+    let picture: URL
+    let onPreview: () -> Void
+    let onEdit: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Metrics.space2) {
+            Button(action: onPreview) {
+                palette.mediaGround
+                    .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                    .overlay {
+                        MaterialThumbnail(url: material.exportState == .complete ? picture : nil)
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusL))
+            }
+            .buttonStyle(StudioContentButtonStyle())
+            .disabled(material.exportState != .complete)
+            .accessibilityLabel("预览素材 \(number)")
+
+            HStack(spacing: Metrics.space2) {
+                Text("素材 \(number)").font(.studio(.bodyLargeMedium)).lineLimit(1)
+                Spacer(minLength: Metrics.space2)
+                MaterialCardStatus(material: material)
+                Text(material.exportState == .complete ? durationLabel(material.duration) : "—")
+                    .font(.studio(.timecode)).foregroundStyle(palette.textSecondary)
+                MaterialActionsMenu(projectID: projectID, material: material, onEdit: onEdit)
+            }
+            .frame(height: Metrics.row)
+        }
+    }
+}
+
+private struct MaterialCardStatus: View {
+    @EnvironmentObject private var state: AppState
+    @Environment(\.palette) private var palette
+    @State private var showsDetails = false
+    let material: Material
+
+    private var status: (symbol: String, title: String, color: Color)? {
+        if material.exportState == .failed { return ("exclamationmark.circle", "导出失败", palette.danger) }
+        if material.motionState == .failed { return ("exclamationmark.circle", "动效失败", palette.danger) }
+        if material.transcriptState == .failed { return ("exclamationmark.circle", "字幕失败", palette.danger) }
+        if material.transcriptWarning != nil { return ("exclamationmark.triangle", "字幕需复查", palette.warning) }
+        if material.exportState == .running { return ("hourglass", "正在导出", palette.textSecondary) }
+        if material.motionState == .running { return ("hourglass", "添加动效中", palette.ai) }
+        if material.transcriptState == .running {
+            return ("hourglass", state.taskPhases[material.mediaID] ?? "处理字幕中", palette.textSecondary)
+        }
+        if material.motionState == .queued { return ("hourglass", "动效排队中", palette.ai) }
+        return nil
+    }
+
+    private var messages: [String] {
+        [material.exportError, material.motionError, material.transcriptError, material.transcriptWarning].compactMap { $0 }
+    }
+
+    var body: some View {
+        if let status {
+            Button { showsDetails = true } label: {
+                Image(systemName: status.symbol).foregroundStyle(status.color)
+            }
+            .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
+            .help(status.title)
+            .accessibilityLabel(status.title)
+            .accessibilityHint("查看处理详情")
+            .popover(isPresented: $showsDetails, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: Metrics.space2) {
+                    Text(status.title).font(.studio(.smallStrong))
+                    if !messages.isEmpty {
+                        ViewThatFits(in: .vertical) {
+                            diagnostics.fixedSize(horizontal: false, vertical: true)
+                            ScrollView { diagnostics }
+                        }
+                    }
+                }
+                .foregroundStyle(palette.textPrimary)
+                .padding(Metrics.space4)
+                .frame(width: 320)
+                .frame(maxHeight: 220)
+                .background(palette.bgBase)
+            }
+        } else if material.wantsMotion, material.motionState == .complete {
+            Image(systemName: "wand.and.stars")
+                .font(.studio(.small))
+                .foregroundStyle(palette.ai)
+                .help("动效已完成")
+                .accessibilityLabel("动效已完成")
+        }
+    }
+
+    private var diagnostics: some View {
+        Text(messages.joined(separator: "\n\n"))
+            .font(.studio(.small)).foregroundStyle(palette.textSecondary)
+            .textSelection(.enabled)
     }
 }
 

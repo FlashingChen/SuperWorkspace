@@ -27,6 +27,28 @@ for path in source.glob('*.swift'):
         start = content.index('@main\nenum DogSCApplication')
         end = content.index('/// The menu and settings entry', start)
         content = content[:start] + content[end:]
+        content = replace_once(content, '    static func bringCurrentWindowFront() {', '''    static var integratedRecorderFrame: NSRect? {
+        guard let model, !model.showsRequiredPermissionGate else { return nil }
+        return recorderPanelController?.window.frame
+    }
+
+    static func presentIntegratedSession() -> NSRect? {
+        guard let model else { return nil }
+        apply(phase: model.phase, model: model)
+        recorderPanelController?.window.contentView?.layoutSubtreeIfNeeded()
+        return integratedRecorderFrame
+    }
+
+    static func bringCurrentWindowFront() {''')
+        content = replace_once(content, '''            .sink { [weak model] in
+                guard let model else { return }
+                apply(phase: model.phase, model: model)
+            }''', '''            .sink { [weak model] in
+                guard let model, self.model === model else { return }
+                apply(phase: model.phase, model: model)
+            }''')
+        content = replace_once(content, '        RecorderMemoController.shared.shutdown()',
+            '        AppSettingsWindowController.shared.hideForFirstLaunchGuide()\n        RecorderMemoController.shared.shutdown()')
     if path.name == 'RecorderPanelController.swift':
         start = content.index('@MainActor\nfinal class DogSCApplicationDelegate:')
         end = content.index('/// Pure geometry/style policy', start)
@@ -36,6 +58,8 @@ for path in source.glob('*.swift'):
             (NSApplication.shared.delegate as? DogSCApplicationDelegate)?
                 .refreshMainMenuBindings()
         }''', '')
+        content = replace_once(content, 'setupSize = NSSize(width: 374, height: 56)',
+            'setupSize = NSSize(width: 570, height: 56)')
     if path.name == 'AppModel.swift':
         content = replace_once(content, 'phase = .recordingComplete', 'phase = .recordingComplete\n                editCompletedRecording()')
         content = replace_once(content,
@@ -46,6 +70,20 @@ for path in source.glob('*.swift'):
         }
         if selectedTarget.source == .device { refreshCaptureDevices() }""")
     if path.name == 'AppModel+ProjectCommands.swift':
+        # Keep the recorder's normal close command. The host return action
+        # follows the same save/discard decisions and only leaves on success.
+        start = content.index('    func requestCloseProject() {')
+        end = content.index('    func requestDeleteCurrentProject()', start)
+        close_command = content[start:end].replace(
+            'func requestCloseProject() {',
+            'func requestCloseProject(onClosing: @escaping () -> Void = {}) {', 1)
+        close_command = replace_once(close_command, '        guard phase == .editor else { return }',
+            '        guard phase == .editor else { return }\n        defer { if phase != .editor { onClosing() } }')
+        for indent in ('                ', '            '):
+            decision_guard = f'\n{indent}      self.currentSession?.packageURL == sessionURL else {{ return }}'
+            close_command = replace_once(close_command, decision_guard,
+                f'{decision_guard}\n{indent}defer {{ if self.phase != .editor {{ onClosing() }} }}')
+        content = content[:start] + close_command + content[end:]
         content = replace_once(content,
             '        openPrivacySettings(section: permission.settingsSection)',
             """        switch permission {
@@ -64,6 +102,8 @@ for path in source.glob('*.swift'):
         content = content.replace(fallback, '} ?? WorkspaceInputPolicy.defaultMicrophone(in: availableMicrophones)')
     if path.name == 'RecorderSetupSurface.swift':
         content = replace_once(content, 'let all = CaptureSource.allCases', 'let all = CaptureSource.allCases.filter { $0 != .device }')
+        content = replace_once(content, '            recordButton.padding(.leading, 4)',
+            '            WorkspaceReturnButton().padding(.horizontal, 4)\n            recordButton.padding(.leading, 4)')
         content = replace_once(content,
             'RecorderPopoverButton(id: "microphone", title: "麦克风", width: 44, height: 44)',
             'RecorderPopoverButton(id: "microphone", title: "麦克风", width: 132, height: 44)')
@@ -79,10 +119,29 @@ for path in source.glob('*.swift'):
                     .frame(width: 132, height: 44)""")
     if path.name == 'PermissionOnboardingContent.swift':
         content = replace_once(content, 'Text("DogSC")', 'Text(AppIdentity.displayName)')
+        content = replace_once(content, '''                    .foregroundStyle(RecorderStyle.ink)
+            }
+            .opacity(presentation.isIntroAnimating ? 0 : 1)''', '''                    .foregroundStyle(RecorderStyle.ink)
+                Spacer()
+                if !isReview { WorkspaceReturnButton() }
+            }
+            .opacity(presentation.isIntroAnimating ? 0 : 1)''')
+    if path.name == 'RecorderPermissionView.swift':
+        content = replace_once(content,
+            '        if wasReview { WindowCoordinator.resumeWorkspaceAfterPermissionGuide(replay: false) }',
+            '''        if wasReview {
+            WindowCoordinator.resumeWorkspaceAfterPermissionGuide(replay: false)
+        } else {
+            DispatchQueue.main.async { WorkspaceRecorder.shared.requestWorkspaceReturn() }
+        }''')
     if path.name == 'FirstLaunchIntroduction.swift':
         content = replace_once(content, 'Self.wordmark("DogSC",', 'Self.wordmark(AppIdentity.displayName,')
     if path.name == 'EditorView.swift':
         content = replace_once(content, '            ExportSheet(\n', '            IntegratedExportSheet(\n')
+        content = replace_once(content, '''                EditorToolbarDivider()
+                Button { presentExport(scope: .fullProject) } label: {''', '''                EditorToolbarDivider()
+                WorkspaceReturnButton().disabled(isCropping)
+                Button { presentExport(scope: .fullProject) } label: {''')
     dest = target / path.name
     if not dest.exists() or dest.read_text() != content:
         dest.write_text(content)

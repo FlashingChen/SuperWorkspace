@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sign local builds with a persistent, non-revoked identity."""
+"""Sign builds with a persistent identity or explicit ad-hoc signing."""
 from pathlib import Path
 import os
 import re
@@ -8,6 +8,13 @@ import sys
 
 root = Path(__file__).resolve().parent.parent
 app = Path(sys.argv[1])
+entitlements = root / 'Resources' / 'SuperWorkspace.entitlements'
+if os.environ.get('SUPERWORKSPACE_SIGNING') == 'adhoc':
+    subprocess.run(['codesign', '--force', '--sign', '-', '--entitlements', str(entitlements), str(app)], check=True)
+    subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True)
+    print('Signed ad hoc. This build is not notarized.')
+    raise SystemExit(0)
+
 explicit = os.environ.get('CODE_SIGN_IDENTITY', '')
 identities = [explicit] if explicit else []
 if not explicit:
@@ -20,7 +27,7 @@ if not identities:
     raise SystemExit('No persistent signing identity available. Set CODE_SIGN_IDENTITY to a local code-signing certificate.')
 for identity in identities:
     signing = subprocess.run(['codesign', '--force', '--options', 'runtime', '--timestamp=none',
-        '--entitlements', str(root / 'Resources' / 'SuperWorkspace.entitlements'),
+        '--entitlements', str(entitlements),
         '--sign', identity, str(app)], capture_output=True, text=True)
     if signing.returncode:
         if explicit:

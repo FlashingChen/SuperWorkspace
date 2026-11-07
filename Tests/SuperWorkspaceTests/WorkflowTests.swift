@@ -125,8 +125,8 @@ final class WorkflowTests: XCTestCase {
             settings.aiMotionExtraArgs = previousArgs
             settings.aiMotionAgent = previousAgent
         }
-        settings.aiMotionAgent = MotionAgent.automatic.rawValue
-        let stub = testRoot.appendingPathComponent("agent-stub")
+        settings.aiMotionAgent = MotionAgent.claude.rawValue
+        let stub = testRoot.appendingPathComponent("claude")
         try "#!/bin/bash\ncp \"${@: -2:1}\" \"${@: -1}\"\n".write(to: stub, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub.path)
         settings.aiMotionLaunchPath = stub.path

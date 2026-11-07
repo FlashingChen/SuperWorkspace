@@ -9,16 +9,32 @@ enum Shell {
         arguments: [String],
         workingDirectory: URL? = nil,
         timeout: TimeInterval? = nil,
+        standardInput: Data? = nil,
+        environment: [String: String]? = nil,
         onLine: @escaping @Sendable (String) -> Void = { _ in }
     ) async throws -> String {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: launchPath)
+        let executable = URL(fileURLWithPath: launchPath)
+        process.executableURL = executable
         process.arguments = arguments
         if let workingDirectory { process.currentDirectoryURL = workingDirectory }
+
+        // Finder launches can omit Homebrew and the selected tool's bin directory.
+        // An absolute executable path still needs PATH for shebangs and child tools.
+        var environment = environment ?? ProcessInfo.processInfo.environment
+        var directories = (environment["PATH"] ?? "").split(separator: ":").map(String.init)
+        let fallback = [executable.deletingLastPathComponent().path] + ToolPaths.installDirectories
+        for directory in fallback where !directories.contains(directory) {
+            directories.append(directory)
+        }
+        environment["PATH"] = directories.joined(separator: ":")
+        process.environment = environment
 
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
+        let input = standardInput.map { _ in Pipe() }
+        process.standardInput = input
 
         let collector = LineCollector(onLine: onLine)
         pipe.fileHandleForReading.readabilityHandler = { handle in
@@ -30,6 +46,10 @@ enum Shell {
         try process.run()
         let startedAt = Date()
         do {
+            if let input, let standardInput {
+                defer { try? input.fileHandleForWriting.close() }
+                try input.fileHandleForWriting.write(contentsOf: standardInput)
+            }
             while process.isRunning {
                 try Task.checkCancellation()
                 if let timeout, Date().timeIntervalSince(startedAt) >= timeout {
@@ -106,8 +126,10 @@ enum ShellError: LocalizedError {
 }
 
 enum ToolPaths {
+    static let installDirectories = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]
+
     static func locate(_ name: String) -> String? {
-        let candidates = ["/opt/homebrew/bin/\(name)", "/usr/local/bin/\(name)", "/usr/bin/\(name)"]
+        let candidates = installDirectories.map { "\($0)/\(name)" }
         return candidates.first { Shell.check($0) }
     }
 

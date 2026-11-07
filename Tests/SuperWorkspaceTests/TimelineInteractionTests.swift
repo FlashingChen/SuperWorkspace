@@ -61,10 +61,10 @@ final class TimelineInteractionTests: XCTestCase {
             let settings = SettingsStore.shared
             let oldAgent = settings.aiMotionAgent, oldPath = settings.aiMotionLaunchPath, oldArgs = settings.aiMotionExtraArgs
             defer { settings.aiMotionAgent = oldAgent; settings.aiMotionLaunchPath = oldPath; settings.aiMotionExtraArgs = oldArgs }
-            let stub = root.appendingPathComponent("motion-stub")
+            let stub = root.appendingPathComponent("claude")
             try "#!/bin/bash\nsleep 0.3\ncp \"${@: -2:1}\" \"${@: -1}\"\n".write(to: stub, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub.path)
-            settings.aiMotionAgent = MotionAgent.automatic.rawValue; settings.aiMotionLaunchPath = stub.path
+            settings.aiMotionAgent = MotionAgent.claude.rawValue; settings.aiMotionLaunchPath = stub.path
             settings.aiMotionExtraArgs = "{source1}\n{source2}"
             let id = project.materials[0].id
             state.enqueueMotion(project.id, id)

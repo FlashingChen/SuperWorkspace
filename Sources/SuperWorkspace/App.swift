@@ -27,7 +27,7 @@ struct SuperWorkspaceApp: App {
             }
         }
         Settings {
-            ThemedContent { SettingsView() }
+            ThemedContent { SettingsView().background(WindowConfigurator(configuresChrome: false)) }
                 .preferredColorScheme(AppearanceResolver.scheme(for: appearanceMode))
         }
     }
@@ -179,19 +179,33 @@ struct ProjectLibraryView: View {
 }
 
 struct WindowConfigurator: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        DispatchQueue.main.async {
-            NSApplication.shared.applicationIconImage = WorkspaceBrand.image(size: 1024)
-            guard let window = view.window else { return }
-            window.titleVisibility = .hidden
-            window.titlebarAppearsTransparent = true
-            if window.screen == nil || !NSScreen.screens.contains(where: { $0.frame.intersects(window.frame) }) {
-                window.center()
-            }
-        }
+    var configuresChrome = true
+
+    func makeNSView(context: Context) -> RegistrationView {
+        let view = RegistrationView()
+        view.configuresChrome = configuresChrome
         return view
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {}
+    func updateNSView(_ nsView: RegistrationView, context: Context) {}
+
+    final class RegistrationView: NSView {
+        var configuresChrome = true
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window else { return }
+            WorkspaceRecordingTransition.shared.register(window)
+            guard configuresChrome else { return }
+            DispatchQueue.main.async { [weak window] in
+                guard let window else { return }
+                NSApplication.shared.applicationIconImage = WorkspaceBrand.image(size: 1024)
+                window.titleVisibility = .hidden
+                window.titlebarAppearsTransparent = true
+                if window.screen == nil || !NSScreen.screens.contains(where: { $0.frame.intersects(window.frame) }) {
+                    window.center()
+                }
+            }
+        }
+    }
 }

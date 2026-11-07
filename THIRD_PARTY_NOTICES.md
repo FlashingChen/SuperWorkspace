@@ -10,6 +10,11 @@
 
 上游提供的 Alibaba PuHuiTi 3.0 字体随录制界面资源一起打包。字体使用上游 `Resources/Fonts/LICENSE.txt` 中的独立法律声明，并非本仓库 MIT License 的一部分。构建保留该完整声明，不修改字体文件。
 
+## 内置 Pi
+
+- [Pi](https://github.com/earendil-works/pi) SDK 采用 MIT License，固定依赖见 `Integration/PiRuntime/package-lock.json`。应用携带上游许可证 `PiRuntime/Pi-LICENSE` 和 npm 依赖附带的许可证。
+- [Node.js](https://nodejs.org/) 和随其发行的 npm 来自官方发行包，版本和校验值由 `scripts/prepare-pi.py` 固定。应用携带发行包附带的许可证。
+
 ## 另行安装的工具
 
 - [whisper.cpp](https://github.com/ggml-org/whisper.cpp) 用于本地字幕识别。
