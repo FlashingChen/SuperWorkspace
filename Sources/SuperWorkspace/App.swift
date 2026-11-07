@@ -41,13 +41,10 @@ struct RootView: View {
     @State private var showExport = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            workspaceHeader
-            HStack(spacing: 0) {
-                CompactProjectPanel(expanded: $projectPanelExpanded, onCreate: { showNew = true })
-                    .padding(.leading, 20)
-                    .padding(.trailing, projectPanelExpanded ? 12 : 4)
-                    .frame(maxHeight: .infinity)
+        HStack(spacing: 0) {
+            CompactProjectPanel(expanded: $projectPanelExpanded, onCreate: { showNew = true })
+            VStack(spacing: 0) {
+                workspaceHeader
                 Group {
                     if let project = state.currentProject {
                         VStack(spacing: 0) {
@@ -111,17 +108,10 @@ struct RootView: View {
                 }
             }
             HStack {
-                Button { state.selectedProjectID = nil } label: {
-                    HStack(spacing: 8) {
-                        Image(nsImage: WorkspaceBrand.image(size: 28)).resizable().frame(width: 28, height: 28)
-                            .accessibilityHidden(true)
-                        Text(state.currentProject?.name ?? "SuperWorkspace")
-                            .font(.system(size: 12, weight: .medium))
-                            .lineLimit(1).frame(maxWidth: 180, alignment: .leading)
-                    }.padding(4)
-                }
-                .buttonStyle(StudioContentButtonStyle())
-                .accessibilityLabel("返回所有项目")
+                Text(state.currentProject?.name ?? "项目库")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(palette.textSecondary)
+                    .lineLimit(1).frame(maxWidth: 180, alignment: .leading)
                 Spacer()
                 if let project = state.currentProject, state.stage == .assemble {
                     Button { showExport = true } label: {
@@ -130,9 +120,7 @@ struct RootView: View {
                     .buttonStyle(StudioButtonStyle(kind: .primary))
                     .disabled(project.materials.isEmpty || state.exportingProjects.contains(project.id))
                 }
-                SettingsLink { Image(systemName: "slider.horizontal.3") }
-                    .buttonStyle(StudioButtonStyle(kind: .quiet))
-                    .accessibilityLabel("设置").help("设置")
+
             }
         }
         .padding(.horizontal, 24).frame(height: 80)

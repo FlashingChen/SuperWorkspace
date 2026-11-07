@@ -58,7 +58,7 @@ struct RecordStepView: View {
                                 .buttonStyle(StudioButtonStyle(kind: .primary))
                         }
                         CapabilityReadinessView()
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 220, maximum: 360), spacing: 20)], alignment: .leading, spacing: 24) {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 300, maximum: 420), spacing: 20)], alignment: .leading, spacing: 24) {
                             ForEach(Array(project.materials.enumerated()), id: \.element.id) { index, material in
                                 VStack(alignment: .leading, spacing: 10) {
                                     Button {
@@ -101,8 +101,8 @@ struct RecordStepView: View {
                             }
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(28)
+                    .frame(maxWidth: 1200, alignment: .leading)
+                    .padding(32)
                     .frame(maxWidth: .infinity)
                 }
             }
