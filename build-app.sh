@@ -4,7 +4,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 config="${1:-debug}"
-app_output="$PWD/.build/app/SuperWorkspace.app"
+app_output="${SUPERWORKSPACE_APP_OUTPUT:-$PWD/.build/app/SuperWorkspace.app}"
 bundle_id="com.superworkspace.app"
 release_version="${SUPERWORKSPACE_RELEASE_VERSION:-}"
 build_number="${SUPERWORKSPACE_BUILD_NUMBER:-}"

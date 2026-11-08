@@ -16,7 +16,7 @@ NODE_HASHES = {
     "arm64": "aa9549349e47dffaa42dcf95d6e06ade8c4bdafc980979883b88767670df385a",
     "x64": "d5e336d588c45be0c37dbd52cc29895593009ca4997a77a1fd02815131ed0e52",
 }
-PI_LICENSE = "https://github.com/earendil-works/pi/raw/4a080252f06caf63a525d7873c5d94d3c23887e0/LICENSE"
+PI_LICENSE = "https://raw.githubusercontent.com/earendil-works/pi/4a080252f06caf63a525d7873c5d94d3c23887e0/LICENSE"
 PI_LICENSE_HASH = "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48"
 
 
