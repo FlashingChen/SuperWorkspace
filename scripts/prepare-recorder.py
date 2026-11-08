@@ -60,6 +60,39 @@ for path in source.glob('*.swift'):
         }''', '')
         content = replace_once(content, 'setupSize = NSSize(width: 374, height: 56)',
             'setupSize = NSSize(width: 570, height: 56)')
+    if path.name == 'AppLocalization.swift':
+        content = replace_once(content,
+            'language.bundle.localizedString(forKey: key, value: key, table: nil)',
+            'language.bundle.localizedString(forKey: key, value: key, table: nil).replacingOccurrences(of: "DogSC", with: AppIdentity.displayName)')
+    if path.name == 'MicrophoneRecorder.swift':
+        content = 'import AudioWriterBridge\n' + content
+        start = content.index('        let sampleRate = basicDescription.mSampleRate.isFinite')
+        end = content.index('        input.expectsMediaDataInRealTime = true', start)
+        content = content[:start] + '''        let sampleRate = basicDescription.mSampleRate
+        let channels = Int(basicDescription.mChannelsPerFrame)
+        let unsupported = MicrophoneRecorderError.recordingFailed(
+            appLocalized("所选麦克风的音频格式不受支持。请选择其他麦克风，或关闭麦克风录制后重试。")
+        )
+        guard sampleRate.isFinite, sampleRate > 0, channels > 0 else {
+            throw unsupported
+        }
+        let assetWriter = try AVAssetWriter(outputURL: outputURL, fileType: .m4a)
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: channels,
+            AVEncoderBitRateKey: channels > 1 ? 192_000 : 128_000,
+        ]
+        // Multichannel AAC needs a channel layout; reject it safely until
+        // the recording pipeline supports explicit layout conversion.
+        guard channels <= 2, assetWriter.canApply(outputSettings: settings, forMediaType: .audio) else {
+            throw unsupported
+        }
+        var configurationError: NSError?
+        guard let input = makeAudioWriterInput(
+            settings: settings, formatHint: formatDescription, error: &configurationError
+        ) else { throw unsupported }
+''' + content[end:]
     if path.name == 'AppModel.swift':
         content = replace_once(content, 'phase = .recordingComplete', 'phase = .recordingComplete\n                editCompletedRecording()')
         content = replace_once(content,
@@ -119,6 +152,10 @@ for path in source.glob('*.swift'):
                     .frame(width: 132, height: 44)""")
     if path.name == 'PermissionOnboardingContent.swift':
         content = replace_once(content, 'Text("DogSC")', 'Text(AppIdentity.displayName)')
+        content = replace_once(content, 'appLocalized("进入 DogSC")',
+            'String(format: appLocalized("进入 %@"), AppIdentity.displayName)')
+        content = replace_once(content, 'Text("找不到 DogSC？")',
+            'Text(String(format: appLocalized("找不到 %@？"), AppIdentity.displayName))')
         content = replace_once(content, '''                    .foregroundStyle(RecorderStyle.ink)
             }
             .opacity(presentation.isIntroAnimating ? 0 : 1)''', '''                    .foregroundStyle(RecorderStyle.ink)

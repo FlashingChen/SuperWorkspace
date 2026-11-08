@@ -50,6 +50,7 @@ ditto Integration/RemotionRuntime "$app/Contents/Resources/RemotionRuntime"
 for resource in Fonts Onboarding en.lproj zh-Hans.lproj; do
   ditto "dogsc-source/Resources/$resource" "$app/Contents/Resources/$resource"
 done
+cat Resources/en.lproj/Recorder.strings >> "$app/Contents/Resources/en.lproj/Localizable.strings"
 # Host privacy descriptions and application identity take precedence.
 rm -f "$app/Contents/Resources/"*.lproj/InfoPlist.strings
 cp dogsc-source/LICENSE "$app/Contents/Resources/Recorder-LICENSE"
