@@ -2,8 +2,8 @@
 
 ## Install
 
-1. Download the `macos-arm64.zip` app from [GitHub Releases](https://github.com/FlashingChen/SuperWorkspace/releases). This build is for Apple Silicon Macs running macOS 14 or later.
-2. Extract the ZIP and drag **SuperWorkspace.app** to **Applications**. The release is ad-hoc signed and unnotarized. If macOS blocks it, review [Apple’s guidance for opening an app you trust](https://support.apple.com/en-us/102445).
+1. Download the `macos-arm64.dmg` installer from [GitHub Releases](https://github.com/FlashingChen/SuperWorkspace/releases). This build is for Apple Silicon Macs running macOS 14 or later.
+2. Open the DMG, drag **SuperWorkspace.app** to **Applications**, then eject the disk image. A ZIP download is also available. The release is ad-hoc signed and unnotarized. If macOS blocks it, review [Apple’s guidance for opening an app you trust](https://support.apple.com/en-us/102445).
 3. On the first recording, grant screen recording and accessibility access when prompted. Grant microphone or camera access if you use those inputs. Follow any macOS prompt to reopen the app.
 
 Pi, Node.js, FFmpeg, whisper.cpp, and the default multilingual speech model are included. You can record, transcribe, edit, and export without an AI account.

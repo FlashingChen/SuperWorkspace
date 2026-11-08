@@ -60,10 +60,13 @@ jobs:
         run: |
           mkdir release
           asset="SuperWorkspace-$GITHUB_REF_NAME-macos-arm64.zip"
+          dmg="SuperWorkspace-$GITHUB_REF_NAME-macos-arm64.dmg"
           ditto -c -k --sequesterRsrc --keepParent .build/app/SuperWorkspace.app "release/$asset"
+          python3 scripts/package-dmg.py .build/app/SuperWorkspace.app "release/$dmg"
           cp .build/ffmpeg-8.0.1-source.tar.gz release/
           cd release
           shasum -a 256 "$asset" > "$asset.sha256"
+          shasum -a 256 "$dmg" > "$dmg.sha256"
 
       - name: Upload release assets
         if: ${{ github.ref_type == 'tag' }}
@@ -95,12 +98,14 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           asset="SuperWorkspace-$GITHUB_REF_NAME-macos-arm64.zip"
+          dmg="SuperWorkspace-$GITHUB_REF_NAME-macos-arm64.dmg"
           source=ffmpeg-8.0.1-source.tar.gz
           sha256sum -c "$asset.sha256"
+          sha256sum -c "$dmg.sha256"
           test -s "$source"
           if existing=$(gh release view "$GITHUB_REF_NAME" --json isDraft,assets 2>/dev/null); then
-            if jq -e --arg zip "$asset" --arg checksum "$asset.sha256" --arg source "$source" '
-              (.isDraft | not) and ([.assets[].name] | index($zip) != null and index($checksum) != null and index($source) != null)
+            if jq -e --arg zip "$asset" --arg checksum "$asset.sha256" --arg dmg "$dmg" --arg dmgChecksum "$dmg.sha256" --arg source "$source" '
+              (.isDraft | not) and ([.assets[].name] | index($zip) != null and index($checksum) != null and index($dmg) != null and index($dmgChecksum) != null and index($source) != null)
             ' <<< "$existing" >/dev/null; then
               echo "Release already published with the expected assets."
               exit 0
@@ -111,8 +116,8 @@ jobs:
           tutorial="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/docs/QUICKSTART.md"
           notes=$(printf '%s\n\n%s\n\n%s' \
             'Apple Silicon build for macOS 14 or later. Ad-hoc signed and unnotarized.' \
-            "Download the ZIP and follow the [setup and tutorial]($tutorial)." \
+            "Open the DMG, drag SuperWorkspace to Applications, and follow the [setup and tutorial]($tutorial)." \
             'The app includes FFmpeg under the LGPL 2.1 or later. Its corresponding source and build instructions are in the FFmpeg source archive below.')
-          gh release create "$GITHUB_REF_NAME" "$asset" "$asset.sha256" "$source" \
+          gh release create "$GITHUB_REF_NAME" "$asset" "$asset.sha256" "$dmg" "$dmg.sha256" "$source" \
             --verify-tag --generate-notes --title "SuperWorkspace $GITHUB_REF_NAME" \
             --notes "$notes"
