@@ -5,6 +5,10 @@ struct SuperWorkspaceApp: App {
     @StateObject private var appState = AppState()
     @AppStorage("appearanceMode") private var appearanceMode = "system"
 
+    init() {
+        AcceptanceHarness.runIfRequested()
+    }
+
     var body: some Scene {
         WindowGroup {
             ThemedContent {

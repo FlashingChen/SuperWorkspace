@@ -175,7 +175,7 @@ final class AppState: ObservableObject {
             }
         }
     }
-    private func pair(_ projectID: UUID, _ id: UUID) -> (VideoProject, Material)? {
+    func pair(_ projectID: UUID, _ id: UUID) -> (VideoProject, Material)? {
         guard let project = projects.first(where: { $0.id == projectID }),
               let material = project.materials.first(where: { $0.id == id }) ?? project.materials.first(where: { $0.mediaID == id }) else { return nil }
         return (project, material)
@@ -337,13 +337,15 @@ final class AppState: ObservableObject {
                 if settings.selectedAgent == .api {
                     let connection = try settings.apiConnection()
                     let request = try settings.motionRequest(source1: source, source2: temporary, brief: brief)
-                    _ = try await EmbeddedPi.run(connection, system: request.system, prompt: request.prompt,
+                    let reply = try await EmbeddedPi.run(connection, system: request.system, prompt: request.prompt,
                                                  directory: directory, tools: true, images: settings.aiAPIImages, timeout: 1800)
+                    try? reply.data(using: .utf8)?.write(to: directory.appendingPathComponent("agent-response.txt"), options: .atomic)
                 } else {
                     let launch = settings.resolvedLaunchPath()
                     guard launch != "/bin/true" else { throw ShellError.exitStatus(-1, "请在设置中连接内置 Pi 或配置 Claude。") }
-                    _ = try await Shell.run(launch, arguments: settings.claudeMotionArguments(source1: source, source2: temporary, brief: brief),
+                    let reply = try await Shell.run(launch, arguments: settings.claudeMotionArguments(source1: source, source2: temporary, brief: brief),
                                             workingDirectory: directory, timeout: 1800)
+                    try? reply.data(using: .utf8)?.write(to: directory.appendingPathComponent("agent-response.txt"), options: .atomic)
                 }
                 try Task.checkCancellation()
                 let result = AVURLAsset(url: temporary)

@@ -30,8 +30,8 @@ try {
       name: request.model,
       reasoning: false,
       input: request.images ? ['text', 'image'] : ['text'],
-      contextWindow: 32768,
-      maxTokens: request.tools ? 8192 : 4096,
+      contextWindow: 262144,
+      maxTokens: request.tools ? 32768 : 4096,
       cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0},
     }],
   });
@@ -71,7 +71,7 @@ try {
     throw new Error(message?.errorMessage || 'Pi did not complete the request.');
   }
   const text = message.content.filter(({type}) => type === 'text').map(({text}) => text).join('\n');
-  if (!request.tools && !text.trim()) throw new Error('Pi returned no text.');
+  if (!text.trim()) throw new Error('Pi returned no text.');
   process.stdout.write(text + '\n');
 } catch (error) {
   let message = error instanceof Error ? error.message : 'Pi could not complete the request.';
