@@ -100,6 +100,49 @@ struct SettingsView: View {
                                 prompt: Text(hasSavedKey ? "已存入钥匙串，留空保留" : "输入密钥"))
                 }
                 Toggle("模型支持图片", isOn: $settings.aiAPIImages)
+                Toggle("为素材库素材自动生成描述", isOn: Binding(
+                    get: { settings.aiAutoDescribeMedia },
+                    set: { settings.aiAutoDescribeMedia = $0; settings.objectWillChange.send() }))
+                    .disabled(!settings.canDescribeMedia)
+                HStack(spacing: Metrics.space3) {
+                    settingLabel("单条动效时长上限")
+                    Menu("\(settings.motionTimeLimitMinutes) 分钟") {
+                        ForEach([20, 30, 40, 60, 90, 120], id: \.self) { minutes in
+                            Button("\(minutes) 分钟") {
+                                settings.motionTimeLimitMinutes = minutes
+                                settings.objectWillChange.send()
+                            }
+                        }
+                    }
+                    .menuStyle(StudioMenuStyle())
+                    .fixedSize()
+                    Spacer()
+                }
+                Text("超过上限会中止该条动效，已完成的镜头不会被采用。")
+                    .font(.studio(.small)).foregroundStyle(palette.textSecondary)
+                HStack(spacing: Metrics.space3) {
+                    settingLabel("同时处理条数")
+                    Menu("\(settings.motionConcurrency) 条") {
+                        ForEach([1, 2, 3], id: \.self) { count in
+                            Button("\(count) 条") {
+                                settings.motionConcurrency = count
+                                settings.objectWillChange.send()
+                            }
+                        }
+                    }
+                    .menuStyle(StudioMenuStyle())
+                    .fixedSize()
+                    Spacer()
+                }
+                Text("动效渲染吃满 CPU，并行会互相抢核心；素材多时再调高。")
+                    .font(.studio(.small)).foregroundStyle(palette.textSecondary)
+                if !settings.canDescribeMedia {
+                    Text("需要开启「模型支持图片」，并保存可用的 API 连接。")
+                        .font(.studio(.small)).foregroundStyle(palette.textSecondary)
+                } else if settings.aiAutoDescribeMedia {
+                    Text("导入素材时会发送一张截图，用于生成一句中文描述。")
+                        .font(.studio(.small)).foregroundStyle(palette.textSecondary)
+                }
             }
             .disabled(testingAPI)
 
@@ -134,7 +177,7 @@ struct SettingsView: View {
                 Text(apiStatus).font(.studio(.small))
                     .foregroundStyle(apiFailed ? palette.danger : palette.textSecondary)
             }
-            Text("用于字幕校正和 Remotion 动效。动效在本机渲染。")
+            Text("用于字幕校正、素材描述和 Remotion 动效。动效在本机渲染。")
                 .font(.studio(.small)).foregroundStyle(palette.textSecondary)
         }
         .onAppear {
@@ -207,6 +250,11 @@ struct SettingsView: View {
             Toggle("AI 校正字幕", isOn: $settings.transcriptAICorrection)
             if settings.transcriptAICorrection {
                 Text(!settings.hasAIConnection ? "未配置 AI 连接，当前仅使用本地字幕。" : "校正会将字幕和提取的画面文字发送给已配置的模型服务。")
+                    .font(.studio(.small)).foregroundStyle(palette.textSecondary)
+            }
+            Toggle("AI 复核字幕", isOn: $settings.transcriptAIReview)
+            if settings.transcriptAIReview {
+                Text(!settings.hasAIConnection ? "未配置 AI 连接，复核只做时长、重叠与边界检查。" : "复核会按素材重建整条字幕轨：改错字、重新断句、调整时间。字幕长短与断句由模型按语义决定，整次可一步撤销。")
                     .font(.studio(.small)).foregroundStyle(palette.textSecondary)
             }
             DisclosureGroup("高级配置") {

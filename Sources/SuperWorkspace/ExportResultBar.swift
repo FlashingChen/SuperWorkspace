@@ -29,7 +29,7 @@ private struct ExportProgressBar: View {
     @ObservedObject var progress: ExportProgress
     var body: some View {
         HStack(spacing: Metrics.space3) {
-            Text(progress.isCancelled ? "正在取消" : progress.fraction == 0 ? "准备导出" : "正在导出")
+            Text(progress.isCancelled ? "正在取消" : progress.fraction == 0 ? progress.phase : "正在导出")
             ProgressView(value: progress.fraction).frame(maxWidth: 240)
             if progress.fraction > 0 { Text(progress.fraction, format: .percent.precision(.fractionLength(0))).monospacedDigit() }
             Spacer()

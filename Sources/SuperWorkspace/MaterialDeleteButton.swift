@@ -87,11 +87,25 @@ struct MaterialProcessingActions: View {
                     Button("重试动效") { state.enqueueMotion(projectID, materialID) }
                 }
             }
+            if material.wantsAIEditing == true {
+                if state.taskPhases[material.mediaID] == "AI 剪辑" {
+                    Text("正在规划插图…")
+                } else if (material.inserts ?? []).isEmpty {
+                    Button(material.aiEditWarning == nil ? "规划 AI 插图" : "重试 AI 剪辑") {
+                        state.retryAIEditing(projectID, materialID)
+                    }
+                    .disabled(material.exportState != .complete)
+                }
+            }
             if material.transcriptState == .running {
                 Button("取消字幕处理") { state.cancelProcessing(projectID, materialID, motion: false) }
             } else if material.exportState == .complete {
                 if material.transcriptWarning != nil, material.transcriptState == .complete, !material.subtitles.isEmpty {
                     Button("重试字幕校正") { state.correctSubtitles(projectID, materialID) }
+                }
+                if material.transcriptState == .complete, !material.subtitles.isEmpty {
+                    Button("复核全部字幕") { state.reviewSubtitles(projectID) }
+                        .disabled(state.reviewingProjects.contains(projectID))
                 }
                 Button(material.transcriptState == .complete ? "重新识别字幕" : "识别字幕") { state.transcribe(projectID, materialID) }
             }
@@ -109,7 +123,7 @@ struct MaterialTaskStatus: View {
             if material.wantsMotion && material.motionState != .complete {
                 HStack {
                     if material.motionState == .running { ProgressView().controlSize(.small) }
-                    Text(material.motionLabel ?? "原片可用")
+                    Text(state.motionPhases[material.mediaID] ?? material.motionLabel ?? "原片可用")
                     Spacer()
                     if [.running, .queued].contains(material.motionState) {
                         Button("取消") { state.cancelProcessing(projectID, material.id, motion: true) }

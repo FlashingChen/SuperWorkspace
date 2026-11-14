@@ -8,6 +8,19 @@ import Foundation
 enum AcceptanceHarness {
     static func runIfRequested() {
         let args = CommandLine.arguments
+        if let index = args.firstIndex(of: "--accept-export") {
+            Task { @MainActor in
+                do {
+                    try await runExportOnly()
+                    print("ACCEPT OK")
+                    exit(0)
+                } catch {
+                    print("ACCEPT FAIL: \(error.localizedDescription)")
+                    exit(1)
+                }
+            }
+            return
+        }
         guard let index = args.firstIndex(of: "--accept") else { return }
         let input = args.count > index + 1 ? args[index + 1] : nil
         let target = args.count > index + 2 ? Double(args[index + 2]) ?? 600 : 600
@@ -90,7 +103,8 @@ enum AcceptanceHarness {
                 throw ShellError.exitStatus(-1, "素材丢失")
             }
             let phase = state.taskPhases[material.mediaID] ?? ""
-            let status = "motion=\(m.motionState.rawValue) transcript=\(m.transcriptState.rawValue) phase=\(phase)"
+            let motionPhase = state.motionPhases[material.mediaID] ?? ""
+            let status = "motion=\(m.motionState.rawValue) transcript=\(m.transcriptState.rawValue) phase=\(phase) motionPhase=\(motionPhase)"
             if status != lastPhase {
                 log(status)
                 if let error = m.motionError ?? m.transcriptError { log("error: \(error)") }
@@ -126,7 +140,10 @@ enum AcceptanceHarness {
             throw ShellError.exitStatus(-1, "字幕 metadata 无效")
         }
 
-        let output = try await ExportService.export(project: state.projects[0])
+        guard let exporting = state.projects.first(where: { $0.id == project.id }) else {
+            throw ShellError.exitStatus(-1, "验收项目丢失")
+        }
+        let output = try await ExportService.export(project: exporting)
         let outputDuration = await RoughCutService.duration(of: output) ?? 0
         log("导出: \(output.path) 时长 \(outputDuration)")
         guard abs(outputDuration - inputDuration) < 2.0 else {
@@ -141,10 +158,42 @@ enum AcceptanceHarness {
 }
 
 extension AcceptanceHarness {
+    /// 复用已完成的验收项目，仅执行导出环节。
+    @MainActor
+    static func runExportOnly() async throws {
+        let projects = ProjectLayout.loadAll()
+        guard var project = projects.first else { throw ShellError.exitStatus(-1, "没有可用的验收项目") }
+        project.includeSubtitles = false
+        guard let material = project.materials.first, material.motionState == .complete else {
+            throw ShellError.exitStatus(-1, "素材动效未完成")
+        }
+        let inputDuration = await RoughCutService.duration(of: ProjectLayout.source(material, in: project)) ?? 0
+        let motionURL = ProjectLayout.motion(material, in: project)
+        let motionDuration = await RoughCutService.duration(of: motionURL) ?? 0
+        log("source2 时长: \(motionDuration)（输入 \(inputDuration)）")
+        guard abs(motionDuration - inputDuration) < 2.0 else {
+            throw ShellError.exitStatus(-1, "source2 与输入时长不一致")
+        }
+        let transcriptURL = ProjectLayout.materialDirectory(material, in: project).appendingPathComponent("transcript.json")
+        let segments = try JSONDecoder().decode([TranscriptSegment].self, from: Data(contentsOf: transcriptURL))
+        log("字幕条数: \(segments.count)")
+        let output = try await ExportService.export(project: project)
+        let outputDuration = await RoughCutService.duration(of: output) ?? 0
+        log("导出: \(output.path) 时长 \(outputDuration)")
+        guard abs(outputDuration - inputDuration) < 2.0 else {
+            throw ShellError.exitStatus(-1, "导出与输入时长不一致")
+        }
+        print("ACCEPT ARTIFACTS:")
+        print("  input:   \(ProjectLayout.source(material, in: project).path) (\(inputDuration)s)")
+        print("  source2: \(motionURL.path) (\(motionDuration)s)")
+        print("  transcript: \(transcriptURL.path) (\(segments.count) segments)")
+        print("  export:  \(output.path) (\(outputDuration)s)")
+    }
+
     @MainActor
     static func configureSettings() {
         SettingsStore.shared.aiMotionAgent = MotionAgent.api.rawValue
-        SettingsStore.shared.aiAPIBaseURL = ProcessInfo.processInfo.environment["ACCEPT_API_BASE"] ?? "http://127.0.0.1:3425/v1"
+        SettingsStore.shared.aiAPIBaseURL = ProcessInfo.processInfo.environment["ACCEPT_API_BASE"] ?? "http://localhost:3425/v1"
         SettingsStore.shared.aiAPIModel = ProcessInfo.processInfo.environment["ACCEPT_API_MODEL"] ?? "auto/step-5-preview"
         SettingsStore.shared.transcriptAICorrection = false // 验收聚焦动效与本地字幕
         guard SettingsStore.shared.hasAIConnection else {

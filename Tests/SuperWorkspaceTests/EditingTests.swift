@@ -1,5 +1,6 @@
 import XCTest
 import AVFoundation
+import AppKit
 @testable import SuperWorkspace
 
 @MainActor
@@ -201,6 +202,130 @@ final class EditingTests: XCTestCase {
             }
             XCTAssertGreaterThan(try XCTUnwrap(loudness), -60, "第二段素材的声音必须落在同一条音轨上")
         }
+    }
+
+    func testProjectLibraryImportsBeforeRecordingAndInsertsOnlyAtPlannedTimes() async throws {
+        guard let ffmpeg = ToolPaths.ffmpeg else { throw XCTSkip("Synthetic media requires ffmpeg") }
+        try await withStorage { root in
+            var project = VideoProject(name: "Library")
+            try ProjectLayout.save(project)
+            let image = root.appendingPathComponent("still.png")
+            let video = root.appendingPathComponent("cutaway.mp4")
+            try await Shell.run(ffmpeg, arguments: ["-y", "-f", "lavfi", "-i", "color=blue:s=320x180", "-frames:v", "1", image.path])
+            try await Shell.run(ffmpeg, arguments: ["-y", "-f", "lavfi", "-i", "color=green:s=320x180:r=30:d=1", "-c:v", "libx264", video.path])
+            let still = try await ReferenceMediaImport.copy(image, into: project)
+            let cutaway = try await ReferenceMediaImport.copy(video, into: project)
+            project.referenceMedia = [still, cutaway]
+            try ProjectLayout.save(project)
+            try FileManager.default.removeItem(at: image)
+            try FileManager.default.removeItem(at: video)
+            project = try XCTUnwrap(ProjectLayout.loadAll().first)
+            XCTAssertTrue(project.materials.isEmpty)
+            XCTAssertEqual(project.referenceMedia.map(\.kind), [.image, .video])
+
+            var material = fixture().materials[0]
+            material.editingPrompt = "Add the photo and then the cutaway."
+            project.materials = [material]
+            try ProjectLayout.save(project)
+            XCTAssertEqual(ProjectLayout.loadAll().first?.materials.first?.editingPrompt, material.editingPrompt)
+            project.includeSubtitles = false
+            project.exportSRT = true
+            let source = ProjectLayout.source(material, in: project)
+            try FileManager.default.createDirectory(at: source.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try await Shell.run(ffmpeg, arguments: ["-y", "-f", "lavfi", "-i", "color=red:s=320x180:r=30:d=3",
+                "-f", "lavfi", "-i", "sine=frequency=440:duration=3", "-c:v", "libx264", "-c:a", "aac", source.path])
+            let clip = AIEditing.Clip(id: material.id, start: 0.5, end: 2.5)
+            let imageInsert = AIEditing.Insert(clipID: material.id, assetID: still.id, start: 0.75, end: 1.25, assetStart: nil)
+            let videoInsert = AIEditing.Insert(clipID: material.id, assetID: cutaway.id, start: 1.5, end: 2.25, assetStart: 0.2)
+            let invalid = AIEditing.Plan(clips: [clip], inserts: [imageInsert, imageInsert])
+            XCTAssertThrowsError(try AIEditing.apply(invalid, to: &project))
+            XCTAssertEqual(project.materials[0].inPoint, 0)
+            let plan = AIEditing.Plan(clips: [clip], inserts: [imageInsert, videoInsert])
+            try AIEditing.apply(plan, to: &project)
+            let output = try await ExportService.export(project: project, inserts: plan.inserts)
+            let subtitles = try String(contentsOf: output.deletingPathExtension().appendingPathExtension("srt"), encoding: .utf8)
+            XCTAssertTrue(subtitles.contains("00:00:00,000 --> 00:00:00,500"))
+            let asset = AVURLAsset(url: output)
+            let audio = try await asset.loadTracks(withMediaType: .audio)
+            XCTAssertEqual(audio.count, 1)
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.requestedTimeToleranceBefore = .zero
+            generator.requestedTimeToleranceAfter = .zero
+            // 0.25–0.75s shows the still inside its rounded window, 1.0–1.75s the video cutaway
+            // over the fallback background; elsewhere the main red picture. Each probe reads the
+            // picture's own pixel.
+            for (second, channel) in [(0.1, 0), (0.4, 2), (0.85, 0), (1.3, 1), (1.85, 0)] {
+                let frame = try await generator.image(at: CMTime(seconds: second, preferredTimescale: 600)).image
+                let bytes = rgba(frame)
+                let center = (frame.width * (frame.height / 2) + frame.width / 2) * 4
+                let expected = bytes[center + channel]
+                XCTAssertGreaterThan(expected, 95, "Unexpected picture at \(second)s")
+                XCTAssertGreaterThan(Int(expected), Int(bytes[center + (channel + 1) % 3]) + 40)
+                XCTAssertGreaterThan(Int(expected), Int(bytes[center + (channel + 2) % 3]) + 40)
+            }
+            // The window sits on the drawn fallback background: the frame corners stay dark and
+            // flat background pixels do not soften into their neighbours the way a blur would.
+            let stillFrame = try await generator.image(at: CMTime(seconds: 0.4, preferredTimescale: 600)).image
+            let stillBytes = rgba(stillFrame)
+            let pixel: (Int, Int) -> (Int, Int, Int) = { x, y in
+                let offset = (y * stillFrame.width + x) * 4
+                return (Int(stillBytes[offset]), Int(stillBytes[offset + 1]), Int(stillBytes[offset + 2]))
+            }
+            let edge = 4
+            for (x, y) in [(edge, edge), (stillFrame.width - edge - 1, edge),
+                           (edge, stillFrame.height - edge - 1),
+                           (stillFrame.width - edge - 1, stillFrame.height - edge - 1)] {
+                let (red, green, blue) = pixel(x, y)
+                XCTAssertLessThan(red, 60, "Fallback background must stay dark at \(x),\(y): \(red),\(green),\(blue)")
+                XCTAssertLessThan(green, 60, "Fallback background must stay dark at \(x),\(y): \(red),\(green),\(blue)")
+                XCTAssertLessThan(blue, 60, "Fallback background must stay dark at \(x),\(y): \(red),\(green),\(blue)")
+            }
+            for x in [6, 10] {
+                let (red, green, blue) = pixel(x, 10)
+                let (nextRed, nextGreen, nextBlue) = pixel(x + 1, 10)
+                XCTAssertLessThanOrEqual(abs(red - nextRed), 3, "Background pixels must not spread into a blur")
+                XCTAssertLessThanOrEqual(abs(green - nextGreen), 3, "Background pixels must not spread into a blur")
+                XCTAssertLessThanOrEqual(abs(blue - nextBlue), 3, "Background pixels must not spread into a blur")
+            }
+        }
+    }
+
+    func testInsertBackdropIsDrawnAndExportCodeHasNoBlurPath() throws {
+        let canvas = CGSize(width: 1280, height: 720)
+        let backdrop = ExportService.backdrop(for: canvas)
+        XCTAssertEqual(backdrop.width, 1280)
+        XCTAssertEqual(backdrop.height, 720)
+        let artifact = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("insert-backdrop-\(UUID().uuidString).png")
+        let encoded = try XCTUnwrap(NSBitmapImageRep(cgImage: backdrop).representation(using: .png, properties: [:]))
+        try encoded.write(to: artifact)
+        print("Insert backdrop PNG: \(artifact.path)")
+
+        let bytes = rgba(backdrop)
+        let edge = 4
+        let corner = (edge * backdrop.width + edge) * 4
+        for channel in 0..<3 {
+            XCTAssertLessThan(Int(bytes[corner + channel]), 60, "The fallback backdrop corner must stay dark")
+        }
+        for x in [40, 44] {
+            let offset = (40 * backdrop.width + x) * 4
+            let next = (40 * backdrop.width + x + 1) * 4
+            for channel in 0..<3 {
+                XCTAssertLessThanOrEqual(abs(Int(bytes[offset + channel]) - Int(bytes[next + channel])), 3,
+                                         "Background pixels must not spread into a blur")
+            }
+        }
+
+        // Regression guard: the export pipeline must never reintroduce a blurred backdrop.
+        let source = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/SuperWorkspace/ExportService.swift")
+        let code = try String(contentsOf: source, encoding: .utf8)
+        XCTAssertTrue(code.contains("func backdrop(for canvas: CGSize) -> CGImage"),
+                      "The fallback background must be drawn in ExportService")
+        XCTAssertFalse(code.contains("GaussianBlur"), "Export must not generate a blurred backdrop")
     }
 
     private func rgba(_ image: CGImage) -> [UInt8] {

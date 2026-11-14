@@ -141,16 +141,22 @@ private struct MaterialCardStatus: View {
         if material.transcriptState == .failed { return ("exclamationmark.circle", "字幕失败", palette.danger) }
         if material.transcriptWarning != nil { return ("exclamationmark.triangle", "字幕需复查", palette.warning) }
         if material.exportState == .running { return ("hourglass", "正在导出", palette.textSecondary) }
-        if material.motionState == .running { return ("hourglass", "添加动效中", palette.ai) }
+        if material.motionState == .running || state.motionPhases[material.mediaID] != nil {
+            return ("hourglass", state.motionPhases[material.mediaID] ?? "添加动效中", palette.ai)
+        }
+        if let phase = state.taskPhases[material.mediaID] {
+            return ("hourglass", phase, palette.textSecondary)
+        }
         if material.transcriptState == .running {
-            return ("hourglass", state.taskPhases[material.mediaID] ?? "处理字幕中", palette.textSecondary)
+            return ("hourglass", "处理字幕中", palette.textSecondary)
         }
         if material.motionState == .queued { return ("hourglass", "动效排队中", palette.ai) }
         return nil
     }
 
     private var messages: [String] {
-        [material.exportError, material.motionError, material.transcriptError, material.transcriptWarning].compactMap { $0 }
+        [material.exportError, material.motionError, material.transcriptError, material.transcriptWarning,
+         material.aiEditWarning].compactMap { $0 }
     }
 
     var body: some View {

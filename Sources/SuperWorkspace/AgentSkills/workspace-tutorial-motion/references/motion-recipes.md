@@ -33,6 +33,60 @@ const camera = [
 
 跨章节回指可直接复用 [chapter-connection.tsx](chapter-connection.tsx)。把出发帧对齐说出两章关系的那一刻，让连线和镜头同时开始变化。较长的讲解可在抵达前后依次补充路径、节点接收和结果细节。
 
+## 背景与承托
+
+整帧先定背景，再放媒体与图解。背景是代码画的，不引用图片，也不用任何模糊。
+
+层级自底向上：
+
+```text
+background（画出来的背景，最先铺）
+cameraWorld（相机世界）
+  objects / connectors / packets（对象、连线、传递）
+fixedLabels（固定文字，可无；不跟相机）
+subtitles（宿主控制，最上层）
+```
+
+背景层与固定文字层在相机两侧：一个压底，一个浮顶。固定标题要不要、放哪一侧或哪一角，按内容定。
+
+### 判断标准
+
+- 主体清楚：一眼知道这一镜在讲什么。
+- 层次分明：背景、承托结构、对象能分开，不是一层平铺。
+- 文字可读：标题与说明在安全距离内清楚，不压住主体。
+- 背景解释主题：有与讲解相关的文字和图形结构，不是通用渐变加网格。
+
+### 承托素材
+
+截图、封面与录屏按原比例进承托结构：卡片、面板、分屏、窗口都可以，比例差落在承托底色或留白上。不拉伸、不裁关键信息、不放大复制，也不用模糊填比例差；承托本身不加 `backdrop-filter`。
+
+承托结构跟随 `WorldCamera`，背景与固定文字层不跟随。
+
+### 示意代码
+
+只示意层的顺序与职责。`Background` 是你按内容写的组件，尺寸、颜色、构图都自己定。
+
+```tsx
+import React from 'react';
+import {AbsoluteFill} from 'remotion';
+import {WorldCamera, type CameraKey} from './world-camera';
+
+const width = 1920; // 画布尺寸按实际改
+const height = 1080;
+const camera: CameraKey[] = [/* 按口播设取景起点、过渡与落点 */];
+
+export const Shot: React.FC = () => (
+  <AbsoluteFill>
+    {/* 背景层：Background 由你画，底色、分区、纹理和相关文字图形都在这层 */}
+    <Background />
+    <WorldCamera viewportWidth={width} viewportHeight={height} keys={camera}>
+      {/* 对象层：承托结构、素材、连线，位置与比例按内容布 */}
+    </WorldCamera>
+    {/* 固定文字层：可无，放在相机外；字幕由宿主控制 */}
+  </AbsoluteFill>
+);
+```
+
 ## 人物与点缀
 
 全屏人物开头可用原背景、人后少量大字、短促入场冲击和有节拍的共同镜头推拉。人物遮挡层必须与底片同帧、同尺寸、同坐标；不能用背景替换掩盖抠像问题。

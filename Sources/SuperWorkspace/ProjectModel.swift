@@ -1,6 +1,6 @@
 import Foundation
 
-enum WorkStage: String, Codable, CaseIterable { case record = "录制", assemble = "拼装" }
+enum WorkStage: String, Codable { case record = "录制", assemble = "拼装", library = "素材库" }
 enum JobState: String, Codable { case idle, queued, running, complete, failed }
 
 struct Material: Identifiable, Codable, Equatable {
@@ -13,6 +13,12 @@ struct Material: Identifiable, Codable, Equatable {
     var transcriptState: JobState = .idle
     var exportError: String?
     var motionError: String?
+    var editingPrompt: String?
+    /// Cutaways chosen while this recording was exported; source time of this material.
+    var inserts: [AIEditing.Insert]?
+    /// The recorder's "AI 剪辑" choice, kept so the choice survives restarts.
+    var wantsAIEditing: Bool?
+    var aiEditWarning: String?
     var transcriptError: String?
     var transcriptWarning: String?
     var subtitleLayoutVersion: Int?
@@ -49,6 +55,15 @@ struct Material: Identifiable, Codable, Equatable {
     }
 }
 
+struct ReferenceMedia: Identifiable, Codable, Equatable, Sendable {
+    enum Kind: String, Codable, Sendable { case image, video }
+    var id = UUID()
+    let name: String
+    let kind: Kind
+    var description = ""
+    var duration: Double?
+}
+
 struct VideoProject: Identifiable, Codable, Equatable {
     var id = UUID()
     var name: String
@@ -56,13 +71,15 @@ struct VideoProject: Identifiable, Codable, Equatable {
     var updatedAt = Date()
     var materials: [Material] = []
     var includeSubtitles = true
+    var referenceMedia: [ReferenceMedia] = []
+    var exportWithAIEditing: Bool?
     var exportSRT: Bool?
     var lastExportSRTName: String?
     var canvasWidth: Double?
     var canvasHeight: Double?
     var lastExportName: String?
 
-    enum CodingKeys: String, CodingKey { case id, name, createdAt, updatedAt, materials, includeSubtitles, canvasWidth, canvasHeight, lastExportName, exportSRT, lastExportSRTName }
+    enum CodingKeys: String, CodingKey { case id, name, createdAt, updatedAt, materials, includeSubtitles, canvasWidth, canvasHeight, lastExportName, exportSRT, lastExportSRTName, referenceMedia, exportWithAIEditing }
     init(name: String) { self.name = name }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -71,6 +88,8 @@ struct VideoProject: Identifiable, Codable, Equatable {
         createdAt = try c.decode(Date.self, forKey: .createdAt)
         updatedAt = try c.decode(Date.self, forKey: .updatedAt)
         materials = try c.decodeIfPresent([Material].self, forKey: .materials) ?? []
+        referenceMedia = try c.decodeIfPresent([ReferenceMedia].self, forKey: .referenceMedia) ?? []
+        exportWithAIEditing = try c.decodeIfPresent(Bool.self, forKey: .exportWithAIEditing)
         includeSubtitles = try c.decodeIfPresent(Bool.self, forKey: .includeSubtitles) ?? true
         canvasWidth = try c.decodeIfPresent(Double.self, forKey: .canvasWidth)
         canvasHeight = try c.decodeIfPresent(Double.self, forKey: .canvasHeight)
@@ -102,6 +121,13 @@ enum ProjectLayout {
         projectsRoot.appendingPathComponent(project.id.uuidString, isDirectory: true)
     }
     static func url(_ name: String, for project: VideoProject) -> URL { directory(for: project).appendingPathComponent(name) }
+    /// Derived review output lives beside the project data so reopening a project keeps it.
+    static func subtitleReview(for project: VideoProject) -> URL { url("subtitle-review.json", for: project) }
+    static func reference(_ media: ReferenceMedia, in project: VideoProject) -> URL {
+        let file = url("library", for: project).appendingPathComponent(media.id.uuidString)
+        let ext = URL(fileURLWithPath: media.name).pathExtension
+        return ext.isEmpty ? file : file.appendingPathExtension(ext)
+    }
     static func materialDirectory(_ material: Material, in project: VideoProject) -> URL {
         directory(for: project).appendingPathComponent("materials/\(material.mediaID.uuidString)", isDirectory: true)
     }

@@ -179,6 +179,53 @@ for path in source.glob('*.swift'):
                 Button { presentExport(scope: .fullProject) } label: {''', '''                EditorToolbarDivider()
                 WorkspaceReturnButton().disabled(isCropping)
                 Button { presentExport(scope: .fullProject) } label: {''')
+    if path.name == 'DirectExportPipeline.swift':
+        content = replace_once(content, """enum ExportCameraCutContinuity {
+    static func frame<Frame>(previous: Frame?, firstFrameInNextSlice: Frame?) -> Frame? {
+        firstFrameInNextSlice ?? previous
+    }
+}""", """enum ExportCameraCutContinuity {
+    static func frame<Frame>(previous: Frame?, firstFrameInNextSlice: Frame?) -> Frame? {
+        firstFrameInNextSlice ?? previous
+    }
+}
+
+/// A screen recording is variable frame rate: a static screen can leave a long
+/// span with no encoded sample. At a cut inside that span the nearest frame
+/// before the cut is still the correct picture, so keep it instead of ending
+/// the export when the new slice has no sample of its own.
+enum ExportScreenCutContinuity {
+    static func frame<Frame>(previous: Frame?, lastFrameBeforeSlice: Frame?) -> Frame? {
+        lastFrameBeforeSlice ?? previous
+    }
+}""")
+        content = replace_once(content, """                if currentPrimarySegmentID != slice.segmentID {
+                    currentPrimarySegmentID = slice.segmentID
+                    currentPixelBuffer = nil
+                    discardVideoSamples(before: sliceStartTime)
+                }""", """                if currentPrimarySegmentID != slice.segmentID {
+                    currentPrimarySegmentID = slice.segmentID
+                    let heldFrame = discardVideoSamples(before: sliceStartTime)
+                    currentPixelBuffer = ExportScreenCutContinuity.frame(
+                        previous: currentPixelBuffer,
+                        lastFrameBeforeSlice: heldFrame
+                    )
+                }""")
+        content = replace_once(content, """    private func discardVideoSamples(before outputTime: CMTime) {
+        while let sample = nextVideoSample,
+              sample.presentationTimeStamp < outputTime {
+            nextVideoSample = readVideoSample()
+        }
+    }""", """    @discardableResult
+    private func discardVideoSamples(before outputTime: CMTime) -> CVPixelBuffer? {
+        var lastFrame: CVPixelBuffer?
+        while let sample = nextVideoSample,
+              sample.presentationTimeStamp < outputTime {
+            lastFrame = sample.imageBuffer
+            nextVideoSample = readVideoSample()
+        }
+        return lastFrame
+    }""")
     dest = target / path.name
     if not dest.exists() or dest.read_text() != content:
         dest.write_text(content)

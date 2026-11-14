@@ -11,20 +11,21 @@ public final class WorkspaceRecorder {
     private var permissionTask: Task<Void, Never>?
     private var jobs: [UUID: VideoExporter] = [:]
     private var observers: [UUID: AnyCancellable] = [:]
-    private var onStart: ((UUID, Bool) throws -> URL)?
+    private var onStart: ((UUID, Bool, String?, Bool) throws -> URL)?
     private var onFinish: ((UUID, Result<URL, Error>) -> Void)?
     private var onReturn: ((NSRect?) -> Void)?
     private var returnsAfterEditorClose = false
     private var isReturning = false
     public var returnActionStyle: @MainActor (AnyView) -> AnyView = { $0 }
     public var exportSheetStyle: @MainActor (AnyView) -> AnyView = { $0 }
+    public var exportPromptField: @MainActor (Binding<String>) -> AnyView = { _ in AnyView(EmptyView()) }
     public var exportPrimaryActionStyle: @MainActor (AnyView) -> AnyView = { $0 }
     public var hasOpenSession: Bool { model != nil }
 
     public func present(
         onPresent: (NSRect?) -> Void,
         onReturn: @escaping (NSRect?) -> Void,
-        onStart: @escaping (UUID, Bool) throws -> URL,
+        onStart: @escaping (UUID, Bool, String?, Bool) throws -> URL,
         onFinish: @escaping (UUID, Result<URL, Error>) -> Void
     ) {
         if let model {
@@ -112,13 +113,14 @@ public final class WorkspaceRecorder {
         restore?(origin)
     }
 
-    func submit(wantsMotion: Bool, makeRequest: (URL) throws -> EditorExportRequest) throws {
+    func submit(wantsMotion: Bool, editingPrompt: String?, wantsAIEditing: Bool,
+                makeRequest: (URL) throws -> EditorExportRequest) throws {
         let id = UUID()
         guard let onStart, let onFinish else { throw CocoaError(.fileWriteUnknown) }
         // Validate before adding a persistent material or hiding the editor.
         let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("\(id).mp4")
         _ = try makeRequest(temporary)
-        let output = try onStart(id, wantsMotion)
+        let output = try onStart(id, wantsMotion, wantsMotion || wantsAIEditing ? editingPrompt : nil, wantsAIEditing)
         let request: EditorExportRequest
         do { request = try makeRequest(output) }
         catch { onFinish(id, .failure(error)); throw error }
@@ -164,6 +166,8 @@ struct IntegratedExportSheet: View {
     @ObservedObject var playbackController: EditorPlaybackController
     @Environment(\.dismiss) private var dismiss
     @State private var wantsMotion = false
+    @State private var editingPrompt = ""
+    @State private var wantsAIEditing = false
     @State private var error: String?
 
     var body: some View {
@@ -173,7 +177,19 @@ struct IntegratedExportSheet: View {
     private var content: some View {
         VStack(alignment: .leading, spacing: 24) {
             Text("完成录制").font(.title2.weight(.semibold))
-            Toggle("添加 AI 动效", isOn: $wantsMotion)
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle("添加 AI 动效", isOn: $wantsMotion)
+                if wantsMotion || wantsAIEditing {
+                    WorkspaceRecorder.shared.exportPromptField($editingPrompt)
+                }
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("AI 剪辑", isOn: $wantsAIEditing)
+                    .help("从素材库选用补充画面，随本段素材保存，导出成片时使用。")
+                Text("按素材库内容插入画面")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
             HStack {
                 Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
@@ -192,7 +208,8 @@ struct IntegratedExportSheet: View {
         _ = editorStore.prepareForExternalAction(.export)
         guard let media = mediaSession.prepared else { return }
         do {
-            try WorkspaceRecorder.shared.submit(wantsMotion: wantsMotion) { output in
+            let prompt = editingPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            try WorkspaceRecorder.shared.submit(wantsMotion: wantsMotion, editingPrompt: prompt.isEmpty ? nil : prompt, wantsAIEditing: wantsAIEditing) { output in
                 let project = editorStore.project
                 return try EditorExportRequestBuilder.make(
                     editorSessionID: editorStore.sessionID, mediaGeneration: media.generation,

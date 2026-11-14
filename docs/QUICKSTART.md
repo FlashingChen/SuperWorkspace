@@ -1,25 +1,35 @@
-# SuperWorkspace quick start
+# 快速入门
 
-## Install
+## 安装
 
-1. Download the `macos-arm64.dmg` installer from [GitHub Releases](https://github.com/FlashingChen/SuperWorkspace/releases). This build is for Apple Silicon Macs running macOS 14 or later.
-2. Open the DMG, drag **SuperWorkspace.app** to **Applications**, then eject the disk image. A ZIP download is also available. The release is ad-hoc signed and unnotarized. If macOS blocks it, review [Apple’s guidance for opening an app you trust](https://support.apple.com/en-us/102445).
-3. On the first recording, grant screen recording and accessibility access when prompted. Grant microphone or camera access if you use those inputs. Follow any macOS prompt to reopen the app.
+1. 从 [GitHub Releases](https://github.com/FlashingChen/SuperWorkspace/releases) 下载 macOS ARM64 磁盘映像（DMG），打开后把 **SuperWorkspace.app** 拖进「应用程序」，再推出磁盘映像。发布包仅支持 macOS 14 及以上的 Apple Silicon Mac；ZIP 下载包内容相同。
+2. 发布包使用临时签名，未经过 Apple 公证。若系统阻止打开，请参考 [Apple 关于打开受信任应用的建议](https://support.apple.com/en-us/102445) 处理。
+3. 首次录制时按系统提示授予屏幕录制与辅助功能权限；使用麦克风或摄像头时再分别授权。部分权限变更后需要重新打开应用。
 
-Pi, Node.js, FFmpeg, whisper.cpp, and the default multilingual speech model are included. You can record, transcribe, edit, and export without an AI account.
+应用已内置 Pi、Node.js、FFmpeg、whisper.cpp 与默认语音模型。不连接 AI 账户也能录制、识别字幕、拼装和导出。
 
-## Connect a model
+## 连接模型（可选）
 
-Open **设置 → AI 动效 → 内置 Pi**. Enter your provider’s OpenAI-compatible API base URL, model ID, and API key. Select **测试连接**, then **保存**. The key is stored in macOS Keychain.
+打开「设置 → AI 动效 → 内置 Pi」，填写服务商提供的基础地址、模型和 API 密钥，点「测试连接」，再点「保存」。密钥保存在 macOS 钥匙串，保存后不再显示。
 
-AI motion requires a model that supports tool calling. Turn on **模型支持图片** when your model accepts image input. The first AI motion job downloads Remotion and its browser automatically, so keep the app online while it prepares them.
+- 模型支持图片时，打开「模型支持图片」：动效任务会附带源帧，素材描述与 AI 剪辑会发送截图做判断。
+- AI 动效需要支持工具调用的模型；首次动效任务会在本机准备 Remotion 与渲染浏览器，请保持联网。
+- 也可以改用本机已安装并认证的 Claude CLI，但该路径不接收图片。
 
-## Make a first video
+## 做第一条视频
 
-1. Click **新建项目** and name your project.
-2. Click **录制新素材**. In the compact recorder, choose what to capture and check the microphone before recording a short clip.
-3. Stop the recording, trim it in the recorder, and click **完成录制**. Enable **添加 AI 动效** if you connected a model and want motion on this clip.
-4. In **拼装**, play the timeline and review the generated subtitles. Click a subtitle to edit its text. To change clip order, drag the video clips along the timeline.
-5. Click **导出成片**, choose the aspect ratio and subtitle options, then export the MP4.
+1. **新建项目**，给这一期视频起个名字。
+2. **准备素材库（可选）**。导入讲解要用的图片或视频，写一句说明；启用图像模型后可让应用自动生成描述。AI 剪辑会从这里挑选补充画面。
+3. **录制新素材**。选择画面来源并检查麦克风，录一段讲解；停止后在内置粗剪里裁掉多余部分，点「完成录制」。
+4. **按需选择 AI 能力**。想要动态图解就打开「添加 AI 动效」；想用素材库补充画面就打开「AI 剪辑」；两者都可以写一句剪辑提示词。导出后素材自动加入项目，字幕与 AI 任务在后台继续。
+5. **等待后台处理**。素材上会显示字幕与动效的处理阶段，失败时可以查看原因并重试；动效完成前可以先用原片预览和导出。
+6. **拼装与校对**。在时间线上调整顺序，拖动片段两端裁剪，在需要的位置分割；点击字幕修改文字，拖动字幕调整时间。点「AI 复核」，它会直接重建每条素材的整条字幕轨：改错字、重新断句并调整时间；字幕长短由模型按语义与语速决定，整次重建可一步撤销，不需要逐条确认。也可以直接删除、合并或在播放头处新增字幕。原始素材就绪后即可边看边改。
+7. **导出成片**。选择画幅，决定是否嵌入样式字幕、是否另存 SRT 文件，以及是否在导出时执行 AI 剪辑。字幕还在处理时可关闭字幕选项先导出视频。导出完成后可从「最近导出」播放或在 Finder 中定位。
 
-If a background task fails, click the status icon on the material card to see the details. Retry from its **⋯** menu. The original clip is available while AI motion runs.
+## 常见问题
+
+- **字幕没有生成**：在「设置 → 字幕」检查 FFmpeg、whisper.cpp 与语音模型状态，点「测试字幕识别」。已有 Homebrew 时可直接安装缺失工具。
+- **AI 功能不可用**：先确认 AI 连接测试通过；选择动效时模型必须支持工具调用，视觉相关功能还需要「模型支持图片」。
+- **动效失败或超时**：可查看失败原因并重试；重试仍失败时可切回原片，不阻塞成片导出。
+- **想删掉一段素材**：从素材的更多操作或时间线片段的右键菜单中选择删除，确认后该片段与字幕从项目移除，原始文件保留。只想删字幕时，选中字幕按 ⌘⌫ 或从右键菜单删除，画面与声音不受影响。
+- **换一台机器继续**：项目数据在影片目录的 SuperWorkspace 文件夹内，按项目分目录保存；AI 密钥不随项目迁移，需要重新配置。

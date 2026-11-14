@@ -13,6 +13,7 @@
 ## 内置 Pi
 
 - [Pi](https://github.com/earendil-works/pi) SDK 采用 MIT License，固定依赖见 `Integration/PiRuntime/package-lock.json`。应用携带上游许可证 `PiRuntime/Pi-LICENSE` 和 npm 依赖附带的许可证。
+- [pi-web-access](https://github.com/nicobailon/pi-web-access) 提供字幕校正的联网查证工具，采用 MIT License，随 npm 依赖打包并保留其许可证。
 - [Node.js](https://nodejs.org/) 和随其发行的 npm 来自官方发行包，版本和校验值由 `scripts/prepare-pi.py` 固定。应用携带发行包附带的许可证。
 
 ## 本地媒体工具

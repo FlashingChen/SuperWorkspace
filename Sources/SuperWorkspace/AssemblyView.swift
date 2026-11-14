@@ -13,6 +13,8 @@ struct AssemblyView: View {
     @State private var isPlaying = false
     @State private var selectedMaterial: UUID?
     @State private var selectedSubtitle: String?
+    @State private var focusSubtitle: String?
+    @FocusState private var focusedSubtitle: String?
     @State private var zoom = 1.0
     @State private var previewFraction = 0.66
     @State private var dragOrigin: Double?
@@ -65,6 +67,7 @@ struct AssemblyView: View {
                         AssemblyTimeline(project: project, playhead: playhead, isPlaying: isPlaying,
                             canPlay: player.currentItem != nil && !loading,
                             selectedMaterial: $selectedMaterial, selectedSubtitle: $selectedSubtitle,
+                            focusSubtitle: $focusSubtitle, editingCaption: focusedSubtitle != nil,
                             onSeek: seek, onPlay: togglePlayback,
                             onMove: { state.reorderMaterial(project.id, source: $0, target: $1, after: $2) },
                             zoom: $zoom)
@@ -88,6 +91,14 @@ struct AssemblyView: View {
         .onChange(of: playhead) { _, _ in remember() }
         .onChange(of: zoom) { _, _ in remember(flush: true) }
         .onChange(of: selectedSubtitle) { _, _ in remember(flush: true) }
+        .onChange(of: focusSubtitle) { _, key in
+            guard let key else { return }
+            focusSubtitle = nil
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(120))
+                focusedSubtitle = key
+            }
+        }
         .onChange(of: selectedMaterial) { _, _ in remember(flush: true) }
         .onChange(of: project.materials.map(\.id)) { _, ids in
             if let selectedMaterial, !ids.contains(selectedMaterial) { self.selectedMaterial = nil; selectedSubtitle = nil }
@@ -113,18 +124,35 @@ struct AssemblyView: View {
                                 get: { material.useOriginal ?? false },
                                 set: { state.setUseOriginal(project.id, material.id, $0) }),
                                 options: [(true, "原片"), (false, material.motionState == .complete ? "动效" : "动效处理中")])
-                            if material.motionState != .complete { Text(material.motionError ?? material.motionLabel ?? "使用原片预览").font(.studio(.small)).foregroundStyle(palette.textSecondary) }
+                            if material.motionState != .complete {
+                                Text(material.motionError
+                                    ?? state.motionPhases[material.mediaID]
+                                    ?? material.motionLabel ?? "使用原片预览")
+                                    .font(.studio(.small)).foregroundStyle(palette.textSecondary)
+                            }
                         }
                         Divider()
                     }
-                    HStack {
+                    HStack(spacing: Metrics.space1) {
                         Text("字幕").font(.studio(.subhead))
                         Spacer()
+                        Button { addSubtitleAtPlayhead() } label: { Image(systemName: "text.badge.plus") }
+                            .font(.studio(.small)).buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
+                            .help("在播放头处新增字幕").accessibilityLabel("新增字幕")
+                            .disabled(!canAddSubtitle)
+                        Button(state.reviewingProjects.contains(project.id) ? "复核中" : "AI 复核") { state.reviewSubtitles(project.id) }
+                            .font(.studio(.small)).buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
+                            .disabled(state.reviewingProjects.contains(project.id) || !hasReviewableSubtitles)
+                            .accessibilityIdentifier("assembly.subtitles.review")
                         Button("AI 校正") { for material in project.materials { state.correctSubtitles(project.id, material.id) } }
                             .font(.studio(.small)).buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
                             .disabled(project.materials.contains { $0.transcriptState == .running }
                                 || !project.materials.contains { $0.transcriptState == .complete && !$0.subtitles.isEmpty })
                     }
+                    SubtitleReviewPanel(project: project,
+                                        onSelect: { materialID, index in selectSubtitle(materialID, index) },
+                                        onDelete: { materialID, index in deleteSubtitle(materialID, index) })
+                    let severities = reviewSeverities
                     ForEach(Array(project.materials.enumerated()), id: \.element.id) { number, material in
                         if project.materials.count > 1 { Text("素材 \(number + 1)").font(.studio(.small)).foregroundStyle(palette.textMuted) }
                         if let warning = material.transcriptWarning { Text(warning).font(.studio(.small)).foregroundStyle(palette.warning) }
@@ -132,24 +160,49 @@ struct AssemblyView: View {
                             MaterialTaskStatus(projectID: project.id, material: material)
                         }
                         ForEach(Array(material.subtitles.enumerated()).filter { $0.element.end > material.inPoint && $0.element.start < material.outPoint }, id: \.offset) { index, subtitle in
-                            let key = "\(material.id)-\(index)"
+                            let key = SubtitleKey.make(material.id, index)
                             VStack(alignment: .leading, spacing: Metrics.space2) {
-                                Button {
-                                    selectedMaterial = material.id
-                                    selectedSubtitle = key
-                                    seek(globalStart(material, subtitle.start))
-                                } label: { Text(durationLabel(globalStart(material, subtitle.start))).font(.studio(.small).monospacedDigit()) }
-                                    .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact)).foregroundStyle(palette.textSecondary)
+                                HStack(spacing: Metrics.space2) {
+                                    if let severity = severities[key] {
+                                        Circle().fill(severityColor(severity)).frame(width: 5, height: 5)
+                                            .accessibilityLabel("复核：\(severityLabel(severity))")
+                                    }
+                                    Button {
+                                        selectSubtitle(material.id, index)
+                                    } label: { Text(durationLabel(globalStart(material, subtitle.start))).font(.studio(.small).monospacedDigit()) }
+                                        .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact)).foregroundStyle(palette.textSecondary)
+                                    Spacer(minLength: 0)
+                                    if selectedSubtitle == key {
+                                        Menu {
+                                            Button("在播放头处分割字幕") { splitSubtitle(material, index: index) }
+                                                .disabled(!canSplitSubtitle(material, index: index))
+                                            Button("与下一条合并") { _ = state.mergeSubtitle(project.id, material.id, index: index) }
+                                                .disabled(!canMergeSubtitle(material, index: index))
+                                            Divider()
+                                            Button("删除字幕", role: .destructive) { deleteSubtitle(material, index: index) }
+                                        } label: { Image(systemName: "ellipsis") }
+                                        .menuStyle(StudioMenuStyle()).fixedSize().accessibilityLabel("字幕操作")
+                                    }
+                                }
                                 TextField("字幕", text: Binding(
                                     get: { state.projects.first(where: { $0.id == project.id })?.materials.first(where: { $0.id == material.id })?.subtitles[safe: index]?.text ?? subtitle.text },
                                     set: { state.editSubtitle(projectID: project.id, materialID: material.id, index: index, text: $0) }
                                 ), axis: .vertical).textFieldStyle(StudioTextFieldStyle()).lineLimit(2...4)
                                     .disabled(material.transcriptState == .running)
+                                    .focused($focusedSubtitle, equals: key)
                                     .onTapGesture { selectedMaterial = material.id; selectedSubtitle = key }
 
                             }
                             .padding(Metrics.space2).frame(maxWidth: .infinity, alignment: .leading)
                             .background(selectedSubtitle == key ? palette.surface1 : .clear, in: RoundedRectangle(cornerRadius: Metrics.radiusS))
+                            .contextMenu {
+                                Button("在播放头处分割字幕") { splitSubtitle(material, index: index) }
+                                    .disabled(!canSplitSubtitle(material, index: index))
+                                Button("与下一条合并") { _ = state.mergeSubtitle(project.id, material.id, index: index) }
+                                    .disabled(!canMergeSubtitle(material, index: index))
+                                Divider()
+                                Button("删除字幕", role: .destructive) { deleteSubtitle(material, index: index) }
+                            }
                             .id(key)
                         }
                         if material.transcriptState == .complete && material.subtitles.isEmpty {
@@ -161,6 +214,99 @@ struct AssemblyView: View {
             .onChange(of: selectedSubtitle) { _, value in
                 if let value { proxy.scrollTo(value, anchor: .center) }
             }
+        }
+    }
+    private var reviewSeverities: [String: SubtitleReviewIssue.Severity] {
+        var result: [String: SubtitleReviewIssue.Severity] = [:]
+        for item in state.resolvedSubtitleIssues(project.id) {
+            let key = SubtitleKey.make(item.materialID, item.index)
+            if let existing = result[key], existing >= item.issue.severity { continue }
+            result[key] = item.issue.severity
+        }
+        return result
+    }
+    private var hasReviewableSubtitles: Bool {
+        project.materials.contains { $0.transcriptState != .running && !$0.subtitles.isEmpty }
+    }
+    private func severityColor(_ severity: SubtitleReviewIssue.Severity) -> Color {
+        switch severity {
+        case .error: return palette.danger
+        case .warning: return palette.warning
+        case .note: return palette.textMuted
+        }
+    }
+    private func severityLabel(_ severity: SubtitleReviewIssue.Severity) -> String {
+        switch severity {
+        case .error: return "错误"
+        case .warning: return "待确认"
+        case .note: return "提示"
+        }
+    }
+    private func selectSubtitle(_ materialID: UUID, _ index: Int) {
+        guard let material = project.materials.first(where: { $0.id == materialID }),
+              material.subtitles.indices.contains(index) else { return }
+        selectedMaterial = materialID
+        selectedSubtitle = SubtitleKey.make(materialID, index)
+        seek(globalStart(material, material.subtitles[index].start))
+    }
+    private func materialAtPlayhead() -> (material: Material, sourceTime: Double)? {
+        let layout = AssemblyTimelineLayout(materials: project.materials)
+        guard let clip = layout.clip(at: playhead) else { return nil }
+        let material = project.materials[clip.index]
+        return (material, material.inPoint + playhead - clip.start)
+    }
+    private var canAddSubtitle: Bool {
+        guard let (material, _) = materialAtPlayhead() else { return false }
+        return material.sourceReady && material.transcriptState == .complete
+    }
+    private func addSubtitleAtPlayhead() {
+        guard let (material, sourceTime) = materialAtPlayhead(), material.transcriptState == .complete else {
+            state.showToast("请等字幕处理完成后再新增字幕。")
+            return
+        }
+        guard let index = state.insertSubtitle(project.id, material.id, at: sourceTime) else {
+            state.showToast("这里没有可用的字幕空位，先移动或删除已有字幕。")
+            return
+        }
+        selectedMaterial = material.id
+        let key = SubtitleKey.make(material.id, index)
+        selectedSubtitle = key
+        focusSubtitle = key
+    }
+    private func sourceTime(of material: Material) -> Double? {
+        let layout = AssemblyTimelineLayout(materials: project.materials)
+        guard let clip = layout.clip(at: playhead), clip.id == material.id else { return nil }
+        return material.inPoint + playhead - clip.start
+    }
+    private func canSplitSubtitle(_ material: Material, index: Int) -> Bool {
+        guard material.transcriptState != .running, material.subtitles.indices.contains(index),
+              let time = sourceTime(of: material) else { return false }
+        let subtitle = material.subtitles[index]
+        return subtitle.end > material.inPoint && subtitle.start < material.outPoint
+            && time - subtitle.start >= TimelineRangeEdit.frame - 0.000_001
+            && subtitle.end - time >= TimelineRangeEdit.frame - 0.000_001
+    }
+    private func splitSubtitle(_ material: Material, index: Int) {
+        guard let time = sourceTime(of: material) else { return }
+        guard state.splitSubtitle(project.id, material.id, index: index, at: time) else {
+            state.showToast("这条字幕无法按时间切分，先调整文字或时间。")
+            return
+        }
+        selectedSubtitle = SubtitleKey.make(material.id, index)
+    }
+    private func canMergeSubtitle(_ material: Material, index: Int) -> Bool {
+        guard material.transcriptState != .running, index + 1 < material.subtitles.count else { return false }
+        let next = material.subtitles[index + 1]
+        return next.end > material.inPoint && next.start < material.outPoint
+    }
+    private func deleteSubtitle(_ materialID: UUID, _ index: Int) {
+        guard let material = project.materials.first(where: { $0.id == materialID }) else { return }
+        deleteSubtitle(material, index: index)
+    }
+    private func deleteSubtitle(_ material: Material, index: Int) {
+        guard state.deleteSubtitle(project.id, material.id, index: index) else { return }
+        if let selection = selectedSubtitle.flatMap(SubtitleKey.parse), selection.materialID == material.id {
+            selectedSubtitle = nil
         }
     }
     private func remember(flush: Bool = false) {
@@ -187,7 +333,7 @@ struct AssemblyView: View {
         }
     }
     private func globalStart(_ material: Material, _ start: Double) -> Double {
-        project.materials.prefix { $0.id != material.id }.reduce(max(0, start - material.inPoint)) { $0 + $1.timelineDuration }
+        AssemblyTimelineLayout.globalStart(materialID: material.id, in: project.materials, sourceTime: start)
     }
     private func schedulePreview() {
         guard restored else { return }
@@ -206,7 +352,13 @@ struct AssemblyView: View {
         loading = true
         defer { loading = false }
         do {
-            let assembly = try await ExportService.assemble(project: project, includeSubtitles: true)
+            // Stored AI-editing inserts belong to the picture, so the preview must show them too.
+            let library = Dictionary(uniqueKeysWithValues: project.referenceMedia.map { ($0.id, $0) })
+            let inserts = project.materials.flatMap { material in
+                AIEditing.validatedInserts(material.inserts ?? [], clipID: material.id,
+                                           clipStart: material.inPoint, clipEnd: material.outPoint, library: library)
+            }
+            let assembly = try await ExportService.assemble(project: project, includeSubtitles: true, inserts: inserts)
             try Task.checkCancellation()
             let item = AVPlayerItem(asset: assembly.composition)
             item.videoComposition = assembly.videoComposition

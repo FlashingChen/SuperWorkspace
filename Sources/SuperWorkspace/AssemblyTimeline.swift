@@ -27,6 +27,17 @@ struct AssemblyTimelineLayout {
         return min(duration, max(0, x / scale))
     }
 
+    func clip(at time: Double) -> Clip? {
+        clips.first { time >= $0.start && time < $0.end }
+    }
+
+    /// Where a source-time caption lands on the assembled timeline.
+    static func globalStart(materialID: UUID, in materials: [Material], sourceTime: Double) -> Double {
+        guard let index = materials.firstIndex(where: { $0.id == materialID }) else { return 0 }
+        let offset = materials[..<index].reduce(0.0) { $0 + $1.timelineDuration }
+        return offset + max(0, sourceTime - materials[index].inPoint)
+    }
+
     static func tickInterval(scale: Double) -> Double {
         [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600].first { $0 * scale >= 64 } ?? 3600
     }
@@ -46,6 +57,9 @@ struct AssemblyTimeline: View {
     let canPlay: Bool
     @Binding var selectedMaterial: UUID?
     @Binding var selectedSubtitle: String?
+    @Binding var focusSubtitle: String?
+    /// A caption field owns the keyboard, so a window-wide delete shortcut must stand down.
+    let editingCaption: Bool
     let onSeek: (Double) -> Void
     let onPlay: () -> Void
     let onMove: (UUID, UUID, Bool) -> Void
@@ -121,8 +135,16 @@ struct AssemblyTimeline: View {
             Text(verbatim: "时间线").font(.studio(.smallStrong))
             Text("\(project.materials.count) 段素材").font(.studio(.small)).foregroundStyle(palette.textSecondary)
             Button(action: splitAtPlayhead) { Image(systemName: "scissors") }
-                .help("在播放头处分割（⌘B）").accessibilityLabel("分割素材")
+                .help(splitHelp).accessibilityLabel("分割")
                 .keyboardShortcut("b", modifiers: .command).disabled(!canSplit)
+            Button { addSubtitleAtPlayhead() } label: { Image(systemName: "text.badge.plus") }
+                .help("在播放头处新增字幕").accessibilityLabel("新增字幕")
+                .accessibilityIdentifier("assembly.subtitles.add").disabled(!canAddSubtitle)
+            Button { deleteSelectedSubtitle() } label: { Image(systemName: "trash") }
+                .help("删除选中的字幕（⌘⌫）").accessibilityLabel("删除选中字幕")
+                .accessibilityIdentifier("assembly.subtitles.delete")
+                .keyboardShortcut(.delete, modifiers: .command)
+                .disabled(!canDeleteSelectedSubtitle || editingCaption)
             Button { state.undo() } label: { Image(systemName: "arrow.uturn.backward") }
                 .help("撤销").accessibilityLabel("撤销").disabled(!state.canUndo)
             Button { state.redo() } label: { Image(systemName: "arrow.uturn.forward") }
@@ -195,20 +217,33 @@ struct AssemblyTimeline: View {
     }
 
     private func subtitleTrack(width: CGFloat, scale: Double) -> some View {
-        ZStack(alignment: .leading) {
+        let severities = reviewSeverities
+        return ZStack(alignment: .leading) {
             palette.surface1.opacity(0.35)
             ForEach(layout.clips) { clip in
                 let material = displayProject.materials[clip.index]
                 ForEach(Array(material.subtitles.enumerated()).filter { $0.element.end > material.inPoint && $0.element.start < material.outPoint }, id: \.offset) { index, subtitle in
-                    subtitleBlock(subtitle, index: index, material: material, clip: clip, scale: scale)
+                    subtitleBlock(subtitle, index: index, material: material, clip: clip, scale: scale,
+                                  severity: severities[SubtitleKey.make(clip.id, index)])
                 }
             }
         }.frame(width: width, height: 34).clipped()
     }
 
+    private var reviewSeverities: [String: SubtitleReviewIssue.Severity] {
+        var result: [String: SubtitleReviewIssue.Severity] = [:]
+        for item in SubtitleReviewer.resolvedIssues(state.subtitleReviews[project.id], in: project) {
+            let key = SubtitleKey.make(item.materialID, item.index)
+            if let existing = result[key], existing >= item.issue.severity { continue }
+            result[key] = item.issue.severity
+        }
+        return result
+    }
+
     private func subtitleBlock(_ subtitle: TranscriptSegment, index: Int, material: Material,
-                               clip: AssemblyTimelineLayout.Clip, scale: Double) -> some View {
-        let key = "\(clip.id)-\(index)"
+                               clip: AssemblyTimelineLayout.Clip, scale: Double,
+                               severity: SubtitleReviewIssue.Severity?) -> some View {
+        let key = SubtitleKey.make(clip.id, index)
         let selected = selectedSubtitle == key
         let visibleStart = max(material.inPoint, subtitle.start)
         let visibleEnd = min(material.outPoint, subtitle.end)
@@ -241,6 +276,30 @@ struct AssemblyTimeline: View {
             .overlay {
                 if selected && width >= 22 && material.transcriptState != .running {
                     rangeGrips(materialID: clip.id, subtitle: index, height: 32, color: palette.warning, scale: scale)
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                if let severity {
+                    Circle()
+                        .fill(severity == .error ? palette.danger
+                              : severity == .warning ? palette.warning : palette.textMuted)
+                        .frame(width: 5, height: 5).padding(Metrics.space1)
+                        .accessibilityHidden(true)
+                }
+            }
+            .contextMenu {
+                Button("定位到字幕开头") {
+                    selectedMaterial = clip.id
+                    selectedSubtitle = key
+                    onSeek(start)
+                }
+                Button("在播放头处分割字幕") { _ = splitSubtitle(clip.id, index: index) }
+                    .disabled(!canSplitSubtitle(clip.id, index: index))
+                Button("与下一条合并") { mergeSubtitle(clip.id, index: index) }
+                    .disabled(!canMergeSubtitle(clip.id, index: index))
+                Divider()
+                Button("删除字幕", role: .destructive) {
+                    if state.deleteSubtitle(project.id, clip.id, index: index) { selectedSubtitle = nil }
                 }
             }
             .accessibilityElement(children: .contain)
@@ -360,19 +419,114 @@ struct AssemblyTimeline: View {
         }
         if !saved { state.showToast("未能应用拖动，请等待字幕处理完成后重试。") }
     }
-    private var canSplit: Bool { canSplit(materialID: selectedMaterial) }
+    private var splitHelp: String {
+        if let selection = selectedSubtitle.flatMap(SubtitleKey.parse),
+           canSplitSubtitle(selection.materialID, index: selection.index) {
+            return "在播放头处分割这条字幕（⌘B）"
+        }
+        return "在播放头处分割素材（⌘B）"
+    }
+
+    private var canSplit: Bool {
+        if let selection = selectedSubtitle.flatMap(SubtitleKey.parse),
+           canSplitSubtitle(selection.materialID, index: selection.index) { return true }
+        return canSplit(materialID: selectedMaterial)
+    }
     private func canSplit(materialID: UUID?) -> Bool {
         let clips = AssemblyTimelineLayout(materials: project.materials).clips
         guard let clip = clips.first(where: { materialID == nil ? playhead >= $0.start && playhead < $0.end : $0.id == materialID }),
               project.materials[clip.index].sourceReady else { return false }
         return playhead - clip.start >= TimelineRangeEdit.frame - 0.000_001 && clip.end - playhead >= TimelineRangeEdit.frame - 0.000_001
     }
-    private func splitAtPlayhead() { splitAtPlayhead(materialID: selectedMaterial) }
+
+    private func splitAtPlayhead() {
+        if let selection = selectedSubtitle.flatMap(SubtitleKey.parse),
+           canSplitSubtitle(selection.materialID, index: selection.index) {
+            if !splitSubtitle(selection.materialID, index: selection.index) {
+                state.showToast("这条字幕无法按时间切分，先调整文字或时间。")
+            }
+            return
+        }
+        splitAtPlayhead(materialID: selectedMaterial)
+    }
     private func splitAtPlayhead(materialID: UUID?) {
         let clips = AssemblyTimelineLayout(materials: project.materials).clips
         guard let clip = clips.first(where: { materialID == nil ? playhead >= $0.start && playhead < $0.end : $0.id == materialID }),
               let right = state.splitMaterial(project.id, clip.id, at: project.materials[clip.index].inPoint + playhead - clip.start) else { return }
         selectedMaterial = right; selectedSubtitle = nil
+    }
+
+    private func subtitleContext(_ materialID: UUID) -> (clip: AssemblyTimelineLayout.Clip, material: Material)? {
+        let layout = AssemblyTimelineLayout(materials: project.materials)
+        guard let clip = layout.clips.first(where: { $0.id == materialID }) else { return nil }
+        return (clip, project.materials[clip.index])
+    }
+
+    private func canSplitSubtitle(_ materialID: UUID, index: Int) -> Bool {
+        guard let (clip, material) = subtitleContext(materialID),
+              material.transcriptState != .running,
+              material.subtitles.indices.contains(index),
+              playhead >= clip.start, playhead < clip.end else { return false }
+        let subtitle = material.subtitles[index]
+        let time = material.inPoint + playhead - clip.start
+        return subtitle.end > material.inPoint && subtitle.start < material.outPoint
+            && time - subtitle.start >= TimelineRangeEdit.frame - 0.000_001
+            && subtitle.end - time >= TimelineRangeEdit.frame - 0.000_001
+    }
+
+    @discardableResult
+    private func splitSubtitle(_ materialID: UUID, index: Int) -> Bool {
+        guard let (clip, material) = subtitleContext(materialID) else { return false }
+        let time = material.inPoint + playhead - clip.start
+        guard state.splitSubtitle(project.id, materialID, index: index, at: time) else { return false }
+        selectedMaterial = materialID
+        selectedSubtitle = SubtitleKey.make(materialID, index)
+        return true
+    }
+
+    private func canMergeSubtitle(_ materialID: UUID, index: Int) -> Bool {
+        guard let (_, material) = subtitleContext(materialID), material.transcriptState != .running,
+              index + 1 < material.subtitles.count else { return false }
+        let next = material.subtitles[index + 1]
+        return next.end > material.inPoint && next.start < material.outPoint
+    }
+
+    private func mergeSubtitle(_ materialID: UUID, index: Int) {
+        state.mergeSubtitle(project.id, materialID, index: index)
+    }
+
+    private var canAddSubtitle: Bool {
+        guard let clip = layout.clip(at: playhead), project.materials[clip.index].sourceReady else { return false }
+        return project.materials[clip.index].transcriptState == .complete
+    }
+
+    private func addSubtitleAtPlayhead() {
+        guard let clip = layout.clip(at: playhead) else { return }
+        let material = project.materials[clip.index]
+        let sourceTime = material.inPoint + playhead - clip.start
+        guard let index = state.insertSubtitle(project.id, material.id, at: sourceTime) else {
+            state.showToast("这里没有可用的字幕空位，先移动或删除已有字幕。")
+            return
+        }
+        selectedMaterial = material.id
+        let key = SubtitleKey.make(material.id, index)
+        selectedSubtitle = key
+        focusSubtitle = key
+    }
+
+    private var canDeleteSelectedSubtitle: Bool {
+        guard let selection = selectedSubtitle.flatMap(SubtitleKey.parse),
+              let material = project.materials.first(where: { $0.id == selection.materialID }) else { return false }
+        return material.transcriptState != .running && material.subtitles.indices.contains(selection.index)
+    }
+
+    private func deleteSelectedSubtitle() {
+        guard let selection = selectedSubtitle.flatMap(SubtitleKey.parse) else { return }
+        if state.deleteSubtitle(project.id, selection.materialID, index: selection.index) {
+            selectedSubtitle = nil
+        } else {
+            state.showToast("未能删除这条字幕。")
+        }
     }
     private struct RangeDraft {
         let materialID: UUID

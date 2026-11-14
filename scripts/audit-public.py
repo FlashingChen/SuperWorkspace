@@ -32,8 +32,11 @@ checks = {
     'literal IPv4 address': re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b'),
     'literal UUID': re.compile(r'\b[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\b'),
 }
+# Funding links in the npm lockfile and reserved loopback/test hosts used by the acceptance
+# harness and unit tests carry no deployment identity.
 public_hosts = {'github.com', 'raw.githubusercontent.com', 'www.apple.com', 'support.apple.com', 'www.w3.org', 'ffmpeg.org',
-                'nodejs.org', 'registry.npmjs.org', 'huggingface.co'}
+                'nodejs.org', 'registry.npmjs.org', 'huggingface.co', 'opencollective.com',
+                'localhost', 'example.com'}
 blocked_suffixes = {'.pem', '.key', '.p12', '.pfx', '.db', '.sqlite', '.sqlite3',
                     '.log', '.wav', '.mp3', '.mp4', '.mov', '.srt', '.vtt', '.dogscproject'}
 failures = []

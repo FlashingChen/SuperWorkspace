@@ -4,6 +4,7 @@ import Foundation
 enum RemotionRuntime {
     static let instructions = """
     在当前素材工作目录运行 npx --no-install remotion，复用已准备的清单、依赖和浏览器。已有工程继续沿用其依赖。
+    已有 src/ 工程时在它上面继续改，不要推倒重建；预览与整片渲染按确认需要重复，直到自己认为可以交付。
     调用应用自带的 FFmpeg 编码 H.264 时，使用 h264_videotoolbox，必要时加 -allow_sw 1。可复制原音轨时直接复制。
     """
 

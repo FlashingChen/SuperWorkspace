@@ -29,7 +29,8 @@ swift build -c "$config" --product SuperWorkspace
 binary_dir="$(swift build -c "$config" --show-bin-path)"
 [[ -f "$binary_dir/SuperWorkspace" ]]
 
-if [[ -e "$app_output" ]] && pgrep -x SuperWorkspace >/dev/null; then
+# Only the default bundle is opened by the user; isolated outputs may be rebuilt alongside it.
+if [[ -z "${SUPERWORKSPACE_APP_OUTPUT:-}" && -e "$app_output" ]] && pgrep -x SuperWorkspace >/dev/null; then
   echo "SuperWorkspace 正在运行，请先退出再替换。" >&2
   exit 1
 fi

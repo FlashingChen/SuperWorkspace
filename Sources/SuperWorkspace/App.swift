@@ -56,8 +56,11 @@ struct RootView: View {
                     if let project = state.currentProject {
                         VStack(spacing: 0) {
                             Group {
-                                if state.stage == .record { RecordStepView(project: project) }
-                                else { AssemblyView(project: project) }
+                                switch state.stage {
+                                case .record: RecordStepView(project: project)
+                                case .assemble: AssemblyView(project: project)
+                                case .library: ProjectMediaLibrary(projectID: project.id)
+                                }
                             }
                             .id(project.id)
                             ExportResultBar(project: project)
@@ -95,7 +98,7 @@ struct RootView: View {
     private var workspaceHeader: some View {
         ZStack {
             HStack(spacing: Metrics.space2_5) {
-                ForEach(Array(WorkStage.allCases.enumerated()), id: \.element) { index, stage in
+                ForEach(Array([WorkStage.record, .assemble].enumerated()), id: \.element) { index, stage in
                     if index > 0 {
                         Image(systemName: "arrow.right")
                             .font(.system(size: 14, weight: .light))
@@ -120,9 +123,19 @@ struct RootView: View {
                     .foregroundStyle(palette.textSecondary)
                     .lineLimit(1).frame(maxWidth: 180, alignment: .leading)
                 Spacer()
+                if state.currentProject != nil {
+                    Button { state.stage = .library } label: {
+                        Label("素材库", systemImage: "photo.on.rectangle")
+                            .font(.studio(.bodyMedium))
+                            .padding(.horizontal, Metrics.space3)
+                            .frame(height: Metrics.choice)
+                    }
+                    .buttonStyle(StudioSelectionStyle(selected: state.stage == .library))
+                    .accessibilityAddTraits(state.stage == .library ? .isSelected : [])
+                }
                 if let project = state.currentProject, state.stage == .assemble {
                     Button { showExport = true } label: {
-                        Label(state.exportingProjects.contains(project.id) ? "正在导出" : "导出成片", systemImage: "arrow.up.right")
+                        Label { Text(verbatim: state.exportingProjects.contains(project.id) ? "正在导出" : "导出成片") } icon: { Image(systemName: "arrow.up.right") }
                     }
                     .buttonStyle(StudioButtonStyle(kind: .primary))
                     .disabled(project.materials.isEmpty || state.exportingProjects.contains(project.id))

@@ -123,6 +123,18 @@ enum ShellError: LocalizedError {
             return "命令退出码 \(code)\n\(log)"
         }
     }
+
+    var exitCode: Int32 {
+        switch self {
+        case let .exitStatus(code, _): return code
+        }
+    }
+
+    var output: String {
+        switch self {
+        case let .exitStatus(_, log): return log
+        }
+    }
 }
 
 enum ToolPaths {

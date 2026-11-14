@@ -26,3 +26,6 @@ id_*
 *.mov
 *.srt
 *.vtt
+
+# Orca/Cordis worktrees are local checkouts, never repo content.
+.worktrees/
