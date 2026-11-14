@@ -175,6 +175,34 @@ final class EditingTests: XCTestCase {
         }
     }
 
+    func testExportedFileKeepsEveryClipOnOneAudioTrack() async throws {
+        guard let ffmpeg = ToolPaths.ffmpeg else { throw XCTSkip("Synthetic media requires ffmpeg") }
+        try await withStorage { _ in
+            var project = fixture()
+            var second = project.materials[0]
+            second.id = UUID()
+            project.materials.append(second)
+            for material in project.materials {
+                let source = ProjectLayout.source(material, in: project)
+                try FileManager.default.createDirectory(at: source.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try await Shell.run(ffmpeg, arguments: ["-y", "-f", "lavfi", "-i", "color=c=blue:s=160x90:r=30:d=3",
+                                                        "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
+                                                        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-t", "3", source.path])
+            }
+            let output = try await ExportService.export(project: project)
+            let asset = AVURLAsset(url: output)
+            let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+            XCTAssertEqual(audioTracks.count, 1, "每个素材单独建音轨会让只播一条音轨的播放器只听到第一段")
+            let log = try await Shell.run(ffmpeg, arguments: ["-nostats", "-hide_banner", "-ss", "4.5", "-i", output.path,
+                                                              "-map", "0:a:0", "-af", "volumedetect", "-f", "null", "-"])
+            var loudness: Double?
+            for line in log.split(separator: "\n") where line.contains("mean_volume") {
+                if let value = line.split(separator: "mean_volume:").last?.split(separator: " ").first { loudness = Double(value) }
+            }
+            XCTAssertGreaterThan(try XCTUnwrap(loudness), -60, "第二段素材的声音必须落在同一条音轨上")
+        }
+    }
+
     private func rgba(_ image: CGImage) -> [UInt8] {
         var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
         bytes.withUnsafeMutableBytes { buffer in
