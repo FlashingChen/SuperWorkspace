@@ -14,6 +14,7 @@ enum ExportService {
         guard !project.materials.isEmpty else { throw failure("还没有素材。") }
         let composition = AVMutableComposition()
         var instructions: [AssemblyInstruction] = []
+        var audioTrack: AVMutableCompositionTrack?
         var cursor = CMTime.zero
         var canvas: CGSize?
         if let width = project.canvasWidth, let height = project.canvasHeight,
@@ -52,11 +53,16 @@ enum ExportService {
             let range = CMTimeRange(start: start, duration: CMTime(seconds: end - material.inPoint, preferredTimescale: 600))
             guard let video = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else { throw failure("无法创建视频轨道。") }
             try video.insertTimeRange(range, of: source, at: cursor)
-            if let audioSource = try await asset.loadTracks(withMediaType: .audio).first,
-               let audio = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
+            if let audioSource = try await asset.loadTracks(withMediaType: .audio).first {
                 let audioRange = try await audioSource.load(.timeRange)
                 let available = CMTimeRangeGetIntersection(range, otherRange: audioRange)
-                if available.duration > .zero { try audio.insertTimeRange(available, of: audioSource, at: CMTimeAdd(cursor, CMTimeSubtract(available.start, start))) }
+                if available.duration > .zero {
+                    // One shared audio track keeps the exported file playable everywhere:
+                    // a track per clip turns every other clip into silence in single-track players.
+                    let audio = audioTrack ?? composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+                    audioTrack = audio
+                    try audio?.insertTimeRange(available, of: audioSource, at: CMTimeAdd(cursor, CMTimeSubtract(available.start, start)))
+                }
             }
             let scale = min(renderSize.width / abs(bounds.width), renderSize.height / abs(bounds.height))
             let fit = transform
