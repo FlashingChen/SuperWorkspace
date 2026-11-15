@@ -51,7 +51,7 @@ enum TranscriptService {
         guard let srt = try? String(contentsOf: srtURL, encoding: .utf8) else {
             throw ShellError.exitStatus(-1, "whisper 未生成字幕文件")
         }
-        let segments = parseSRT(srt)
+        let segments = TranscriptScript.simplified(parseSRT(srt))
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(segments).write(to: dir.appendingPathComponent("transcript-raw.json"), options: .atomic)
@@ -62,10 +62,34 @@ enum TranscriptService {
         } else {
             result = TranscriptResult(segments: segments, warning: nil)
         }
-        let final = SubtitleSegmentation.split(result.segments)
+        let final = SubtitleSegmentation.split(TranscriptScript.simplified(result.segments))
         let metadata = try encoder.encode(final)
         try metadata.write(to: dir.appendingPathComponent("transcript.json"), options: .atomic)
+        // The motion agent reads this file from the material folder, so it carries the same
+        // Simplified wording as the subtitle track instead of the raw recognition.
+        try Self.srt(from: final).write(to: srtURL, atomically: true, encoding: .utf8)
         return TranscriptResult(segments: final, warning: result.warning)
+    }
+
+    /// SRT text for the finished track, used to keep the on-disk transcript in the same script
+    /// as the subtitles the editor shows.
+    static func srt(from segments: [TranscriptSegment]) -> String {
+        segments.enumerated().map { index, segment in
+            """
+            \(index + 1)
+            \(timecode(segment.start)) --> \(timecode(segment.end))
+            \(segment.text)
+            """
+        }.joined(separator: "\n\n") + "\n"
+    }
+
+    private static func timecode(_ seconds: Double) -> String {
+        let total = max(0, seconds)
+        let hours = Int(total) / 3600
+        let minutes = (Int(total) % 3600) / 60
+        let whole = Int(total) % 60
+        let millis = Int(((total - floor(total)) * 1000).rounded())
+        return String(format: "%02d:%02d:%02d,%03d", hours, minutes, whole, millis)
     }
 
     static func parseSRT(_ srt: String) -> [TranscriptSegment] {

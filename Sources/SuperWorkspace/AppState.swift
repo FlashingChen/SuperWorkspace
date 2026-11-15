@@ -475,6 +475,7 @@ final class AppState: ObservableObject {
                     description += "\n" + detected.language.instruction(latinShare: detected.latinShare)
                 } else {
                     description += "\n口播语言：未识别，画面文字按口播实际语言写，不要默认中文。"
+                        + "若口播为中文，画面文字一律使用简体中文，不得出现繁体字或繁体用词。"
                 }
                 // Facts come from the analyser; what may be drawn where comes from the policy.
                     // Keeping them apart means a new editorial rule is a one-line change here.
@@ -886,7 +887,7 @@ final class AppState: ObservableObject {
             }
             for material in group {
                 oldSnapshots[material.id] = material.subtitles
-                newSnapshots[material.id] = track
+                newSnapshots[material.id] = TranscriptScript.simplified(track)
             }
             applied += 1
             before += original.count
