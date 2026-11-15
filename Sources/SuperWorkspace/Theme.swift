@@ -166,6 +166,7 @@ enum Metrics {
     static let content: CGFloat = 1000
     static let contentWide: CGFloat = 1200
     static let inspector: CGFloat = 260
+    static let chatPanel: CGFloat = 340
 
     // opacity-*
     static let opacityPressed: Double = 0.72
