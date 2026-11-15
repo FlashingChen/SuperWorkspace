@@ -94,54 +94,10 @@ struct RootView: View {
                     .padding(Metrics.space6)
             }
         }
-        .overlay(alignment: .top) {
-            budgetBanner.padding(.top, Metrics.header + Metrics.space2)
-        }
         .sheet(isPresented: Binding(get: { state.error != nil }, set: { if !$0 { state.error = nil } })) {
             StudioMessageSheet(title: "操作未完成", message: state.error ?? "", actionTitle: "确定") {
                 state.error = nil
             }
-        }
-    }
-
-    private var pendingBudget: (project: VideoProject, material: Material, hold: MotionBudgetHold)? {
-        for project in state.projects {
-            for material in project.materials {
-                if let hold = state.motionBudgetHolds[material.mediaID] { return (project, material, hold) }
-            }
-        }
-        return nil
-    }
-
-    @ViewBuilder private var budgetBanner: some View {
-        if let pending = pendingBudget {
-            HStack(spacing: Metrics.space3) {
-                Image(systemName: "clock.badge.exclamationmark")
-                    .foregroundStyle(palette.warning)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: Metrics.space1) {
-                    Text("动效已到 \(pending.hold.limit) 分钟上限")
-                        .font(.studio(.bodyMedium))
-                    Text("继续会保留当前进度；\(max(1, pending.hold.waitSeconds / 60)) 分钟内未选择将自动停止。")
-                        .font(.studio(.small))
-                        .foregroundStyle(palette.textSecondary)
-                }
-                Spacer(minLength: Metrics.space4)
-                Button("继续 30 分钟") { state.continueMotion(pending.project.id, pending.material.id) }
-                    .buttonStyle(StudioButtonStyle(kind: .primary, size: .compact))
-                    .disabled(pending.hold.limit >= pending.hold.maxTotal)
-                Button("停止") { state.cancelProcessing(pending.project.id, pending.material.id, motion: true) }
-                    .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
-            }
-            .padding(Metrics.space3)
-            .frame(maxWidth: 620)
-            .background(palette.surface1, in: RoundedRectangle(cornerRadius: Metrics.radiusL))
-            .overlay {
-                RoundedRectangle(cornerRadius: Metrics.radiusL)
-                    .strokeBorder(palette.borderStrong, lineWidth: 1)
-            }
-            .shadow(color: .black.opacity(0.16), radius: Metrics.space3, y: Metrics.space1_5)
-            .padding(.horizontal, Metrics.space6)
         }
     }
 

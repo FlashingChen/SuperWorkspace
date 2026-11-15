@@ -1,5 +1,5 @@
 import {mkdtemp, rm} from 'node:fs/promises';
-import {readFileSync, unlinkSync} from 'node:fs';
+import {readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
@@ -29,15 +29,6 @@ const budgetMinutes = number(request.budgetMinutes, 30);
 const budgetToolCalls = number(request.budgetToolCalls, 100);
 // Leave time to render and deliver instead of aborting: nudge the agent to wrap up first.
 const wrapUpRatio = Math.min(0.95, Math.max(0.5, number(request.wrapUpRatio, 0.9)));
-// When a tool-using task reaches its time budget, ask the app whether to keep
-// going instead of aborting the session (and losing the render).
-const controlPath = typeof request.controlPath === 'string' ? request.controlPath : '';
-const extendMinutes = Math.max(5, number(request.extendMinutes, 30));
-const budgetWaitMinutes = Math.max(1, number(request.budgetWaitMinutes, 15));
-const maxTotalMinutes = Math.min(240, Math.max(budgetMinutes, budgetMinutes * 3));
-let totalMinutes = budgetMinutes;
-let budgetTimer = null;
-let budgetWait = null;
 
 const describeToolArgs = (args) => {
   const compress = (value) => value.replace(/\s+/g, ' ').trim().slice(0, 120);
@@ -169,108 +160,15 @@ try {
   });
 
   progress({type: 'start', model: String(request.model)});
-
-  const clearBudgetWait = () => {
-    if (!budgetWait) return;
-    clearTimeout(budgetWait.timer);
-    clearInterval(budgetWait.poll);
-    budgetWait = null;
-  };
-
-  const pollBudgetControl = () => {
-    if (!budgetWait) return;
-    const wait = budgetWait;
-    let action = null;
-    if (controlPath) {
-      let raw = null;
-      try {
-        raw = readFileSync(controlPath, 'utf8');
-      } catch (error) {
-        if (error?.code !== 'ENOENT') raw = null;
-      }
-      if (raw !== null) {
-        try { unlinkSync(controlPath); } catch {}
-        try { action = JSON.parse(raw); } catch { action = null; }
-      }
-    }
-    if (action?.action === 'stop') {
-      clearBudgetWait();
-      hitBudget('minutes', wait.limit);
-      return;
-    }
-    if (action?.action === 'extend') {
-      const requested = Math.max(5, number(action.minutes, extendMinutes));
-      const next = Math.min(maxTotalMinutes, totalMinutes + requested);
-      const granted = next - totalMinutes;
-      if (granted <= 0) {
-        progress({type: 'budget_wait_cap', limit: maxTotalMinutes});
-        return;
-      }
-      totalMinutes = next;
-      clearBudgetWait();
-      progress({type: 'budget_extended', minutes: granted, limit: totalMinutes, maxTotal: maxTotalMinutes});
-      try {
-        session.steer(`时间预算已延长 ${granted} 分钟，继续完成当前任务并交付输出文件。`);
-      } catch {}
-      scheduleMinutesBudget();
-      return;
-    }
-    if (Date.now() >= wait.deadline) {
-      clearBudgetWait();
-      hitBudget('minutes', totalMinutes);
-    }
-  };
-
-  const onMinutesBudget = () => {
-    if (budget || budgetWait) return;
-    // At the overall ceiling there is nothing to ask for; stop instead of
-    // waiting for an extension that would be refused.
-    if (totalMinutes >= maxTotalMinutes) {
-      hitBudget('minutes', totalMinutes);
-      return;
-    }
-    // Non-tool tasks have no user-facing continue step; keep the hard stop.
-    if (!request.tools) {
-      hitBudget('minutes', totalMinutes);
-      return;
-    }
-    budgetWait = {
-      limit: totalMinutes,
-      deadline: Date.now() + budgetWaitMinutes * 60000,
-      timer: null,
-      poll: null,
-    };
-    progress({
-      type: 'budget_wait',
-      reason: 'minutes',
-      limit: totalMinutes,
-      maxTotal: maxTotalMinutes,
-      waitSeconds: budgetWaitMinutes * 60,
-      extendMinutes,
-    });
-    budgetWait.poll = setInterval(pollBudgetControl, 1000);
-    budgetWait.timer = setTimeout(() => {
-      if (!budgetWait) return;
-      clearBudgetWait();
-      hitBudget('minutes', totalMinutes);
-    }, budgetWaitMinutes * 60000);
-  };
-
-  const scheduleMinutesBudget = () => {
-    clearTimeout(budgetTimer);
-    const remaining = Math.max(0, totalMinutes * 60000 - (Date.now() - startedAt));
-    budgetTimer = setTimeout(onMinutesBudget, remaining);
-    budgetTimer.unref?.();
-  };
-
-  scheduleMinutesBudget();
+  const budgetTimer = setTimeout(() => hitBudget('minutes', budgetMinutes), budgetMinutes * 60000);
+  budgetTimer.unref?.();
   let warned = false;
   const wrapUpTimer = setTimeout(() => {
     if (budget || warned) return;
     warned = true;
     progress({type: 'wrap_up', minutes: Math.round((Date.now() - startedAt) / 60000), limit: budgetMinutes});
     try {
-      session.steer(`时间提醒：已用 ${Math.round((Date.now() - startedAt) / 60000)} 分钟，基础上限 ${budgetMinutes} 分钟。`
+      session.steer(`时间提醒：已用 ${Math.round((Date.now() - startedAt) / 60000)} 分钟，上限 ${budgetMinutes} 分钟。`
         + '立即停止新增镜头与探索，保留当前实现，尽快完成整片渲染并交付指定输出文件。');
     } catch {}
   }, budgetMinutes * 60000 * wrapUpRatio);
@@ -283,7 +181,6 @@ try {
     promptError = error;
   } finally {
     clearTimeout(budgetTimer);
-    clearBudgetWait();
     clearTimeout(wrapUpTimer);
     unsubscribe();
   }
@@ -293,7 +190,7 @@ try {
       ? `${Math.round((Date.now() - startedAt) / 60000)} 分钟`
       : `${toolCalls} 次工具调用`;
     const limit = budget.reason === 'minutes'
-      ? `${totalMinutes} 分钟`
+      ? `${budgetMinutes} 分钟`
       : `${budgetToolCalls} 次工具调用`;
     throw new Error(`任务超出预算（${used}，上限 ${limit}），已中止。`);
   }
