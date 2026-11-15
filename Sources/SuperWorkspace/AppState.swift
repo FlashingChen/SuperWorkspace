@@ -71,6 +71,24 @@ final class AppState: ObservableObject {
                     projects[i].materials[j].subtitles = SubtitleSegmentation.split(source)
                     projects[i].materials[j].subtitleLayoutVersion = SubtitleSegmentation.version
                 }
+                // Subtitles saved before the Simplified rule existed are normalised once on load,
+                // so an old project does not keep Traditional wording in the editor, in export or
+                // in the SRT the motion agent reads.
+                let storedSubtitles = projects[i].materials[j].subtitles
+                if !storedSubtitles.isEmpty {
+                    let language = projects[i].materials[j].transcriptLanguage?.lowercased()
+                    let simplified = language.map {
+                        $0.hasPrefix("zh") ? TranscriptScript.simplifiedChinese(storedSubtitles) : storedSubtitles
+                    } ?? TranscriptScript.simplified(storedSubtitles)
+                    if simplified != storedSubtitles {
+                        projects[i].materials[j].subtitles = simplified
+                        let directory = ProjectLayout.materialDirectory(projects[i].materials[j], in: projects[i])
+                        let encoder = JSONEncoder()
+                        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                        try? encoder.encode(simplified).write(to: directory.appendingPathComponent("transcript.json"), options: .atomic)
+                        try? SRTText.text(simplified).write(to: directory.appendingPathComponent("transcript.srt"), atomically: true, encoding: .utf8)
+                    }
+                }
                 if projects[i].materials[j].exportState == .running {
                     projects[i].materials[j].exportState = .failed
                     projects[i].materials[j].exportError = "上次素材导出中断，请在录制编辑器重新导出。"
@@ -376,7 +394,7 @@ final class AppState: ObservableObject {
                 })
                 try Task.checkCancellation()
                 history(projectID).removeAllActions(); undoRevision += 1
-                updateMaterial(projectID, taskID) { $0.subtitles = result.segments; $0.subtitleLayoutVersion = SubtitleSegmentation.version; $0.transcriptWarning = result.warning; $0.transcriptState = .complete }
+                updateMaterial(projectID, taskID) { $0.subtitles = result.segments; $0.subtitleLayoutVersion = SubtitleSegmentation.version; $0.transcriptWarning = result.warning; $0.transcriptState = .complete; $0.transcriptLanguage = result.language }
             } catch {
                 guard !Task.isCancelled else { return }
                 updateMaterial(projectID, taskID) { $0.transcriptState = .failed; $0.transcriptError = error.localizedDescription }
@@ -407,8 +425,9 @@ final class AppState: ObservableObject {
                     video: ProjectLayout.picture(material, in: project), directory: directory, configuration: configuration)
                 try Task.checkCancellation()
                 history(projectID).removeAllActions(); undoRevision += 1
-                let segments = SubtitleSegmentation.split(result.segments)
+                let segments = SubtitleSegmentation.split(TranscriptScript.simplified(result.segments))
                 try JSONEncoder().encode(segments).write(to: directory.appendingPathComponent("transcript.json"), options: .atomic)
+                try? SRTText.text(segments).write(to: directory.appendingPathComponent("transcript.srt"), atomically: true, encoding: .utf8)
                 updateMaterial(projectID, taskID) { $0.subtitles = segments; $0.subtitleLayoutVersion = SubtitleSegmentation.version; $0.transcriptState = .complete; $0.transcriptWarning = result.warning }
             } catch {
                 guard !Task.isCancelled else { return }
@@ -475,6 +494,7 @@ final class AppState: ObservableObject {
                     description += "\n" + detected.language.instruction(latinShare: detected.latinShare)
                 } else {
                     description += "\n口播语言：未识别，画面文字按口播实际语言写，不要默认中文。"
+                        + "若口播为中文，画面文字一律使用简体中文，不得出现繁体字或繁体用词。"
                 }
                 // Facts come from the analyser; what may be drawn where comes from the policy.
                     // Keeping them apart means a new editorial rule is a one-line change here.
@@ -884,9 +904,10 @@ final class AppState: ObservableObject {
                 skipped += 1
                 continue
             }
+            let simplifiedTrack = TranscriptScript.simplified(track)
             for material in group {
                 oldSnapshots[material.id] = material.subtitles
-                newSnapshots[material.id] = track
+                newSnapshots[material.id] = simplifiedTrack
             }
             applied += 1
             before += original.count

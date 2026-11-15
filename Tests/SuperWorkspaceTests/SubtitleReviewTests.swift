@@ -114,14 +114,14 @@ final class SubtitleReviewTests: XCTestCase {
 
     // MARK: - Text fixes
 
-    func testReplacementKeepsTheFixLocalAndMatchesTheScript() {
+    func testReplacementKeepsTheFixLocalAndAlwaysUsesSimplifiedChinese() {
         let simplified = SubtitleReviewer.validatedReplacement("我们参加了一个小红树的黑客松",
                                                               "我们参加了一个小红书的黑客松")
         XCTAssertEqual(simplified, "我们参加了一个小红书的黑客松")
 
         let traditional = SubtitleReviewer.validatedReplacement("我們參加了一個小紅樹的黑客松",
                                                                "我们参加了一个小红书的黑客松")
-        XCTAssertEqual(traditional, "我們參加了一個小紅書的黑客松")
+        XCTAssertEqual(traditional, "我们参加了一个小红书的黑客松")
 
         XCTAssertNil(SubtitleReviewer.validatedReplacement("Hello world", "你好世界"))
         XCTAssertNil(SubtitleReviewer.validatedReplacement("短", "这是一个完全不同的长句子"))

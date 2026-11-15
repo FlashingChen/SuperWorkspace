@@ -22,6 +22,9 @@ struct Material: Identifiable, Codable, Equatable, Sendable {
     var transcriptError: String?
     var transcriptWarning: String?
     var subtitleLayoutVersion: Int?
+    /// Whisper language of the last recognition (`zh`, `en`, or whatever was configured), so a
+    /// reload can apply the Simplified rule to Chinese material without guessing from script.
+    var transcriptLanguage: String?
     var subtitles: [TranscriptSegment] = []
     var sourceName = "source.mp4"
     var storageID: UUID?
