@@ -15,6 +15,16 @@ private struct MotionTiming: Codable {
     let error: String?
 }
 
+/// A motion task that reached its time budget and is waiting for the user to
+/// either extend it or stop it. The agent session and any render stay alive.
+struct MotionBudgetHold: Identifiable, Equatable, Sendable {
+    let mediaID: UUID
+    let limit: Int
+    let maxTotal: Int
+    let waitSeconds: Int
+    var id: UUID { mediaID }
+}
+
 @MainActor
 final class AppState: ObservableObject {
     @Published var projects: [VideoProject] = ProjectLayout.loadAll()
@@ -39,6 +49,7 @@ final class AppState: ObservableObject {
     @Published var exportProgress: [UUID: ExportProgress] = [:]
     @Published var taskPhases: [UUID: String] = [:]
     @Published var motionPhases: [UUID: String] = [:]
+    @Published var motionBudgetHolds: [UUID: MotionBudgetHold] = [:]
     @Published var subtitleReviews: [UUID: SubtitleReview] = [:]
     @Published var reviewingProjects: Set<UUID> = []
     @Published var reviewPhases: [UUID: String] = [:]
@@ -451,6 +462,8 @@ final class AppState: ObservableObject {
         guard let (project, material) = pair(projectID, id), material.sourceReady,
               motionTasks[material.mediaID] == nil, !motionQueue.contains(where: { $0.1 == material.mediaID }) else { return }
         guard !project.isFrozen else { showToast("项目已冻结，取消冻结后再处理动效。"); return }
+        motionBudgetHolds[material.mediaID] = nil
+        try? FileManager.default.removeItem(at: Self.motionControlURL(material, in: project))
         motionAttempts[material.mediaID] = 0
         motionStartedAt[material.mediaID] = Date()
         updateMaterial(projectID, id) { $0.wantsMotion = true; $0.useOriginal = false; $0.motionState = .queued; $0.motionError = nil }
@@ -474,6 +487,8 @@ final class AppState: ObservableObject {
                 activeMotions.remove(id)
                 activeMotion = activeMotions.first
                 motionPhases[id] = nil
+                motionBudgetHolds[id] = nil
+                try? FileManager.default.removeItem(at: Self.motionControlURL(material, in: project))
                 runNextMotion()
             }
             let output = ProjectLayout.motion(material, in: project)
@@ -560,29 +575,53 @@ final class AppState: ObservableObject {
                 }
                 try description.write(to: brief, atomically: true, encoding: .utf8)
                 let onProgress: @Sendable (EmbeddedPi.Progress) -> Void = { [weak self] progress in
-                    guard let label = AppState.motionPhaseLabel(progress) else { return }
                     Task { @MainActor in
                         guard let self, self.motionTasks[id] != nil else { return }
-                        self.motionPhases[id] = label
+                        switch progress.type {
+                        case "budget_wait":
+                            let limit = Int(progress.limit ?? 0)
+                            self.motionBudgetHolds[id] = MotionBudgetHold(
+                                mediaID: id, limit: limit,
+                                maxTotal: progress.maxTotal ?? max(limit, limit * 3),
+                                waitSeconds: progress.waitSeconds ?? 900)
+                            self.motionPhases[id] = "已达 \(limit) 分钟上限，等待继续"
+                        case "budget_extended":
+                            self.motionBudgetHolds[id] = nil
+                            self.motionPhases[id] = progress.minutes.map { "已延长 \($0) 分钟，继续渲染" }
+                                ?? "已延长，继续渲染"
+                        case "budget_wait_cap":
+                            self.motionPhases[id] = "已达到单条动效总上限，无法继续"
+                        default:
+                            guard let label = AppState.motionPhaseLabel(progress) else { return }
+                            if progress.type == "budget" { self.motionBudgetHolds[id] = nil }
+                            self.motionPhases[id] = label
+                        }
                     }
                 }
                 // Long clips need proportionally more render time; the shell timeout always outlives the budget.
                 let budget = Self.motionBudget(for: material.duration)
+                let controlURL = Self.motionControlURL(material, in: project)
+                try? FileManager.default.removeItem(at: controlURL)
+                // The runner may grant extensions up to three times the base budget
+                // (capped at 240 minutes), so the shell timeout must outlive that.
+                let maxBudgetMinutes = min(240, max(budget.minutes, budget.minutes * 3))
+                let motionTimeout = TimeInterval(maxBudgetMinutes * 60 + 600)
                 if settings.selectedAgent == .api {
                     let connection = try settings.apiConnection()
                     let request = try settings.motionRequest(source1: source, source2: temporary, brief: brief)
                     let reply = try await EmbeddedPi.run(connection, system: request.system, prompt: request.prompt,
                                                  directory: directory, tools: true, images: supportsImages,
                                                  attachments: attachments,
-                                                 timeout: TimeInterval(budget.minutes * 60 + 600),
+                                                 timeout: motionTimeout,
                                                  budgetMinutes: budget.minutes, budgetToolCalls: budget.toolCalls,
+                                                 controlPath: controlURL.path,
                                                  onProgress: onProgress)
                     try? reply.data(using: .utf8)?.write(to: directory.appendingPathComponent("agent-response.txt"), options: .atomic)
                 } else {
                     let launch = settings.resolvedLaunchPath()
                     guard launch != "/bin/true" else { throw ShellError.exitStatus(-1, "请在设置中连接内置 Pi 或配置 Claude。") }
                     let reply = try await Shell.run(launch, arguments: settings.claudeMotionArguments(source1: source, source2: temporary, brief: brief),
-                                            workingDirectory: directory, timeout: TimeInterval(budget.minutes * 60 + 600))
+                                            workingDirectory: directory, timeout: motionTimeout)
                     try? reply.data(using: .utf8)?.write(to: directory.appendingPathComponent("agent-response.txt"), options: .atomic)
                 }
                 try Task.checkCancellation()
@@ -634,8 +673,9 @@ final class AppState: ObservableObject {
         }
     }
     /// The product target is a ten-minute turnaround, so the agent budget leaves room for the
-    /// final render: it is nudged to wrap up at 70% of it and hard-stopped at 100%.
-    /// The ceiling is the user's choice, not the app's: 40 minutes by default, adjustable in 设置.
+    /// final render: it is nudged to wrap up at 70%, then paused at 100% until the user
+    /// continues or stops. The ceiling is the user's choice, not the app's: 40 minutes by
+    /// default, adjustable in 设置.
     @MainActor
     static func motionBudget(for duration: Double) -> (minutes: Int, toolCalls: Int) {
         let configured = SettingsStore.shared.motionTimeLimitMinutes
@@ -682,18 +722,23 @@ final class AppState: ObservableObject {
         case "retry": return "模型重试 \(progress.attempt ?? 1)/\(progress.max ?? 3)"
         case "retry_end": return "模型重试成功，继续动效"
         case "budget": return "超出预算，正在中止"
+        case "budget_wait": return "已达时间上限，等待继续"
+        case "budget_extended": return "已延长，继续渲染"
+        case "budget_wait_cap": return "已达单条总上限"
         case "wrap_up": return "时间提醒：正在收尾"
         case "done": return "收尾"
         default: return nil
         }
     }
     func cancelProcessing(_ projectID: UUID, _ id: UUID, motion: Bool) {
-        guard let (_, material) = pair(projectID, id) else { return }
+        guard let (project, material) = pair(projectID, id) else { return }
         let taskID = material.mediaID
         if motion {
             motionQueue.removeAll { $0.0 == projectID && $0.1 == taskID }
             motionTasks[taskID]?.cancel()
             motionPhases[taskID] = nil
+            motionBudgetHolds[taskID] = nil
+            try? FileManager.default.removeItem(at: Self.motionControlURL(material, in: project))
             motionAttempts[taskID] = nil
             motionStartedAt[taskID] = nil
             updateMaterial(projectID, id) { $0.motionState = .failed; $0.motionError = "动效已取消，可重试。"; $0.useOriginal = true }
@@ -705,6 +750,28 @@ final class AppState: ObservableObject {
                 $0.transcriptWarning = $0.subtitles.isEmpty ? nil : "已取消处理，保留已有字幕。"
             }
         }
+    }
+    /// Extends a motion task that reached its time budget. The runner polls the
+    /// control file, so the agent session and any rendered frames stay alive.
+    func continueMotion(_ projectID: UUID, _ id: UUID) {
+        guard let (project, material) = pair(projectID, id),
+              let hold = motionBudgetHolds[material.mediaID] else { return }
+        guard hold.limit < hold.maxTotal else {
+            showToast("已达单条动效总上限 \(hold.maxTotal) 分钟。")
+            return
+        }
+        let url = Self.motionControlURL(material, in: project)
+        do {
+            let data = try JSONSerialization.data(withJSONObject: ["action": "extend", "minutes": 30])
+            try data.write(to: url, options: .atomic)
+            motionPhases[material.mediaID] = "正在继续：再加 30 分钟"
+        } catch {
+            showToast("无法通知动效任务继续：\(error.localizedDescription)")
+        }
+    }
+    static func motionControlURL(_ material: Material, in project: VideoProject) -> URL {
+        ProjectLayout.materialDirectory(material, in: project)
+            .appendingPathComponent("motion-control.json")
     }
     func setUseOriginal(_ projectID: UUID, _ id: UUID, _ value: Bool) {
         guard let (_, material) = pair(projectID, id), (material.useOriginal ?? false) != value else { return }

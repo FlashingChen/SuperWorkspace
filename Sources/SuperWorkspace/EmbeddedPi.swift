@@ -49,6 +49,9 @@ enum EmbeddedPi {
         let ok: Bool?
         let attempt: Int?
         let max: Int?
+        let minutes: Int?
+        let maxTotal: Int?
+        let waitSeconds: Int?
         let delayMs: Int?
         let error: String?
         let reason: String?
@@ -98,6 +101,9 @@ enum EmbeddedPi {
         let attachments: [ImageAttachment]
         let budgetMinutes: Int
         let budgetToolCalls: Int
+        let controlPath: String
+        let extendMinutes: Int
+        let budgetWaitMinutes: Int
         let webSearch: Bool
         let workspaceTools: Bool
         let searchKey: String
@@ -108,6 +114,7 @@ enum EmbeddedPi {
     static func run(_ connection: AIConnection, system: String, prompt: String, directory: URL,
                     tools: Bool, images: Bool = false, attachments: [ImageAttachment] = [], timeout: TimeInterval,
                     budgetMinutes: Int = 30, budgetToolCalls: Int = 100,
+                    controlPath: String = "", extendMinutes: Int = 30, budgetWaitMinutes: Int = 15,
                     webSearch: Bool = false, workspaceTools: Bool = true, searchKey: String = "",
                     prepareRemotion: Bool = true,
                     onProgress: (@Sendable (Progress) -> Void)? = nil) async throws -> String {
@@ -122,6 +129,7 @@ enum EmbeddedPi {
         let request = Request(baseURL: connection.endpoint.baseURL.absoluteString, model: connection.model,
                               key: connection.key, system: instructions, prompt: prompt, tools: tools, images: images,
                               attachments: attachments, budgetMinutes: budgetMinutes, budgetToolCalls: budgetToolCalls,
+                              controlPath: controlPath, extendMinutes: extendMinutes, budgetWaitMinutes: budgetWaitMinutes,
                               webSearch: webSearch, workspaceTools: workspaceTools, searchKey: searchKey,
                               retry: RetryPolicy(), wrapUpRatio: 0.7)
         do {
