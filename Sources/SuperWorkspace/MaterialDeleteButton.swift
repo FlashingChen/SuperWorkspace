@@ -82,6 +82,11 @@ struct MaterialProcessingActions: View {
                 }
                 .disabled(material.useOriginal == true && material.motionState != .complete)
                 if [.queued, .running].contains(material.motionState) {
+                    if state.motionBudgetHolds[material.mediaID] != nil {
+                        if let hold = state.motionBudgetHolds[material.mediaID], hold.canExtend {
+                            Button("继续 \(hold.extendMinutes) 分钟") { state.continueMotion(projectID, materialID) }
+                        }
+                    }
                     Button("取消动效") { state.cancelProcessing(projectID, materialID, motion: true) }
                 } else if material.motionState == .failed {
                     Button("重试动效") { state.enqueueMotion(projectID, materialID) }
@@ -126,12 +131,26 @@ struct MaterialTaskStatus: View {
                     Text(state.motionPhases[material.mediaID] ?? material.motionLabel ?? "原片可用")
                     Spacer()
                     if [.running, .queued].contains(material.motionState) {
-                        Button("取消") { state.cancelProcessing(projectID, material.id, motion: true) }
+                        if let hold = state.motionBudgetHolds[material.mediaID] {
+                            if hold.canExtend {
+                                Button("继续 \(hold.extendMinutes) 分钟") { state.continueMotion(projectID, material.id) }
+                                    .buttonStyle(StudioButtonStyle(kind: .primary, size: .compact))
+                            }
+                            Button("停止") { state.cancelProcessing(projectID, material.id, motion: true) }
+                                .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
+                        } else {
+                            Button("取消") { state.cancelProcessing(projectID, material.id, motion: true) }
+                        }
                     } else if material.motionState == .failed {
                         Button("重试") { state.enqueueMotion(projectID, material.id) }
                     }
                 }
                 if let error = material.motionError { Text(error).foregroundStyle(palette.danger).textSelection(.enabled) }
+                if let hold = state.motionBudgetHolds[material.mediaID] {
+                    Text("继续会保留当前进度；\(max(1, hold.waitSeconds / 60)) 分钟内未选择将自动停止，最多可延到 \(hold.maxTotal) 分钟。")
+                        .font(.studio(.small))
+                        .foregroundStyle(palette.textSecondary)
+                }
             }
             if material.transcriptState == .running {
                 HStack {

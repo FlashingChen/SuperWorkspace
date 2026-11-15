@@ -94,10 +94,60 @@ struct RootView: View {
                     .padding(Metrics.space6)
             }
         }
+        .overlay(alignment: .top) {
+            budgetBanner.padding(.top, Metrics.header + Metrics.space2)
+        }
         .sheet(isPresented: Binding(get: { state.error != nil }, set: { if !$0 { state.error = nil } })) {
             StudioMessageSheet(title: "操作未完成", message: state.error ?? "", actionTitle: "确定") {
                 state.error = nil
             }
+        }
+    }
+
+    private var pendingBudgets: [(project: VideoProject, material: Material, hold: MotionBudgetHold)] {
+        var result: [(VideoProject, Material, MotionBudgetHold)] = []
+        for project in state.projects {
+            for material in project.materials {
+                if let hold = state.motionBudgetHolds[material.mediaID] { result.append((project, material, hold)) }
+            }
+        }
+        return result
+    }
+
+    @ViewBuilder private var budgetBanner: some View {
+        let pending = pendingBudgets
+        if let first = pending.first {
+            HStack(spacing: Metrics.space3) {
+                Image(systemName: "clock.badge.exclamationmark")
+                    .foregroundStyle(palette.warning)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: Metrics.space1) {
+                    Text("动效已到 \(first.hold.limit) 分钟上限")
+                        .font(.studio(.bodyMedium))
+                    Text("继续会保留当前进度；\(max(1, first.hold.waitSeconds / 60)) 分钟内未选择将自动停止。"
+                        + (pending.count > 1 ? "另有 \(pending.count - 1) 个任务在拼装页等待继续。" : ""))
+                        .font(.studio(.small))
+                        .foregroundStyle(palette.textSecondary)
+                }
+                Spacer(minLength: Metrics.space4)
+                if first.hold.canExtend {
+                    Button("继续 \(first.hold.extendMinutes) 分钟") {
+                        state.continueMotion(first.project.id, first.material.id)
+                    }
+                    .buttonStyle(StudioButtonStyle(kind: .primary, size: .compact))
+                }
+                Button("停止") { state.cancelProcessing(first.project.id, first.material.id, motion: true) }
+                    .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
+            }
+            .padding(Metrics.space3)
+            .frame(maxWidth: 620)
+            .background(palette.surface1, in: RoundedRectangle(cornerRadius: Metrics.radiusL))
+            .overlay {
+                RoundedRectangle(cornerRadius: Metrics.radiusL)
+                    .strokeBorder(palette.borderStrong, lineWidth: 1)
+            }
+            .shadow(color: .black.opacity(0.16), radius: Metrics.space3, y: Metrics.space1_5)
+            .padding(.horizontal, Metrics.space6)
         }
     }
 
