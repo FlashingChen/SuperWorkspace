@@ -22,6 +22,14 @@ enum EmbeddedPi {
         return (node, runner)
     }
 
+    static var chatRuntime: (node: URL, script: URL)? {
+        guard let root = Bundle.main.resourceURL?.appendingPathComponent("PiRuntime") else { return nil }
+        let node = root.appendingPathComponent("node/bin/node")
+        let script = root.appendingPathComponent("agent.mjs")
+        guard Shell.check(node.path), FileManager.default.isReadableFile(atPath: script.path) else { return nil }
+        return (node, script)
+    }
+
     struct ImageAttachment: Encodable, Sendable {
         let type = "image"
         let data: Data

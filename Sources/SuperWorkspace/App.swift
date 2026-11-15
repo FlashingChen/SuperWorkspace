@@ -75,7 +75,10 @@ struct RootView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in state.saveSession() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+            state.shutdownAssemblyAgents()
+            state.saveSession()
+        }
         .tint(palette.accent)
         .foregroundStyle(palette.textPrimary)
         .background(palette.bgBase)

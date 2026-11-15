@@ -20,6 +20,9 @@ struct AssemblyView: View {
     @State private var dragOrigin: Double?
     @State private var restored = false
     @State private var rebuildTask: Task<Void, Never>?
+    @State private var showsChat = false
+
+    private var chatAgent: AssemblyAgent { state.assemblyAgent(for: project.id) }
 
     // Rendering and caption changes share the same compositor as export.
     private var previewKey: AssemblyPreviewInputs { AssemblyPreviewInputs(project: project) }
@@ -50,7 +53,26 @@ struct AssemblyView: View {
                             }
                             .background(palette.mediaGround).clipShape(RoundedRectangle(cornerRadius: Metrics.radiusL))
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            inspector.frame(width: Metrics.inspector)
+                            .overlay(alignment: .topTrailing) {
+                                Button { showsChat.toggle() } label: {
+                                    Label("AI", systemImage: "sparkles")
+                                }
+                                .buttonStyle(StudioButtonStyle(kind: showsChat ? .primary : .secondary, size: .compact))
+                                .padding(Metrics.space3)
+                                .accessibilityLabel(showsChat ? "收起 AI 面板" : "打开 AI 面板")
+                            }
+                            if showsChat {
+                                AssemblyChatPanel(project: project, agent: chatAgent,
+                                                  onClose: { showsChat = false })
+                                    .frame(width: Metrics.chatPanel)
+                                    .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusL))
+                                    .overlay {
+                                        RoundedRectangle(cornerRadius: Metrics.radiusL)
+                                            .strokeBorder(palette.surface2, lineWidth: 1)
+                                    }
+                            } else {
+                                inspector.frame(width: Metrics.inspector)
+                            }
                         }
                         .padding(Metrics.space4).frame(height: height)
                         Rectangle().fill(palette.surface2).frame(height: 6)

@@ -46,6 +46,7 @@ iconutil -c icns .build/Workspace.iconset -o "$app/Contents/Resources/Workspace.
 ditto Sources/SuperWorkspace/AgentSkills "$app/Contents/Resources/AgentSkills"
 ditto .build/PiRuntime "$app/Contents/Resources/PiRuntime"
 cp Integration/PiRuntime/run.mjs "$app/Contents/Resources/PiRuntime/run.mjs"
+cp Integration/PiRuntime/agent.mjs "$app/Contents/Resources/PiRuntime/agent.mjs"
 ditto .build/MediaRuntime "$app/Contents/Resources/MediaRuntime"
 ditto Integration/RemotionRuntime "$app/Contents/Resources/RemotionRuntime"
 for resource in Fonts Onboarding en.lproj zh-Hans.lproj; do

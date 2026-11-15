@@ -44,6 +44,7 @@ final class AppState: ObservableObject {
     @Published var reviewPhases: [UUID: String] = [:]
     @Published private var undoRevision = 0
     private var undoManagers: [UUID: UndoManager] = [:]
+    private var chatAgents: [UUID: AssemblyAgent] = [:]
     private var workspaceSession = WorkspaceSession.load()
     private var lastSessionSave = Date.distantPast
     private var motionTasks: [UUID: Task<Void, Never>] = [:]
@@ -123,6 +124,17 @@ final class AppState: ObservableObject {
         }
     }
     func editorSession(_ id: UUID) -> EditorSession { workspaceSession.editors[id] ?? EditorSession() }
+    /// One long-lived chat agent per project, kept across stage switches.
+    func assemblyAgent(for id: UUID) -> AssemblyAgent {
+        if let agent = chatAgents[id] { return agent }
+        let agent = AssemblyAgent(projectID: id, state: self)
+        chatAgents[id] = agent
+        return agent
+    }
+    func shutdownAssemblyAgents() {
+        for agent in chatAgents.values { agent.stop() }
+        chatAgents.removeAll()
+    }
     func rememberEditor(_ id: UUID, _ session: EditorSession, flush: Bool = false) {
         workspaceSession.editors[id] = session
         if flush || Date().timeIntervalSince(lastSessionSave) > 2 { saveSession() }
@@ -1208,6 +1220,44 @@ final class AppState: ObservableObject {
         var ids = project.materials.map(\.id)
         ids.swapAt(index, index + delta)
         setOrder(projectID, ids)
+    }
+    /// Moves one clip to a 1-based position. Used by the in-app agent.
+    @discardableResult
+    func moveMaterialTo(_ projectID: UUID, _ id: UUID, position: Int) -> Bool {
+        guard let project = projects.first(where: { $0.id == projectID }),
+              let index = project.materials.firstIndex(where: { $0.id == id }) else { return false }
+        let target = min(max(1, position), project.materials.count)
+        guard target - 1 != index else { return true }
+        var ids = project.materials.map(\.id)
+        ids.removeAll { $0 == id }
+        ids.insert(id, at: target - 1)
+        setOrder(projectID, ids)
+        return true
+    }
+    /// Replaces the cutaways of one clip. Used by the in-app agent.
+    @discardableResult
+    func setInserts(_ projectID: UUID, _ materialID: UUID, _ inserts: [AIEditing.Insert]) -> Bool {
+        guard let (_, material) = pair(projectID, materialID) else { return false }
+        let old = material.inserts ?? []
+        guard old != inserts else { return true }
+        guard updateMaterial(projectID, materialID, { $0.inserts = inserts.isEmpty ? nil : inserts }) else { return false }
+        registerUndo(projectID, name: "调整补充画面") { $0.setInserts(projectID, materialID, old) }
+        return true
+    }
+    /// Applies a new instruction and queues a motion re-render. Rendering itself is
+    /// not undoable, but the prompt change and every other edit are.
+    func regenerateMotion(_ projectID: UUID, _ id: UUID, instruction: String?) {
+        guard let (_, material) = pair(projectID, id), material.sourceReady else { return }
+        let prompt = instruction?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let prompt, !prompt.isEmpty, material.editingPrompt != prompt {
+            let old = material.editingPrompt
+            if updateMaterial(projectID, id, { $0.editingPrompt = prompt }) {
+                registerUndo(projectID, name: "更新动效说明") { state in
+                    state.updateMaterial(projectID, id) { $0.editingPrompt = old }
+                }
+            }
+        }
+        enqueueMotion(projectID, id)
     }
     func reorderMaterial(_ projectID: UUID, source: UUID, target: UUID, after: Bool) {
         guard source != target, let project = projects.first(where: { $0.id == projectID }),
