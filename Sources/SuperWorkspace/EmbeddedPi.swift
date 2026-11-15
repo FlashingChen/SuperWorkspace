@@ -2,6 +2,17 @@ import Foundation
 
 enum EmbeddedPi {
     static var isAvailable: Bool { runtime != nil }
+    static var bundledNode: URL? { runtime?.node }
+
+    /// The minimal environment an executor or a Remotion rebuild may see.
+    static func runtimeEnvironment(node: URL) -> [String: String] {
+        let permittedVariables: Set<String> = ["HOME", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL"]
+        var environment = ProcessInfo.processInfo.environment.filter { permittedVariables.contains($0.key) }
+        let bundledPaths = [node.deletingLastPathComponent().path, ToolPaths.bundledMediaDirectory?.path].compactMap { $0 }
+        environment["PATH"] = (bundledPaths + ToolPaths.installDirectories
+            + ["/bin", "/usr/sbin", "/sbin"]).joined(separator: ":")
+        return environment
+    }
 
     private static var runtime: (node: URL, runner: URL)? {
         guard let root = Bundle.main.resourceURL?.appendingPathComponent("PiRuntime") else { return nil }
@@ -95,11 +106,7 @@ enum EmbeddedPi {
         guard let runtime else {
             throw ShellError.exitStatus(-1, "内置 Pi 组件缺失，请重新安装应用。")
         }
-        let permittedVariables: Set<String> = ["HOME", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL"]
-        var environment = ProcessInfo.processInfo.environment.filter { permittedVariables.contains($0.key) }
-        let bundledPaths = [runtime.node.deletingLastPathComponent().path, ToolPaths.bundledMediaDirectory?.path].compactMap { $0 }
-        environment["PATH"] = (bundledPaths + ToolPaths.installDirectories
-            + ["/bin", "/usr/sbin", "/sbin"]).joined(separator: ":")
+        let environment = runtimeEnvironment(node: runtime.node)
         if tools, prepareRemotion {
             try await RemotionRuntime.prepare(in: directory, node: runtime.node, environment: environment)
         }

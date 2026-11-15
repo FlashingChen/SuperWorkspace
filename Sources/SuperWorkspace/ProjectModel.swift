@@ -3,7 +3,7 @@ import Foundation
 enum WorkStage: String, Codable { case record = "录制", assemble = "拼装", library = "素材库" }
 enum JobState: String, Codable { case idle, queued, running, complete, failed }
 
-struct Material: Identifiable, Codable, Equatable {
+struct Material: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var createdAt = Date()
     var duration: Double = 0
@@ -64,7 +64,7 @@ struct ReferenceMedia: Identifiable, Codable, Equatable, Sendable {
     var duration: Double?
 }
 
-struct VideoProject: Identifiable, Codable, Equatable {
+struct VideoProject: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var name: String
     var createdAt = Date()
@@ -78,8 +78,11 @@ struct VideoProject: Identifiable, Codable, Equatable {
     var canvasWidth: Double?
     var canvasHeight: Double?
     var lastExportName: String?
+    /// Set while the project is frozen: its regenerable runtime files are removed.
+    var frozenAt: Date?
+    var isFrozen: Bool { frozenAt != nil }
 
-    enum CodingKeys: String, CodingKey { case id, name, createdAt, updatedAt, materials, includeSubtitles, canvasWidth, canvasHeight, lastExportName, exportSRT, lastExportSRTName, referenceMedia, exportWithAIEditing }
+    enum CodingKeys: String, CodingKey { case id, name, createdAt, updatedAt, materials, includeSubtitles, canvasWidth, canvasHeight, lastExportName, exportSRT, lastExportSRTName, referenceMedia, exportWithAIEditing, frozenAt }
     init(name: String) { self.name = name }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -96,6 +99,7 @@ struct VideoProject: Identifiable, Codable, Equatable {
         exportSRT = try c.decodeIfPresent(Bool.self, forKey: .exportSRT)
         lastExportSRTName = try c.decodeIfPresent(String.self, forKey: .lastExportSRTName)
         lastExportName = try c.decodeIfPresent(String.self, forKey: .lastExportName)
+        frozenAt = try c.decodeIfPresent(Date.self, forKey: .frozenAt)
     }
     var canExport: Bool {
         !materials.isEmpty && materials.allSatisfy { $0.isReady && (!(includeSubtitles || exportSRT == true) || $0.transcriptState == .complete) }

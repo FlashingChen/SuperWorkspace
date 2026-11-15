@@ -65,7 +65,7 @@ struct CompactProjectPanel: View {
                             let selected = state.selectedProjectID == project.id
                             Button { state.select(project.id) } label: {
                                 HStack(spacing: Metrics.space2_5) {
-                                    Image(systemName: "film")
+                                    Image(systemName: project.isFrozen ? "snowflake" : "film")
                                         .font(.system(size: 12)).foregroundStyle(palette.textMuted)
                                         .accessibilityHidden(true)
                                     Text(project.name)
@@ -81,6 +81,7 @@ struct CompactProjectPanel: View {
                             }
                             .buttonStyle(StudioContentButtonStyle())
                             .accessibilityAddTraits(selected ? .isSelected : [])
+                            .contextMenu { ProjectActionItems(project: project) }
                             .help(project.name)
                         }
                         if state.projects.isEmpty {
