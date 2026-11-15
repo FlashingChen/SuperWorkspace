@@ -774,6 +774,9 @@ final class AppState: ObservableObject {
             ])
             try data.write(to: url, options: .atomic)
             motionPhases[material.mediaID] = "正在继续：再加 \(hold.extendMinutes) 分钟"
+            // Hide the prompt until the runner confirms: this closes the window
+            // where a second click could leave a stale request for the next wait.
+            motionBudgetHolds[material.mediaID] = nil
         } catch {
             showToast("无法通知动效任务继续：\(error.localizedDescription)")
         }

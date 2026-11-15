@@ -28,6 +28,20 @@ final class MotionBudgetTests: XCTestCase {
         return (project, directory)
     }
 
+    func testHoldReportsTheActualExtension() {
+        let hold = MotionBudgetHold(mediaID: UUID(), limit: 40, maxTotal: 120, waitSeconds: 900)
+        XCTAssertTrue(hold.canExtend)
+        XCTAssertEqual(hold.extendMinutes, 30)
+
+        let partial = MotionBudgetHold(mediaID: UUID(), limit: 110, maxTotal: 120, waitSeconds: 900)
+        XCTAssertTrue(partial.canExtend)
+        XCTAssertEqual(partial.extendMinutes, 10)
+
+        let capped = MotionBudgetHold(mediaID: UUID(), limit: 120, maxTotal: 120, waitSeconds: 900)
+        XCTAssertFalse(capped.canExtend)
+        XCTAssertEqual(capped.extendMinutes, 0)
+    }
+
     func testContinueWritesAnExtendRequest() async throws {
         try await withStorage { _ in
             let (project, _) = try fixture()

@@ -216,7 +216,10 @@ try {
       const next = Math.min(maxTotalMinutes, totalMinutes + requested);
       const granted = next - totalMinutes;
       if (granted <= 0) {
-        progress({type: 'budget_wait_cap', limit: maxTotalMinutes});
+        if (!wait.capNotified) {
+          wait.capNotified = true;
+          progress({type: 'budget_wait_cap', limit: maxTotalMinutes});
+        }
         return;
       }
       totalMinutes = next;
@@ -252,6 +255,7 @@ try {
       deadline: Date.now() + budgetWaitMinutes * 60000,
       timer: null,
       poll: null,
+      capNotified: false,
     };
     progress({
       type: 'budget_wait',
