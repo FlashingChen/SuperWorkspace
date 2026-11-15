@@ -9,6 +9,11 @@ final class ExportProgress: ObservableObject {
     var task: Task<Void, Never>?
     var session: AVAssetExportSession?
 
+    func begin(_ phase: String) {
+        fraction = 0
+        self.phase = phase
+    }
+
     func cancel() {
         isCancelled = true
         task?.cancel()

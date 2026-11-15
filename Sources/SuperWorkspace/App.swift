@@ -52,6 +52,9 @@ struct RootView: View {
             CompactProjectPanel(expanded: $projectPanelExpanded, onCreate: { showNew = true })
             VStack(spacing: 0) {
                 workspaceHeader
+                if let project = state.currentProject, project.isFrozen {
+                    frozenNotice(project)
+                }
                 Group {
                     if let project = state.currentProject {
                         VStack(spacing: 0) {
@@ -123,7 +126,7 @@ struct RootView: View {
                     .foregroundStyle(palette.textSecondary)
                     .lineLimit(1).frame(maxWidth: 180, alignment: .leading)
                 Spacer()
-                if state.currentProject != nil {
+                if let project = state.currentProject {
                     Button { state.stage = .library } label: {
                         Label("素材库", systemImage: "photo.on.rectangle")
                             .font(.studio(.bodyMedium))
@@ -132,18 +135,45 @@ struct RootView: View {
                     }
                     .buttonStyle(StudioSelectionStyle(selected: state.stage == .library))
                     .accessibilityAddTraits(state.stage == .library ? .isSelected : [])
+                    ProjectActionsMenu(project: project)
                 }
                 if let project = state.currentProject, state.stage == .assemble {
                     Button { showExport = true } label: {
                         Label { Text(verbatim: state.exportingProjects.contains(project.id) ? "正在导出" : "导出成片") } icon: { Image(systemName: "arrow.up.right") }
                     }
                     .buttonStyle(StudioButtonStyle(kind: .primary))
-                    .disabled(project.materials.isEmpty || state.exportingProjects.contains(project.id))
+                    .disabled(project.materials.isEmpty || project.isFrozen || state.exportingProjects.contains(project.id))
+                    .help(project.isFrozen ? "项目已冻结，取消冻结后再导出成片" : "导出成片")
                 }
 
             }
         }
         .padding(.horizontal, Metrics.space6).frame(height: Metrics.header)
+    }
+
+    private func frozenNotice(_ project: VideoProject) -> some View {
+        HStack(spacing: Metrics.space2) {
+            Image(systemName: "snowflake")
+                .foregroundStyle(palette.accent)
+                .accessibilityHidden(true)
+            Text(state.unfreezingProjects.contains(project.id)
+                 ? "正在重建项目依赖…"
+                 : "项目已冻结，运行时依赖已清理。")
+                .font(.studio(.small))
+                .foregroundStyle(palette.textSecondary)
+            Spacer()
+            if state.unfreezingProjects.contains(project.id) {
+                ProgressView().controlSize(.small)
+                    .accessibilityLabel("正在取消冻结")
+            } else {
+                Button("取消冻结") { state.unfreeze(project.id) }
+                    .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
+                    .disabled(state.hasActiveJobs(project.id))
+            }
+        }
+        .padding(.horizontal, Metrics.space5)
+        .frame(height: Metrics.bar)
+        .background(palette.surface1)
     }
 
 }
@@ -171,20 +201,29 @@ struct ProjectLibraryView: View {
                         WorkspaceHeading(title: "作品集。", detail: "每一期视频，都从这里开始。")
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: Metrics.inspector), spacing: Metrics.space7)], alignment: .leading, spacing: Metrics.space8) {
                             ForEach(state.projects) { project in
-                                Button { state.select(project.id) } label: {
-                                    VStack(alignment: .leading, spacing: Metrics.space3) {
-                                        MaterialThumbnail(url: project.materials.first.map { ProjectLayout.picture($0, in: project) })
-                                            .aspectRatio(16.0 / 9.0, contentMode: .fit)
-                                        HStack(alignment: .firstTextBaseline) {
-                                            Text(project.name).font(.studio(.bodyLargeMedium)).lineLimit(1)
-                                            Spacer()
-                                            Text(project.updatedAt, style: .date)
-                                                .font(.studio(.caption)).foregroundStyle(palette.textMuted)
+                                VStack(alignment: .leading, spacing: Metrics.space3) {
+                                    Button { state.select(project.id) } label: {
+                                        VStack(alignment: .leading, spacing: Metrics.space3) {
+                                            MaterialThumbnail(url: project.materials.first.map { ProjectLayout.picture($0, in: project) })
+                                                .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                                            HStack(alignment: .firstTextBaseline) {
+                                                Text(project.name).font(.studio(.bodyLargeMedium)).lineLimit(1)
+                                                if project.isFrozen {
+                                                    Image(systemName: "snowflake")
+                                                        .font(.studio(.caption))
+                                                        .foregroundStyle(palette.accent)
+                                                        .accessibilityLabel("已冻结")
+                                                }
+                                                Spacer()
+                                                Text(project.updatedAt, style: .date)
+                                                    .font(.studio(.caption)).foregroundStyle(palette.textMuted)
+                                            }
                                         }
+                                        .contentShape(Rectangle())
                                     }
-                                    .contentShape(Rectangle())
+                                    .buttonStyle(StudioContentButtonStyle())
+                                    ProjectActionsRow(project: project)
                                 }
-                                .buttonStyle(StudioContentButtonStyle())
                             }
                         }
                     }

@@ -3,6 +3,7 @@ import AppKit
 import Foundation
 import RecorderKit
 import SwiftUI
+import UniformTypeIdentifiers
 import Vision
 
 /// Diagnostic timing for one motion dispatch, written next to the material.
@@ -31,6 +32,9 @@ final class AppState: ObservableObject {
     @Published var toast: String?
     @Published var error: String?
     @Published var exportingProjects: Set<UUID> = []
+    @Published var bundlingProjects: Set<UUID> = []
+    @Published var freezingProjects: Set<UUID> = []
+    @Published var unfreezingProjects: Set<UUID> = []
     @Published var lastExports: [UUID: URL] = [:]
     @Published var exportProgress: [UUID: ExportProgress] = [:]
     @Published var taskPhases: [UUID: String] = [:]
@@ -203,6 +207,10 @@ final class AppState: ObservableObject {
     }
     func record() {
         guard let projectID = selectedProjectID else { return }
+        guard projects.first(where: { $0.id == projectID })?.isFrozen != true else {
+            showToast("项目已冻结，取消冻结后再录制。")
+            return
+        }
         let recorder = WorkspaceRecorder.shared
         if recorder.hasOpenSession {
             recorder.bringToFront()
@@ -291,6 +299,10 @@ final class AppState: ObservableObject {
     /// finishes, so the final assembly uses the chosen cutaways instead of planning again.
     /// Manual retry after a failed plan: the recording and its subtitles are already there.
     func retryAIEditing(_ projectID: UUID, _ id: UUID) {
+        guard projects.first(where: { $0.id == projectID })?.isFrozen != true else {
+            showToast("项目已冻结，取消冻结后再处理。")
+            return
+        }
         startAIEditing(projectID, id)
     }
 
@@ -343,6 +355,7 @@ final class AppState: ObservableObject {
     }
     func transcribe(_ projectID: UUID, _ id: UUID) {
         guard let (project, material) = pair(projectID, id), transcriptTasks[material.mediaID] == nil, material.exportState == .complete else { return }
+        guard !project.isFrozen else { return }
         let taskID = material.mediaID
         invalidateSubtitleReview(projectID)
         taskPhases[taskID] = "提取声音"
@@ -373,6 +386,7 @@ final class AppState: ObservableObject {
     func correctSubtitles(_ projectID: UUID, _ id: UUID) {
         guard let (project, material) = pair(projectID, id), transcriptTasks[material.mediaID] == nil,
               material.transcriptState == .complete, !material.subtitles.isEmpty else { return }
+        guard !project.isFrozen else { showToast("项目已冻结，取消冻结后再处理字幕。"); return }
         guard let configuration = SettingsStore.shared.transcriptCorrectionConfiguration() else {
             showToast("请在字幕设置中开启 AI 校正。")
             return
@@ -403,8 +417,9 @@ final class AppState: ObservableObject {
         }
     }
     func enqueueMotion(_ projectID: UUID, _ id: UUID) {
-        guard let (_, material) = pair(projectID, id), material.sourceReady,
+        guard let (project, material) = pair(projectID, id), material.sourceReady,
               motionTasks[material.mediaID] == nil, !motionQueue.contains(where: { $0.1 == material.mediaID }) else { return }
+        guard !project.isFrozen else { showToast("项目已冻结，取消冻结后再处理动效。"); return }
         motionAttempts[material.mediaID] = 0
         motionStartedAt[material.mediaID] = Date()
         updateMaterial(projectID, id) { $0.wantsMotion = true; $0.useOriginal = false; $0.motionState = .queued; $0.motionError = nil }
@@ -772,6 +787,7 @@ final class AppState: ObservableObject {
             showToast("还没有可复核的字幕。")
             return
         }
+        guard !project.isFrozen else { showToast("项目已冻结，取消冻结后再复核字幕。"); return }
         let configuration = SettingsStore.shared.subtitleReviewConfiguration()
         let directory = ProjectLayout.directory(for: project)
         reviewingProjects.insert(projectID)
@@ -1193,6 +1209,7 @@ final class AppState: ObservableObject {
     func export(projectID: UUID) {
         guard let project = projects.first(where: { $0.id == projectID }),
               project.canExport, !exportingProjects.contains(project.id) else { return }
+        guard !project.isFrozen else { showToast("项目已冻结，取消冻结后再导出成片。"); return }
         exportingProjects.insert(project.id)
         let progress = ExportProgress()
         exportProgress[project.id] = progress
@@ -1214,6 +1231,142 @@ final class AppState: ObservableObject {
             } catch is CancellationError { showToast("导出已取消") }
             catch { self.error = "导出失败：\(error.localizedDescription)" }
         }
+    }
+
+    // MARK: - Freeze and bundle
+
+    /// Any task that reads or writes project media blocks a freeze or rebuild.
+    func hasActiveJobs(_ projectID: UUID) -> Bool {
+        guard let project = projects.first(where: { $0.id == projectID }) else { return true }
+        if exportingProjects.contains(projectID) || bundlingProjects.contains(projectID)
+            || freezingProjects.contains(projectID) || unfreezingProjects.contains(projectID) { return true }
+        if project.materials.contains(where: {
+            $0.exportState == .running || [.queued, .running].contains($0.motionState) || $0.transcriptState == .running
+        }) { return true }
+        let mediaIDs = Set(project.materials.map(\.mediaID))
+        if mediaIDs.contains(where: { motionTasks[$0] != nil || transcriptTasks[$0] != nil || aiEditTasks[$0] != nil }) { return true }
+        return reviewTasks[projectID] != nil
+    }
+
+    /// A finished film is the project's completion mark, so freezing follows an export.
+    func canFreeze(_ projectID: UUID) -> Bool {
+        guard let project = projects.first(where: { $0.id == projectID }) else { return false }
+        return !project.isFrozen && ProjectArchive.film(for: project) != nil && !hasActiveJobs(projectID)
+    }
+
+    func freeze(_ projectID: UUID) {
+        guard let project = projects.first(where: { $0.id == projectID }), !project.isFrozen,
+              !freezingProjects.contains(projectID) else { return }
+        guard ProjectArchive.film(for: project) != nil else {
+            showToast("导出成片后即可冻结项目。")
+            return
+        }
+        guard !hasActiveJobs(projectID) else {
+            showToast("项目还有任务在运行，完成后再冻结。")
+            return
+        }
+        freezingProjects.insert(projectID)
+        Task { [self] in
+            defer { freezingProjects.remove(projectID) }
+            do {
+                let reclaimed = try await Task.detached(priority: .utility) {
+                    try ProjectFreeze.freeze(project)
+                }.value
+                guard setFrozen(projectID, Date()) else { return }
+                if reclaimed > 0 {
+                    showToast("项目已冻结，清理了 \(Self.byteLabel(reclaimed)) 运行时文件")
+                } else {
+                    showToast("项目已冻结")
+                }
+            } catch {
+                self.error = "冻结未完成：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    func unfreeze(_ projectID: UUID) {
+        guard let project = projects.first(where: { $0.id == projectID }), project.isFrozen,
+              !unfreezingProjects.contains(projectID) else { return }
+        guard !hasActiveJobs(projectID) else {
+            showToast("项目还有任务在运行，完成后再取消冻结。")
+            return
+        }
+        unfreezingProjects.insert(projectID)
+        Task { [self] in
+            defer { unfreezingProjects.remove(projectID) }
+            do {
+                try await ProjectFreeze.rebuild(project)
+                try Task.checkCancellation()
+                guard setFrozen(projectID, nil) else { return }
+                showToast("项目已取消冻结")
+            } catch is CancellationError {
+                // Nothing was changed: a partial dependency layer is harmless.
+            } catch {
+                self.error = "取消冻结未完成：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// Writes the ZIP made of the source cut, the motion cut and the finished film.
+    /// A project that has not been exported yet gets its film exported first.
+    func exportBundle(_ projectID: UUID) {
+        guard let project = projects.first(where: { $0.id == projectID }),
+              !bundlingProjects.contains(projectID), !exportingProjects.contains(projectID) else { return }
+        let panel = NSSavePanel()
+        panel.title = "导出项目"
+        panel.nameFieldStringValue = "\(ProjectArchive.folderName(for: project)).zip"
+        panel.allowedContentTypes = [.zip]
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let destination = panel.url else { return }
+
+        bundlingProjects.insert(projectID)
+        let progress = ExportProgress()
+        progress.phase = "准备项目包"
+        exportProgress[projectID] = progress
+        progress.task = Task { [self] in
+            defer {
+                progress.task = nil
+                bundlingProjects.remove(projectID)
+                exportProgress[projectID] = nil
+            }
+            do {
+                var snapshot = projects.first(where: { $0.id == projectID }) ?? project
+                if ProjectArchive.film(for: snapshot) == nil {
+                    guard !snapshot.isFrozen, snapshot.canExport else {
+                        throw ShellError.exitStatus(-1, snapshot.isFrozen
+                            ? "项目已冻结，取消冻结后再导出成片。"
+                            : "请先完成素材导出与字幕处理。")
+                    }
+                    progress.phase = "正在导出成片"
+                    let output = try await exportMovie(snapshot, progress: progress)
+                    lastExports[projectID] = output
+                    updateProject(projectID) { $0.lastExportName = output.lastPathComponent }
+                    snapshot = projects.first(where: { $0.id == projectID }) ?? snapshot
+                }
+                let bundle = try await ProjectArchive.export(project: snapshot, to: destination, progress: progress)
+                showToast("项目已导出")
+                NSWorkspace.shared.activateFileViewerSelecting([bundle])
+            } catch is CancellationError {
+                try? FileManager.default.removeItem(at: destination)
+                showToast("导出已取消")
+            } catch {
+                try? FileManager.default.removeItem(at: destination)
+                self.error = "导出项目失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// Freezing is storage state, not an edit: it must not reorder the library.
+    private func setFrozen(_ projectID: UUID, _ date: Date?) -> Bool {
+        guard let index = projects.firstIndex(where: { $0.id == projectID }) else { return false }
+        var project = projects[index]
+        project.frozenAt = date
+        do { try ProjectLayout.save(project); projects[index] = project; return true }
+        catch { self.error = "保存失败：\(error.localizedDescription)"; return false }
+    }
+
+    private static func byteLabel(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 
     private func exportMovie(_ project: VideoProject, progress: ExportProgress) async throws -> URL {
