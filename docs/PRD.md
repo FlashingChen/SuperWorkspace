@@ -526,7 +526,7 @@ AI 剪辑用素材库中的图片或视频替换片段局部画面，做补充�
     transcript.json            校正并分段后的字幕
     subtitle-review.json       最近一次字幕复核报告
     transcript-raw.json        识别结果（中文已转简体）
-    transcript.srt             whisper 原始 SRT
+    transcript.srt             最终字幕 SRT（简体）
     audio-16k.wav              提取的 16 kHz 单声道音频
     motion.mp4                 动效结果
     motion-pending.mp4         动效临时输出

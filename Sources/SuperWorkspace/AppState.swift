@@ -72,9 +72,22 @@ final class AppState: ObservableObject {
                     projects[i].materials[j].subtitleLayoutVersion = SubtitleSegmentation.version
                 }
                 // Subtitles saved before the Simplified rule existed are normalised once on load,
-                // so an old project does not keep Traditional wording in the editor and in export.
-                if !projects[i].materials[j].subtitles.isEmpty {
-                    projects[i].materials[j].subtitles = TranscriptScript.simplified(projects[i].materials[j].subtitles)
+                // so an old project does not keep Traditional wording in the editor, in export or
+                // in the SRT the motion agent reads.
+                let storedSubtitles = projects[i].materials[j].subtitles
+                if !storedSubtitles.isEmpty {
+                    let language = projects[i].materials[j].transcriptLanguage?.lowercased()
+                    let simplified = language.map {
+                        $0.hasPrefix("zh") ? TranscriptScript.simplifiedChinese(storedSubtitles) : storedSubtitles
+                    } ?? TranscriptScript.simplified(storedSubtitles)
+                    if simplified != storedSubtitles {
+                        projects[i].materials[j].subtitles = simplified
+                        let directory = ProjectLayout.materialDirectory(projects[i].materials[j], in: projects[i])
+                        let encoder = JSONEncoder()
+                        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                        try? encoder.encode(simplified).write(to: directory.appendingPathComponent("transcript.json"), options: .atomic)
+                        try? SRTText.text(simplified).write(to: directory.appendingPathComponent("transcript.srt"), atomically: true, encoding: .utf8)
+                    }
                 }
                 if projects[i].materials[j].exportState == .running {
                     projects[i].materials[j].exportState = .failed
@@ -381,7 +394,7 @@ final class AppState: ObservableObject {
                 })
                 try Task.checkCancellation()
                 history(projectID).removeAllActions(); undoRevision += 1
-                updateMaterial(projectID, taskID) { $0.subtitles = result.segments; $0.subtitleLayoutVersion = SubtitleSegmentation.version; $0.transcriptWarning = result.warning; $0.transcriptState = .complete }
+                updateMaterial(projectID, taskID) { $0.subtitles = result.segments; $0.subtitleLayoutVersion = SubtitleSegmentation.version; $0.transcriptWarning = result.warning; $0.transcriptState = .complete; $0.transcriptLanguage = result.language }
             } catch {
                 guard !Task.isCancelled else { return }
                 updateMaterial(projectID, taskID) { $0.transcriptState = .failed; $0.transcriptError = error.localizedDescription }

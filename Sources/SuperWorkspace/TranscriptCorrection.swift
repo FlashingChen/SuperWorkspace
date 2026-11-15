@@ -32,6 +32,8 @@ enum TranscriptCorrectionConfiguration: Sendable {
 struct TranscriptResult: Sendable {
     let segments: [TranscriptSegment]
     let warning: String?
+    /// Language whisper used or detected; nil when the caller already knew it or no audio existed.
+    var language: String?
 }
 
 enum TranscriptCorrection {

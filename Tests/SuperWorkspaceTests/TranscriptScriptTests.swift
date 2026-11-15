@@ -29,14 +29,41 @@ final class TranscriptScriptTests: XCTestCase {
     }
 
     func testCorrectSimplifiedWordsThatLookTraditionalAreKept() {
-        for line in ["乾隆皇帝", "著名作家", "於是我们就出发", "瞭望台", "乾坤"] {
+        for line in ["乾隆皇帝", "著名作家", "显著提升", "瞭望台", "乾坤"] {
             XCTAssertEqual(TranscriptScript.simplified(line), line, "corrupted: \(line)")
         }
+    }
+
+    func testTraditionalWordsWithAnAmbiguousCharacterStillConvert() {
+        XCTAssertEqual(TranscriptScript.simplified("於是我們出發了"), "于是我们出发了")
+        XCTAssertEqual(TranscriptScript.simplified("著手處理這個問題"), "着手处理这个问题")
+        XCTAssertEqual(TranscriptScript.simplified("乾杯"), "干杯")
+        XCTAssertEqual(TranscriptScript.simplified("瞭解這件事的人"), "了解这件事的人")
     }
 
     func testJapaneseAndKoreanMaterialIsNotRewritten() {
         XCTAssertEqual(TranscriptScript.simplified("日本語の漢字を勉強します"), "日本語の漢字を勉強します")
         XCTAssertEqual(TranscriptScript.simplified("漢字 한자"), "漢字 한자")
+        let lines = [TranscriptSegment(start: 0, end: 1, text: "東京大学"), .init(start: 1, end: 2, text: "の学生")]
+        XCTAssertEqual(TranscriptScript.simplified(lines), lines)
+    }
+
+    func testChineseLineWithAQuotedKanaWordStillConverts() {
+        XCTAssertEqual(TranscriptScript.simplified("他說「コーヒー」很好喝"), "他說「コーヒー」很好喝")
+        XCTAssertEqual(TranscriptScript.simplifiedChinese("他說「コーヒー」很好喝"), "他说「コーヒー」很好喝")
+    }
+
+    func testWhisperLanguageDecidesWhetherTheScriptIsSimplified() {
+        let chineseLog = "whisper_full_with_state: auto-detected language: zh (p = 0.99)"
+        let japaneseLog = "whisper_full_with_state: auto-detected language: ja (p = 0.99)"
+        XCTAssertTrue(TranscriptService.usesSimplifiedScript(language: "zh", whisperOutput: ""))
+        XCTAssertTrue(TranscriptService.usesSimplifiedScript(language: "auto", whisperOutput: chineseLog))
+        XCTAssertFalse(TranscriptService.usesSimplifiedScript(language: "auto", whisperOutput: japaneseLog))
+        XCTAssertFalse(TranscriptService.usesSimplifiedScript(language: "ja", whisperOutput: chineseLog))
+        XCTAssertEqual(TranscriptService.detectedLanguage(in: chineseLog), "zh")
+        XCTAssertNil(TranscriptService.detectedLanguage(in: "no detection here"))
+        XCTAssertEqual(TranscriptService.resolvedLanguage(configured: "auto", whisperOutput: japaneseLog), "ja")
+        XCTAssertEqual(TranscriptService.resolvedLanguage(configured: "zh", whisperOutput: ""), "zh")
     }
 
     func testRecognisedTraditionalLineIsRewrittenOnce() {

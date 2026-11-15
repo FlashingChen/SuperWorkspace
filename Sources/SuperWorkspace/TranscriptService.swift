@@ -40,18 +40,23 @@ enum TranscriptService {
         // whisper-cli 输出 srt 到 <outbase>.srt
         onPhase("识别字幕")
         let outBase = dir.appendingPathComponent("transcript")
-        _ = try await Shell.run(whisper, arguments: [
+        let whisperLog = try await Shell.run(whisper, arguments: [
             "-m", model,
             "-f", wav.path,
             "-l", language,
             "-ml", "36", "-sow",
             "-osrt", "-of", outBase.path,
         ])
+        let resolvedLanguage = Self.resolvedLanguage(configured: language, whisperOutput: whisperLog)
+        let simplifiedScript = Self.usesSimplifiedScript(language: language, whisperOutput: whisperLog)
         let srtURL = dir.appendingPathComponent("transcript.srt")
         guard let srt = try? String(contentsOf: srtURL, encoding: .utf8) else {
             throw ShellError.exitStatus(-1, "whisper 未生成字幕文件")
         }
-        let segments = TranscriptScript.simplified(parseSRT(srt))
+        let rawSegments = parseSRT(srt)
+        let segments = simplifiedScript
+            ? rawSegments.map { TranscriptSegment(start: $0.start, end: $0.end, text: TranscriptScript.simplifiedChinese($0.text)) }
+            : rawSegments
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(segments).write(to: dir.appendingPathComponent("transcript-raw.json"), options: .atomic)
@@ -62,13 +67,36 @@ enum TranscriptService {
         } else {
             result = TranscriptResult(segments: segments, warning: nil)
         }
-        let final = SubtitleSegmentation.split(TranscriptScript.simplified(result.segments))
+        let corrected = simplifiedScript
+            ? result.segments.map { TranscriptSegment(start: $0.start, end: $0.end, text: TranscriptScript.simplifiedChinese($0.text)) }
+            : result.segments
+        let final = SubtitleSegmentation.split(corrected)
         let metadata = try encoder.encode(final)
         try metadata.write(to: dir.appendingPathComponent("transcript.json"), options: .atomic)
         // The motion agent reads this file from the material folder, so it carries the same
         // Simplified wording as the subtitle track instead of the raw recognition.
         try SRTText.text(final).write(to: srtURL, atomically: true, encoding: .utf8)
-        return TranscriptResult(segments: final, warning: result.warning)
+        return TranscriptResult(segments: final, warning: result.warning, language: resolvedLanguage)
+    }
+
+    /// The language whisper actually used: the configured code, or what it detected in `auto`.
+    static func resolvedLanguage(configured: String, whisperOutput: String) -> String {
+        let language = configured.lowercased()
+        return language.hasPrefix("auto") ? detectedLanguage(in: whisperOutput) ?? language : language
+    }
+
+    /// Chinese material is written in Simplified characters; other languages keep their own script.
+    /// "auto" is resolved from the language whisper reports in its own log.
+    static func usesSimplifiedScript(language: String, whisperOutput: String) -> Bool {
+        let configured = language.lowercased()
+        if configured.hasPrefix("zh") { return true }
+        guard configured.hasPrefix("auto") else { return false }
+        return detectedLanguage(in: whisperOutput)?.hasPrefix("zh") == true
+    }
+
+    static func detectedLanguage(in output: String) -> String? {
+        guard let range = output.range(of: "auto-detected language:") else { return nil }
+        return output[range.upperBound...].split(separator: " ").first.map { $0.lowercased() }
     }
 
     static func parseSRT(_ srt: String) -> [TranscriptSegment] {
