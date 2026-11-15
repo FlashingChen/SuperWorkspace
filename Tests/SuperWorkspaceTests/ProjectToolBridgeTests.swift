@@ -16,7 +16,10 @@ final class ProjectToolBridgeTests: XCTestCase {
         }
         defer { bridge.stop() }
 
-        let response = await Task.detached { Self.call(path: bridge.path, tool: "project_read") }.value
+        // Read the path before detaching: capturing the bridge inside the detached task trips the
+        // region-based isolation checker in the CI toolchain.
+        let path = bridge.path
+        let response = await Task.detached { Self.call(path: path, tool: "project_read") }.value
         let reply = try XCTUnwrap(response)
         XCTAssertTrue(reply.ok)
         XCTAssertEqual(reply.result?["echo"]?.stringValue, "project_read")
@@ -28,7 +31,8 @@ final class ProjectToolBridgeTests: XCTestCase {
         try bridge.start { _ in .failure("not allowed") }
         defer { bridge.stop() }
 
-        let response = await Task.detached { Self.call(path: bridge.path, tool: "clip_trim") }.value
+        let path = bridge.path
+        let response = await Task.detached { Self.call(path: path, tool: "clip_trim") }.value
         let reply = try XCTUnwrap(response)
         XCTAssertFalse(reply.ok)
         XCTAssertEqual(reply.error, "not allowed")
