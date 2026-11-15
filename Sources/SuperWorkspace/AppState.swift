@@ -23,6 +23,8 @@ struct MotionBudgetHold: Identifiable, Equatable, Sendable {
     let maxTotal: Int
     let waitSeconds: Int
     var id: UUID { mediaID }
+    var canExtend: Bool { limit < maxTotal }
+    var extendMinutes: Int { max(0, min(30, maxTotal - limit)) }
 }
 
 @MainActor
@@ -590,7 +592,12 @@ final class AppState: ObservableObject {
                             self.motionPhases[id] = progress.minutes.map { "已延长 \($0) 分钟，继续渲染" }
                                 ?? "已延长，继续渲染"
                         case "budget_wait_cap":
-                            self.motionPhases[id] = "已达到单条动效总上限，无法继续"
+                            if let existing = self.motionBudgetHolds[id] {
+                                self.motionBudgetHolds[id] = MotionBudgetHold(
+                                    mediaID: id, limit: existing.maxTotal, maxTotal: existing.maxTotal,
+                                    waitSeconds: existing.waitSeconds)
+                            }
+                            self.motionPhases[id] = "已达到单条动效总上限，等待停止"
                         default:
                             guard let label = AppState.motionPhaseLabel(progress) else { return }
                             if progress.type == "budget" { self.motionBudgetHolds[id] = nil }
@@ -756,15 +763,17 @@ final class AppState: ObservableObject {
     func continueMotion(_ projectID: UUID, _ id: UUID) {
         guard let (project, material) = pair(projectID, id),
               let hold = motionBudgetHolds[material.mediaID] else { return }
-        guard hold.limit < hold.maxTotal else {
+        guard hold.canExtend, hold.extendMinutes > 0 else {
             showToast("已达单条动效总上限 \(hold.maxTotal) 分钟。")
             return
         }
         let url = Self.motionControlURL(material, in: project)
         do {
-            let data = try JSONSerialization.data(withJSONObject: ["action": "extend", "minutes": 30])
+            let data = try JSONSerialization.data(withJSONObject: [
+                "action": "extend", "minutes": hold.extendMinutes, "id": UUID().uuidString,
+            ])
             try data.write(to: url, options: .atomic)
-            motionPhases[material.mediaID] = "正在继续：再加 30 分钟"
+            motionPhases[material.mediaID] = "正在继续：再加 \(hold.extendMinutes) 分钟"
         } catch {
             showToast("无法通知动效任务继续：\(error.localizedDescription)")
         }
@@ -1255,6 +1264,8 @@ final class AppState: ObservableObject {
         if !updated.materials.contains(where: { $0.mediaID == material.mediaID }) {
             motionQueue.removeAll { $0.0 == projectID && $0.1 == material.mediaID }
             motionTasks[material.mediaID]?.cancel()
+            motionBudgetHolds[material.mediaID] = nil
+            try? FileManager.default.removeItem(at: Self.motionControlURL(material, in: updated))
             transcriptTasks[material.mediaID]?.cancel()
             aiEditTasks[material.mediaID]?.cancel()
         }

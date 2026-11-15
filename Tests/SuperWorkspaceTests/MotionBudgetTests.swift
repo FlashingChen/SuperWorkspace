@@ -44,7 +44,43 @@ final class MotionBudgetTests: XCTestCase {
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
             XCTAssertEqual(json["action"] as? String, "extend")
             XCTAssertEqual(json["minutes"] as? Int, 30)
+            XCTAssertNotNil(json["id"] as? String)
             XCTAssertEqual(state.motionPhases[material.mediaID], "正在继续：再加 30 分钟")
+        }
+    }
+
+    func testContinueUsesOnlyTheRemainingAllowance() async throws {
+        try await withStorage { _ in
+            let (project, _) = try fixture()
+            let material = try XCTUnwrap(project.materials.first)
+            let state = AppState()
+            state.select(project.id)
+            state.motionBudgetHolds[material.mediaID] = MotionBudgetHold(
+                mediaID: material.mediaID, limit: 110, maxTotal: 120, waitSeconds: 900)
+
+            state.continueMotion(project.id, material.id)
+
+            let data = try Data(contentsOf: AppState.motionControlURL(material, in: project))
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            XCTAssertEqual(json["minutes"] as? Int, 10)
+            XCTAssertEqual(state.motionPhases[material.mediaID], "正在继续：再加 10 分钟")
+        }
+    }
+
+    func testRemovingMaterialClearsTheWaitAndControlFile() async throws {
+        try await withStorage { _ in
+            let (project, _) = try fixture()
+            let material = try XCTUnwrap(project.materials.first)
+            let state = AppState()
+            state.select(project.id)
+            state.motionBudgetHolds[material.mediaID] = MotionBudgetHold(
+                mediaID: material.mediaID, limit: 40, maxTotal: 120, waitSeconds: 900)
+            let url = AppState.motionControlURL(material, in: project)
+            try Data("{}".utf8).write(to: url)
+
+            XCTAssertTrue(state.removeMaterial(project.id, material.id))
+            XCTAssertNil(state.motionBudgetHolds[material.mediaID])
+            XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
         }
     }
 

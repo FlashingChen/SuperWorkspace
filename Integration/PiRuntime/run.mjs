@@ -1,5 +1,5 @@
 import {mkdtemp, rm} from 'node:fs/promises';
-import {readFileSync, unlinkSync} from 'node:fs';
+import {readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
@@ -38,6 +38,7 @@ const maxTotalMinutes = Math.min(240, Math.max(budgetMinutes, budgetMinutes * 3)
 let totalMinutes = budgetMinutes;
 let budgetTimer = null;
 let budgetWait = null;
+let lastControl = null;
 
 const describeToolArgs = (args) => {
   const compress = (value) => value.replace(/\s+/g, ' ').trim().slice(0, 120);
@@ -189,8 +190,20 @@ try {
         if (error?.code !== 'ENOENT') raw = null;
       }
       if (raw !== null) {
-        try { unlinkSync(controlPath); } catch {}
-        try { action = JSON.parse(raw); } catch { action = null; }
+        let control = null;
+        try { control = JSON.parse(raw); } catch { control = null; }
+        if (control) {
+          // Keep the file; remember the last request so a stale file or a
+          // repeated read is not applied twice. The app removes it when the
+          // task ends, and a new click writes a new id.
+          const token = typeof control.id === 'string' || typeof control.id === 'number'
+            ? String(control.id)
+            : raw;
+          if (token !== lastControl) {
+            lastControl = token;
+            action = control;
+          }
+        }
       }
     }
     if (action?.action === 'stop') {

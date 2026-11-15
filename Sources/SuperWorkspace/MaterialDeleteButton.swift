@@ -83,8 +83,8 @@ struct MaterialProcessingActions: View {
                 .disabled(material.useOriginal == true && material.motionState != .complete)
                 if [.queued, .running].contains(material.motionState) {
                     if state.motionBudgetHolds[material.mediaID] != nil {
-                        if let hold = state.motionBudgetHolds[material.mediaID], hold.limit < hold.maxTotal {
-                            Button("继续 30 分钟") { state.continueMotion(projectID, materialID) }
+                        if let hold = state.motionBudgetHolds[material.mediaID], hold.canExtend {
+                            Button("继续 \(hold.extendMinutes) 分钟") { state.continueMotion(projectID, materialID) }
                         }
                     }
                     Button("取消动效") { state.cancelProcessing(projectID, materialID, motion: true) }
@@ -132,8 +132,8 @@ struct MaterialTaskStatus: View {
                     Spacer()
                     if [.running, .queued].contains(material.motionState) {
                         if let hold = state.motionBudgetHolds[material.mediaID] {
-                            if hold.limit < hold.maxTotal {
-                                Button("继续 30 分钟") { state.continueMotion(projectID, material.id) }
+                            if hold.canExtend {
+                                Button("继续 \(hold.extendMinutes) 分钟") { state.continueMotion(projectID, material.id) }
                                     .buttonStyle(StudioButtonStyle(kind: .primary, size: .compact))
                             }
                             Button("停止") { state.cancelProcessing(projectID, material.id, motion: true) }

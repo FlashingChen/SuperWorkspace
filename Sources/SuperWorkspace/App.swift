@@ -104,33 +104,39 @@ struct RootView: View {
         }
     }
 
-    private var pendingBudget: (project: VideoProject, material: Material, hold: MotionBudgetHold)? {
+    private var pendingBudgets: [(project: VideoProject, material: Material, hold: MotionBudgetHold)] {
+        var result: [(VideoProject, Material, MotionBudgetHold)] = []
         for project in state.projects {
             for material in project.materials {
-                if let hold = state.motionBudgetHolds[material.mediaID] { return (project, material, hold) }
+                if let hold = state.motionBudgetHolds[material.mediaID] { result.append((project, material, hold)) }
             }
         }
-        return nil
+        return result
     }
 
     @ViewBuilder private var budgetBanner: some View {
-        if let pending = pendingBudget {
+        let pending = pendingBudgets
+        if let first = pending.first {
             HStack(spacing: Metrics.space3) {
                 Image(systemName: "clock.badge.exclamationmark")
                     .foregroundStyle(palette.warning)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Metrics.space1) {
-                    Text("动效已到 \(pending.hold.limit) 分钟上限")
+                    Text("动效已到 \(first.hold.limit) 分钟上限")
                         .font(.studio(.bodyMedium))
-                    Text("继续会保留当前进度；\(max(1, pending.hold.waitSeconds / 60)) 分钟内未选择将自动停止。")
+                    Text("继续会保留当前进度；\(max(1, first.hold.waitSeconds / 60)) 分钟内未选择将自动停止。"
+                        + (pending.count > 1 ? "另有 \(pending.count - 1) 个任务在拼装页等待继续。" : ""))
                         .font(.studio(.small))
                         .foregroundStyle(palette.textSecondary)
                 }
                 Spacer(minLength: Metrics.space4)
-                Button("继续 30 分钟") { state.continueMotion(pending.project.id, pending.material.id) }
+                if first.hold.canExtend {
+                    Button("继续 \(first.hold.extendMinutes) 分钟") {
+                        state.continueMotion(first.project.id, first.material.id)
+                    }
                     .buttonStyle(StudioButtonStyle(kind: .primary, size: .compact))
-                    .disabled(pending.hold.limit >= pending.hold.maxTotal)
-                Button("停止") { state.cancelProcessing(pending.project.id, pending.material.id, motion: true) }
+                }
+                Button("停止") { state.cancelProcessing(first.project.id, first.material.id, motion: true) }
                     .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
             }
             .padding(Metrics.space3)
