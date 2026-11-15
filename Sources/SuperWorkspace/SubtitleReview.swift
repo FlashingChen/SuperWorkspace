@@ -387,7 +387,7 @@ enum SubtitleReviewer {
     }
 
     /// The correction has to stay a local fix: bounded length, bounded edit distance, same language,
-    /// same script as the speaker's line.
+    /// and Chinese wording in Simplified characters.
     static func validatedReplacement(_ source: String, _ candidate: String) -> String? {
         let text = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, text != source,

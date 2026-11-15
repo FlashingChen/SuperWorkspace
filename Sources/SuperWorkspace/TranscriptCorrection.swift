@@ -129,7 +129,9 @@ enum TranscriptCorrection {
 
     /// Chinese wording is always written in Simplified characters, so a correction can neither
     /// turn a line Traditional nor leave one Traditional word inside a Simplified sentence.
-    static func matchScript(of source: String, corrected: String) -> String {
+    /// The source line is kept in the signature for the call sites and tests that describe the
+    /// before/after pair; the script decision no longer depends on it.
+    static func matchScript(of _: String, corrected: String) -> String {
         TranscriptScript.simplified(corrected)
     }
 

@@ -67,29 +67,8 @@ enum TranscriptService {
         try metadata.write(to: dir.appendingPathComponent("transcript.json"), options: .atomic)
         // The motion agent reads this file from the material folder, so it carries the same
         // Simplified wording as the subtitle track instead of the raw recognition.
-        try Self.srt(from: final).write(to: srtURL, atomically: true, encoding: .utf8)
+        try SRTText.text(final).write(to: srtURL, atomically: true, encoding: .utf8)
         return TranscriptResult(segments: final, warning: result.warning)
-    }
-
-    /// SRT text for the finished track, used to keep the on-disk transcript in the same script
-    /// as the subtitles the editor shows.
-    static func srt(from segments: [TranscriptSegment]) -> String {
-        segments.enumerated().map { index, segment in
-            """
-            \(index + 1)
-            \(timecode(segment.start)) --> \(timecode(segment.end))
-            \(segment.text)
-            """
-        }.joined(separator: "\n\n") + "\n"
-    }
-
-    private static func timecode(_ seconds: Double) -> String {
-        let total = max(0, seconds)
-        let hours = Int(total) / 3600
-        let minutes = (Int(total) % 3600) / 60
-        let whole = Int(total) % 60
-        let millis = Int(((total - floor(total)) * 1000).rounded())
-        return String(format: "%02d:%02d:%02d,%03d", hours, minutes, whole, millis)
     }
 
     static func parseSRT(_ srt: String) -> [TranscriptSegment] {

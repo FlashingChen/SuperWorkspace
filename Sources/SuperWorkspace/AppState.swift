@@ -71,6 +71,11 @@ final class AppState: ObservableObject {
                     projects[i].materials[j].subtitles = SubtitleSegmentation.split(source)
                     projects[i].materials[j].subtitleLayoutVersion = SubtitleSegmentation.version
                 }
+                // Subtitles saved before the Simplified rule existed are normalised once on load,
+                // so an old project does not keep Traditional wording in the editor and in export.
+                if !projects[i].materials[j].subtitles.isEmpty {
+                    projects[i].materials[j].subtitles = TranscriptScript.simplified(projects[i].materials[j].subtitles)
+                }
                 if projects[i].materials[j].exportState == .running {
                     projects[i].materials[j].exportState = .failed
                     projects[i].materials[j].exportError = "上次素材导出中断，请在录制编辑器重新导出。"
@@ -407,8 +412,9 @@ final class AppState: ObservableObject {
                     video: ProjectLayout.picture(material, in: project), directory: directory, configuration: configuration)
                 try Task.checkCancellation()
                 history(projectID).removeAllActions(); undoRevision += 1
-                let segments = SubtitleSegmentation.split(result.segments)
+                let segments = SubtitleSegmentation.split(TranscriptScript.simplified(result.segments))
                 try JSONEncoder().encode(segments).write(to: directory.appendingPathComponent("transcript.json"), options: .atomic)
+                try? SRTText.text(segments).write(to: directory.appendingPathComponent("transcript.srt"), atomically: true, encoding: .utf8)
                 updateMaterial(projectID, taskID) { $0.subtitles = segments; $0.subtitleLayoutVersion = SubtitleSegmentation.version; $0.transcriptState = .complete; $0.transcriptWarning = result.warning }
             } catch {
                 guard !Task.isCancelled else { return }
@@ -885,9 +891,10 @@ final class AppState: ObservableObject {
                 skipped += 1
                 continue
             }
+            let simplifiedTrack = TranscriptScript.simplified(track)
             for material in group {
                 oldSnapshots[material.id] = material.subtitles
-                newSnapshots[material.id] = TranscriptScript.simplified(track)
+                newSnapshots[material.id] = simplifiedTrack
             }
             applied += 1
             before += original.count
