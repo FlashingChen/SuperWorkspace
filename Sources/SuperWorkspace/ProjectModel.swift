@@ -118,8 +118,11 @@ struct VideoProject: Identifiable, Codable, Equatable, Sendable {
 
 enum ProjectLayout {
     static var projectsRoot: URL {
-        if let override = ProcessInfo.processInfo.environment["SUPERWORKSPACE_TEST_ROOT"] {
-            return URL(fileURLWithPath: override, isDirectory: true)
+        // getenv reflects setenv immediately; ProcessInfo.environment can be cached
+        // before a test sets the override, which leaks test projects into the library.
+        if let raw = getenv("SUPERWORKSPACE_TEST_ROOT"),
+           let path = String(validatingUTF8: raw), !path.isEmpty {
+            return URL(fileURLWithPath: path, isDirectory: true)
         }
         return FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("SuperWorkspace", isDirectory: true)

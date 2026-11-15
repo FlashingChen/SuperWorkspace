@@ -19,6 +19,7 @@ final class MotionBudgetTests: XCTestCase {
         var material = Material()
         material.duration = 80
         material.exportState = .complete
+        material.transcriptState = .complete
         material.wantsMotion = true
         material.motionState = .running
         project.materials = [material]
@@ -26,6 +27,16 @@ final class MotionBudgetTests: XCTestCase {
         let directory = ProjectLayout.materialDirectory(material, in: project)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return (project, directory)
+    }
+
+    func testProjectRootUsesTheLiveTestOverride() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let previous = getenv("SUPERWORKSPACE_TEST_ROOT").map { String(cString: $0) }
+        setenv("SUPERWORKSPACE_TEST_ROOT", root.path, 1)
+        defer {
+            if let previous { setenv("SUPERWORKSPACE_TEST_ROOT", previous, 1) } else { unsetenv("SUPERWORKSPACE_TEST_ROOT") }
+        }
+        XCTAssertEqual(ProjectLayout.projectsRoot.standardizedFileURL.path, root.standardizedFileURL.path)
     }
 
     func testHoldReportsTheActualExtension() {
