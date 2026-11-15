@@ -49,19 +49,23 @@ final class AssemblyAgent: ObservableObject {
         failure = nil
         guard let state, let project = state.projects.first(where: { $0.id == projectID }) else {
             failure = "项目不存在或已被删除。"
+            started = false
             return
         }
         guard SettingsStore.shared.selectedAgent == .api else {
             failure = "AI 对话需要使用内置 Pi。请在设置里选择「内置 Pi」并填写连接信息。"
+            started = false
             return
         }
         guard let connection = try? SettingsStore.shared.apiConnection() else {
             failure = "请先在设置里连接 AI（基础地址、模型与密钥）。"
+            started = false
             return
         }
         secret = connection.key
         guard let runtime = EmbeddedPi.chatRuntime else {
             failure = "内置 Pi 组件缺失，请重新安装应用。"
+            started = false
             return
         }
 
@@ -74,6 +78,9 @@ final class AssemblyAgent: ObservableObject {
             }
         } catch {
             failure = error.localizedDescription
+            bridge.stop()
+            self.bridge = nil
+            started = false
             return
         }
         self.bridge = bridge
@@ -115,6 +122,7 @@ final class AssemblyAgent: ObservableObject {
             failure = "无法启动 AI 进程：\(error.localizedDescription)"
             bridge.stop()
             self.bridge = nil
+            started = false
             return
         }
 
@@ -153,9 +161,11 @@ final class AssemblyAgent: ObservableObject {
 
     func send(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty, !isBusy else { return }
         startIfNeeded()
-        guard failure == nil else { return }
+        // A configuration failure is reported by startIfNeeded; a crashed child is
+        // restarted there and the message waits until the new session is ready.
+        guard started else { return }
         guard isReady else {
             pendingText = trimmed
             return

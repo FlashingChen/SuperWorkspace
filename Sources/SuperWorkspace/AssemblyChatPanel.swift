@@ -160,12 +160,11 @@ struct AssemblyChatPanel: View {
                     .lineLimit(1...4)
                     .focused($composerFocused)
                     .onSubmit(send)
-                    .disabled(agent.failure != nil && !agent.isReady)
                 Button(action: agent.isBusy ? { agent.abort() } : send) {
                     Image(systemName: agent.isBusy ? "stop.fill" : "arrow.up")
                 }
                 .buttonStyle(StudioButtonStyle(kind: .primary, size: .compact))
-                .disabled(!agent.isBusy && (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !agent.canSend))
+                .disabled(!agent.isBusy && draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .accessibilityLabel(agent.isBusy ? "停止" : "发送")
             }
             Text("修改会立即应用，可用⌘Z撤销")
