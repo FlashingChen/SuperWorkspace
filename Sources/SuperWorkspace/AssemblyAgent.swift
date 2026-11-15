@@ -31,6 +31,7 @@ final class AssemblyAgent: ObservableObject {
     private var started = false
     private var nextPromptID = 1
     private var pendingText: String?
+    private var secret = ""
 
     init(projectID: UUID, state: AppState) {
         self.projectID = projectID
@@ -58,6 +59,7 @@ final class AssemblyAgent: ObservableObject {
             failure = "请先在设置里连接 AI（基础地址、模型与密钥）。"
             return
         }
+        secret = connection.key
         guard let runtime = EmbeddedPi.chatRuntime else {
             failure = "内置 Pi 组件缺失，请重新安装应用。"
             return
@@ -208,7 +210,7 @@ final class AssemblyAgent: ObservableObject {
                 activity = Self.toolLabel(name, detail: nil) + (ok ? "完成" : "未通过")
             }
         case "notice":
-            if let text = event["text"] as? String { activity = text }
+            if let text = event["text"] as? String { activity = sanitize(text) }
         case "done":
             let text = (event["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             let final = (text?.isEmpty == false ? text : nil) ?? streaming.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -216,7 +218,7 @@ final class AssemblyAgent: ObservableObject {
             finishTurn()
         case "error":
             let message = (event["message"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let message, !message.isEmpty { append(.init(role: .notice, text: message)) }
+            if let message, !message.isEmpty { append(.init(role: .notice, text: sanitize(message))) }
             finishTurn()
         default:
             break
@@ -242,7 +244,7 @@ final class AssemblyAgent: ObservableObject {
         process = nil
         input = nil
         if code != 0, failure == nil {
-            failure = lastErrorLine.map { "AI 进程已退出：\($0)" } ?? "AI 进程已退出（\(code)）。再发一条消息会自动重连。"
+            failure = lastErrorLine.map { sanitize("AI 进程已退出：\($0)") } ?? "AI 进程已退出（\(code)）。再发一条消息会自动重连。"
         }
         lastErrorLine = nil
     }
@@ -252,6 +254,11 @@ final class AssemblyAgent: ObservableObject {
     private func append(_ message: Message) {
         messages.append(message)
         persist()
+    }
+
+    private func sanitize(_ text: String) -> String {
+        guard !secret.isEmpty else { return text }
+        return text.replacingOccurrences(of: secret, with: "[redacted]")
     }
 
     private func sendLine(_ payload: [String: Any]) {

@@ -27,9 +27,15 @@ const agentDir = await mkdtemp(join(tmpdir(), 'superworkspace-chat-'));
 process.env.PI_CODING_AGENT_DIR = agentDir;
 const provider = 'workspace';
 let requestID = 0;
+let secret = { value: '' };
+
+const redact = (value) => {
+  const text = String(value);
+  return secret.value ? text.replaceAll(secret.value, '[redacted]') : text;
+};
 
 const out = (event) => process.stdout.write(`${JSON.stringify(event)}\n`);
-const log = (message) => process.stderr.write(`${String(message).slice(0, 1200)}\n`);
+const log = (message) => process.stderr.write(`${redact(message).slice(0, 1200)}\n`);
 
 const bridgeCall = (tool, args) => new Promise((resolve) => {
   const socketPath = process.env.SW_BRIDGE_PATH;
@@ -192,6 +198,7 @@ const setup = async (request) => {
     }],
   });
   await modelRuntime.setRuntimeApiKey(provider, request.key || 'local');
+  secret.value = String(request.key ?? '');
 
   const resourceLoader = {
     getExtensions: () => ({extensions: [], errors: [], runtime: createExtensionRuntime()}),
@@ -282,7 +289,7 @@ const handlePrompt = async ({id, text}) => {
     out({type: 'done', id, text: final});
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    out({type: 'error', message: message.slice(0, 600)});
+    out({type: 'error', message: redact(message).slice(0, 600)});
   } finally {
     busy = false;
   }
@@ -300,7 +307,8 @@ lines.on('line', (line) => {
   }
   if (message.type === 'init') {
     setup(message).catch((error) => {
-      out({type: 'error', message: (error instanceof Error ? error.message : String(error)).slice(0, 800)});
+      const text = error instanceof Error ? error.message : String(error);
+      out({type: 'error', message: redact(text).slice(0, 800)});
     });
     return;
   }
