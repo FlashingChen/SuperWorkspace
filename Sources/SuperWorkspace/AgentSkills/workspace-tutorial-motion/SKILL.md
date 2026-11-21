@@ -41,7 +41,25 @@ background 压在最底，fixedLabels 浮在最上，两者都不进相机；obj
 
 人物原片、抠像遮挡层和人后大字需要运镜时共用一个相机父级，不能分别估算裁切。禁止把整个原始录屏放进 cameraWorld 来获得运镜。
 
-直接复用 [world-camera.tsx](references/world-camera.tsx)。`cx/cy` 是镜头瞄准的世界坐标。对象位置按世界坐标布局，相机变化时保持各自的布局。按口播确定起点、过渡和落点后直接实现。
+直接复用工作目录预置的 `src/sw-kit`（导出 `WorldCamera`、`StageFrame`、`MediaCard`、`PhoneMockup`、`defaultTheme`、`createTheme`、`SAFE_ZONES` 与 `ease`/`pop`/`stagger`），不要重复从零编写相机组件、缓动函数、字体配置或项目脚手架。`cx/cy` 是镜头瞄准的世界坐标。对象位置按世界坐标布局，相机变化时保持各自的布局。按口播确定起点、过渡和落点后直接实现。
+
+## 宿主工具与分镜清单
+
+工作目录已随包注入 `sw-motion.mjs` 与 `src/sw-kit/`。把所有全屏图解分镜（`shots`）和局部透明叠层（`overlays`）写入 `motion-manifest.json`：
+
+```json
+{
+  "version": 1,
+  "fps": 60,
+  "width": 3024,
+  "height": 1702,
+  "shots": [{ "id": "Act1", "composition": "Act1", "start": 1.8, "end": 8.5, "files": ["src/shots/Act1.tsx"] }],
+  "overlays": [{ "id": "Ov1", "composition": "Ov1", "start": 0.0, "end": 1.8, "x": 1800, "y": 220, "width": 760, "height": 300, "files": ["src/overlays/Overlays.tsx"] }]
+}
+```
+
+- 预检：`node sw-motion.mjs inspect`（定向微调时加 `--shots <id>`）会并行渲染关键帧、检查空白帧与字幕安全区侵入，并拼成 1–2 张 Contact Sheet（`out/inspect/contact-sheet-*.png`），取代零散的 `remotion still` 和手工裁图。
+- 渲染与合成：`node sw-motion.mjs render` 自动按源码哈希复用 `.sw-cache/` 中未改动分镜的渲染缓存、并发渲染变更分镜（透明叠层直接走 ProRes 4444 alpha，不生成 `.rgba` 中间文件），并由宿主用 FFmpeg 硬件编码无损拼出 `motion-pending.mp4`。不要手写 `composite.sh`。
 
 ## 画面文字语言
 

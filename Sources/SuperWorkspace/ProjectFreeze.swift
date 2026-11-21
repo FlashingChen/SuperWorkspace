@@ -6,7 +6,7 @@ import Foundation
 enum ProjectFreeze {
     /// Entries inside a material workspace that `RemotionRuntime.prepare` restores.
     static let runtimeEntries = ["node_modules", "package.json", "package-lock.json",
-                                 ".remotion", "out", "motion-pending.mp4"]
+                                 ".remotion", ".sw-cache", "sw-motion.mjs", "out", "motion-pending.mp4"]
 
     /// One directory per recording, even when several timeline clips share it.
     static func workspaces(for project: VideoProject) -> [URL] {

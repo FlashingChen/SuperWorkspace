@@ -65,6 +65,7 @@ final class AppState: ObservableObject {
     private var activeMotions: Set<UUID> = []
     private var motionAttempts: [UUID: Int] = [:]
     private var motionStartedAt: [UUID: Date] = [:]
+    private var pendingShotRefinements: [UUID: String] = [:]
     private var transcriptTasks: [UUID: Task<Void, Never>] = [:]
     private var aiEditTasks: [UUID: Task<Void, Never>] = [:]
     private var reviewTasks: [UUID: Task<Void, Never>] = [:]
@@ -550,8 +551,9 @@ final class AppState: ObservableObject {
                 try? FileManager.default.removeItem(at: temporary)
                 let settings = SettingsStore.shared
                 let brief = directory.appendingPathComponent("motion-brief.txt")
+                let refinementDirective = pendingShotRefinements.removeValue(forKey: id)
                 let context = "为输入视频叠加 Remotion 讲解动效，保留原有声音、画面内容和全部时间关系，不改变时长。输入：\(source.path)。输出：\(temporary.path)。"
-                var description = context
+                var description = refinementDirective.map { "\($0)\n\n\(context)" } ?? context
                 if let direction = material.editingPrompt?.trimmingCharacters(in: .whitespacesAndNewlines), !direction.isEmpty {
                     description += "\n剪辑提示词：\(direction)"
                 }
@@ -1610,6 +1612,7 @@ final class AppState: ObservableObject {
     /// not undoable, but the prompt change and every other edit are.
     func regenerateMotion(_ projectID: UUID, _ id: UUID, instruction: String?) {
         guard let (_, material) = pair(projectID, id), material.sourceReady else { return }
+        pendingShotRefinements[material.mediaID] = nil
         let prompt = instruction?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let prompt, !prompt.isEmpty, material.editingPrompt != prompt {
             let old = material.editingPrompt
@@ -1619,6 +1622,15 @@ final class AppState: ObservableObject {
                 }
             }
         }
+        enqueueMotion(projectID, id)
+    }
+    func refineMotionShot(_ projectID: UUID, _ id: UUID, directive: String) {
+        guard let (project, material) = pair(projectID, id),
+              material.sourceReady,
+              !project.isFrozen,
+              motionTasks[material.mediaID] == nil,
+              !motionQueue.contains(where: { $0.1 == material.mediaID }) else { return }
+        pendingShotRefinements[material.mediaID] = directive
         enqueueMotion(projectID, id)
     }
     func reorderMaterial(_ projectID: UUID, source: UUID, target: UUID, after: Bool) {
