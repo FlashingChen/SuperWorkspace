@@ -16,6 +16,8 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
@@ -178,6 +180,10 @@ function collectSourceFiles(dir, acc = []) {
   return acc;
 }
 
+function safeFileToken(id) {
+  return String(id || 'item').replace(/[^a-zA-Z0-9._-]+/g, '_');
+}
+
 function hashItem(item, kind, renderSpec) {
   const hash = createHash('sha256');
   hash.update(JSON.stringify({kind, item, renderSpec}));
@@ -188,7 +194,12 @@ function hashItem(item, kind, renderSpec) {
   if (Array.isArray(item.files) && item.files.length > 0) {
     for (const rel of item.files) {
       const full = resolve(cwd, rel);
-      if (existsSync(full)) files.add(full);
+      if (!existsSync(full)) continue;
+      if (statSync(full).isDirectory()) {
+        for (const nested of collectSourceFiles(full)) files.add(nested);
+      } else {
+        files.add(full);
+      }
     }
   } else {
     for (const f of collectSourceFiles(join(cwd, 'src'))) files.add(f);
@@ -215,15 +226,16 @@ async function mapLimit(items, limit, worker) {
 
 async function checkImageVariance(imagePath) {
   try {
-    const {stderr} = await runCmd('ffmpeg', [
+    const {stdout, stderr} = await runCmd('ffmpeg', [
       '-v', 'info',
       '-i', imagePath,
       '-vf', 'signalstats,metadata=print:file=-',
       '-f', 'null', '-',
     ], {timeout: 15_000});
-    const yavg = /YAVG=(\d+(?:\.\d+)?)/.exec(stderr);
-    const ymax = /YMAX=(\d+(?:\.\d+)?)/.exec(stderr);
-    const ymin = /YMIN=(\d+(?:\.\d+)?)/.exec(stderr);
+    const combined = `${stdout}\n${stderr}`;
+    const yavg = /YAVG=(\d+(?:\.\d+)?)/.exec(combined);
+    const ymax = /YMAX=(\d+(?:\.\d+)?)/.exec(combined);
+    const ymin = /YMIN=(\d+(?:\.\d+)?)/.exec(combined);
     if (yavg && ymax && ymin) {
       const spread = Number(ymax[1]) - Number(ymin[1]);
       if (spread < 3) {
@@ -316,7 +328,7 @@ async function cmdInspect(opts) {
         composition: item.composition,
         frame: f,
         seconds: Number((item.start + f / fps).toFixed(2)),
-        path: join(INSPECT_DIR, `${item.id}-f${f}.png`),
+        path: join(INSPECT_DIR, `${safeFileToken(item.id)}-f${f}.png`),
       });
     }
   }
@@ -393,7 +405,7 @@ async function cmdRender(opts) {
 
   for (const shot of manifest.shots) {
     const hash = hashItem(shot, 'shot', renderSpec);
-    const cacheFile = join(CACHE_DIR, `shot-${shot.id}-${hash}.mp4`);
+    const cacheFile = join(CACHE_DIR, `shot-${safeFileToken(shot.id)}-${hash}.mp4`);
     const entry = {...shot, cacheFile, hash};
     resolvedShots.push(entry);
     if (existsSync(cacheFile) && statSync(cacheFile).size > 0) {
@@ -405,7 +417,7 @@ async function cmdRender(opts) {
 
   for (const overlay of manifest.overlays) {
     const hash = hashItem(overlay, 'overlay', renderSpec);
-    const cacheFile = join(CACHE_DIR, `overlay-${overlay.id}-${hash}.mov`);
+    const cacheFile = join(CACHE_DIR, `overlay-${safeFileToken(overlay.id)}-${hash}.mov`);
     const entry = {...overlay, cacheFile, hash};
     resolvedOverlays.push(entry);
     if (existsSync(cacheFile) && statSync(cacheFile).size > 0) {
@@ -416,11 +428,16 @@ async function cmdRender(opts) {
   }
 
   await mapLimit(renderQueue, concurrency, async ({kind, entry}) => {
+    const ext = kind === 'overlay' ? 'mov' : 'mp4';
+    const tmpFile = join(
+      CACHE_DIR,
+      `${kind}-${safeFileToken(entry.id)}-${entry.hash}.tmp-${process.pid}-${Date.now()}.${ext}`,
+    );
     const args = [
       '--no-install', 'remotion', 'render',
       'src/index.ts',
       entry.composition,
-      entry.cacheFile,
+      tmpFile,
     ];
     if (kind === 'overlay') {
       args.push(
@@ -436,8 +453,14 @@ async function cmdRender(opts) {
         '--crf', '18',
       );
     }
-    await runCmd('npx', args, {timeout: 1_200_000});
-    renderedCount++;
+    try {
+      await runCmd('npx', args, {timeout: 1_200_000});
+      renameSync(tmpFile, entry.cacheFile);
+      renderedCount++;
+    } catch (err) {
+      rmSync(tmpFile, {force: true});
+      throw err;
+    }
   });
 
   // Composite all cached shots + alpha overlays onto source.mp4 with hardware H.264.

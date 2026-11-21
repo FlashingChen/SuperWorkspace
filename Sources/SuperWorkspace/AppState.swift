@@ -1625,7 +1625,11 @@ final class AppState: ObservableObject {
         enqueueMotion(projectID, id)
     }
     func refineMotionShot(_ projectID: UUID, _ id: UUID, directive: String) {
-        guard let (_, material) = pair(projectID, id), material.sourceReady else { return }
+        guard let (project, material) = pair(projectID, id),
+              material.sourceReady,
+              !project.isFrozen,
+              motionTasks[material.mediaID] == nil,
+              !motionQueue.contains(where: { $0.1 == material.mediaID }) else { return }
         pendingShotRefinements[material.mediaID] = directive
         enqueueMotion(projectID, id)
     }

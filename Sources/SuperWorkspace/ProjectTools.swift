@@ -689,7 +689,8 @@ enum ProjectTools {
         if let manifest {
             if let shotID = requestedShotID, !shotID.isEmpty {
                 resolvedTarget = manifest.target(id: shotID)
-            } else if let atTime = requestedTime {
+            }
+            if resolvedTarget == nil, let atTime = requestedTime {
                 resolvedTarget = manifest.targets(at: atTime).first
             }
         }
