@@ -49,12 +49,12 @@ struct AssemblyChatPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
+            Rectangle().fill(palette.hairline).frame(height: 1)
             conversation
-            Divider()
+            Rectangle().fill(palette.hairline).frame(height: 1)
             composer
         }
-        .background(palette.bgBase)
+        .background(palette.island)
         .onAppear {
             agent.startIfNeeded()
         }
@@ -62,24 +62,18 @@ struct AssemblyChatPanel: View {
 
     private var header: some View {
         HStack(spacing: Metrics.space2) {
-            Image(systemName: "sparkles")
-                .font(.studio(.small, weight: .semibold))
-                .foregroundStyle(palette.ai)
-                .accessibilityHidden(true)
-            Text("AI 剪辑导演").font(.studio(.smallStrong))
+            Circle().fill(statusColor).frame(width: 7, height: 7)
+            Text("AI 剪辑导演").font(.studio(.bodyMedium, weight: .semibold))
+            Text(status).font(.studio(.caption)).foregroundStyle(palette.textMuted)
             Spacer()
-            HStack(spacing: Metrics.space1) {
-                Circle().fill(statusColor).frame(width: 6, height: 6)
-                Text(status).font(.studio(.caption)).foregroundStyle(palette.textSecondary)
-            }
             if let onClose {
-                Button(action: onClose) { Image(systemName: "xmark") }
-                    .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
-                    .accessibilityLabel("关闭 AI 面板")
+                Button("收起", action: onClose)
+                    .buttonStyle(StudioButtonStyle(kind: .secondary, size: .compact))
+                    .accessibilityLabel("收起 AI 面板")
             }
         }
         .padding(.horizontal, Metrics.space3)
-        .frame(height: 40)
+        .frame(height: 44)
     }
 
     private var conversation: some View {
@@ -102,7 +96,7 @@ struct AssemblyChatPanel: View {
                             .foregroundStyle(palette.warning)
                             .padding(Metrics.space2_5)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(palette.surface1, in: RoundedRectangle(cornerRadius: Metrics.radiusM))
+                            .background(palette.cardFill, in: RoundedRectangle(cornerRadius: Metrics.radiusM, style: .continuous))
                     }
                     Color.clear.frame(height: 1).id("bottom")
                 }
@@ -140,13 +134,9 @@ struct AssemblyChatPanel: View {
                                 .font(.studio(.micro))
                                 .foregroundStyle(palette.textMuted)
                         }
-                        .padding(.horizontal, Metrics.space2_5)
+                        .padding(.horizontal, Metrics.space3)
                         .padding(.vertical, Metrics.space2)
-                        .background(palette.surface1.opacity(0.65), in: RoundedRectangle(cornerRadius: Metrics.radiusM))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: Metrics.radiusM)
-                                .strokeBorder(palette.surface2, lineWidth: 1)
-                        }
+                        .background(palette.cardFill, in: RoundedRectangle(cornerRadius: Metrics.radiusM, style: .continuous))
                     }
                     .buttonStyle(StudioContentButtonStyle())
                     .disabled(agent.isBusy)
@@ -172,9 +162,9 @@ struct AssemblyChatPanel: View {
                         .foregroundStyle(palette.textMuted)
                 }
             }
-            .padding(.horizontal, Metrics.space2_5)
+            .padding(.horizontal, Metrics.space3)
             .padding(.vertical, Metrics.space2)
-            .background(palette.surface1.opacity(0.55), in: RoundedRectangle(cornerRadius: Metrics.radiusM))
+            .background(palette.cardFill, in: RoundedRectangle(cornerRadius: Metrics.radiusM, style: .continuous))
         }
     }
 
@@ -188,7 +178,7 @@ struct AssemblyChatPanel: View {
                     .font(.studio(.body))
                     .foregroundStyle(palette.textPrimary)
                     .padding(.horizontal, Metrics.space3).padding(.vertical, Metrics.space2)
-                    .background(palette.surface2, in: RoundedRectangle(cornerRadius: Metrics.radiusM))
+                    .background(palette.selectionWash, in: RoundedRectangle(cornerRadius: Metrics.radiusL, style: .continuous))
                     .textSelection(.enabled)
             }
         case .assistant:
@@ -253,9 +243,9 @@ struct AssemblyChatPanel: View {
                         Button {
                             onPlayPreview(message.focusTime)
                         } label: {
-                            Label("播放看看", systemImage: "play.fill")
+                            Label("试看", systemImage: "play.fill")
                         }
-                        .buttonStyle(StudioButtonStyle(kind: .secondary, size: .compact))
+                        .buttonStyle(StudioButtonStyle(kind: .primary, size: .compact))
                     }
                     if canUndoThisTurn {
                         Button {
@@ -268,12 +258,12 @@ struct AssemblyChatPanel: View {
                 }
             }
         }
-        .padding(Metrics.space2_5)
+        .padding(Metrics.space3)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(palette.surface1, in: RoundedRectangle(cornerRadius: Metrics.radiusM))
+        .background(palette.cardFill, in: RoundedRectangle(cornerRadius: Metrics.radiusL, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: Metrics.radiusM)
-                .strokeBorder(palette.surface2, lineWidth: 1)
+            RoundedRectangle(cornerRadius: Metrics.radiusL, style: .continuous)
+                .strokeBorder(palette.hairline, lineWidth: 1)
         }
     }
 

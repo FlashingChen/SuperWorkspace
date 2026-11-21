@@ -137,7 +137,7 @@ struct AssemblyTimeline: View {
     var body: some View {
         VStack(spacing: 0) {
             controls
-            Rectangle().fill(palette.surface2).frame(height: 1)
+            Rectangle().fill(palette.hairline).frame(height: 1)
             GeometryReader { geometry in
                 let viewport = max(1, geometry.size.width - gutter - 24)
                 let scale = min(600, max(0.05, viewport / max(1, fittedDuration > 0 ? fittedDuration : layout.duration)) * zoom)
@@ -161,9 +161,9 @@ struct AssemblyTimeline: View {
                         Spacer(minLength: 0)
                     }
                     .frame(width: gutter, height: canvasHeight, alignment: .top)
-                    .background(palette.bgSidebar)
+                    .background(palette.island)
                     .overlay(alignment: .trailing) {
-                        Rectangle().fill(palette.surface2.opacity(0.5)).frame(width: 1)
+                        Rectangle().fill(palette.hairline).frame(width: 1)
                     }
 
                     ScrollView(.horizontal) {
@@ -205,8 +205,8 @@ struct AssemblyTimeline: View {
                 }
             }
         }
-        .background(palette.bgDeep)
-        .frame(minHeight: 230, idealHeight: 256, maxHeight: 380)
+        .background(palette.island)
+        .frame(minHeight: 230, maxHeight: .infinity)
         .onAppear { fittedDuration = max(1, layout.duration) }
         .onExitCommand { draft = nil; snapGuideTime = nil; editingSubtitleKey = nil }
         .modifier(MaterialRemovalConfirmation(projectID: project.id, materialID: $pendingRemoval))

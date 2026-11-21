@@ -9,9 +9,9 @@ struct MaterialThumbnail: View {
         ZStack {
             palette.mediaGround
             if let image { Image(nsImage: image).resizable().scaledToFit() }
-            else { Image(systemName: "video").font(.largeTitle).foregroundStyle(Color.white.opacity(0.5)) }
+            else { Image(systemName: "video").font(.title2).foregroundStyle(Color.white.opacity(0.4)) }
         }
-        .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusL))
+        .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusM + 2, style: .continuous))
         .task(id: url) {
             image = nil
             guard let url else { return }
@@ -33,43 +33,65 @@ struct RecordStepView: View {
     var body: some View {
         Group {
             if project.materials.isEmpty {
-                StudioWorkspace(title: "开始创作。", detail: "录下屏幕里的想法，让每一段内容成为作品。") {
+                StudioWorkspace(title: "录制第一段素材", detail: "录制与粗剪在同一界面完成，导出后自动识别字幕并添加到项目。") {
                     StudioPreview(symbol: "macwindow", title: "录制完成后，在这里查看素材")
                 } controls: {
-                    VStack(alignment: .leading, spacing: Metrics.space2_5) {
-                        Text("录制素材").font(.studio(.subhead))
-                        Text("录制与粗剪在同一界面完成，导出后自动添加到项目。")
-                            .font(.studio(.body)).foregroundStyle(palette.textSecondary).lineSpacing(Metrics.space1_5)
-                    }
                     CapabilityReadinessView()
                     Button { state.record() } label: {
-                        Label("录制新素材", systemImage: "record.circle").frame(maxWidth: .infinity)
+                        HStack(spacing: Metrics.space2) {
+                            Circle().fill(palette.brand).frame(width: 8, height: 8)
+                            Text("录制新素材")
+                        }
+                        .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(StudioButtonStyle(kind: .primary))
+                    .disabled(project.isFrozen)
                 }
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: Metrics.space5) {
                         HStack(spacing: Metrics.space3) {
-                            Text("素材").font(.studio(.heading))
-                            Text(summaryLabel)
-                                .font(.studio(.small)).foregroundStyle(palette.textSecondary)
+                            HStack(alignment: .firstTextBaseline, spacing: Metrics.space2_5) {
+                                Text("项目素材").font(.studio(.heading))
+                                Text(summaryLabel)
+                                    .font(.studio(.small))
+                                    .foregroundStyle(palette.textSecondary)
+                                    .monospacedDigit()
+                            }
                             Spacer(minLength: Metrics.space4)
-                            Button("录制新素材", systemImage: "record.circle") { state.record() }
-                                .buttonStyle(StudioButtonStyle(kind: .secondary))
-                                .disabled(project.isFrozen)
+                            Button { state.record() } label: {
+                                HStack(spacing: Metrics.space2) {
+                                    Circle().fill(palette.brand).frame(width: 8, height: 8)
+                                    Text("录制新素材")
+                                }
+                            }
+                            .buttonStyle(StudioButtonStyle(kind: .secondary))
+                            .disabled(project.isFrozen)
                             Button {
-                                state.stage = .assemble
+                                withAnimation(StudioMotion.interactive) {
+                                    state.stage = .assemble
+                                }
                             } label: {
-                                Label("进入拼装", systemImage: "arrow.right")
+                                HStack(spacing: Metrics.space1_5) {
+                                    Text("进入拼装")
+                                    Image(systemName: "arrow.right")
+                                }
                             }
                             .buttonStyle(StudioButtonStyle(kind: .primary))
                         }
                         CapabilityReadinessView()
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 300, maximum: 420), spacing: Metrics.space5)], alignment: .leading, spacing: Metrics.space6) {
+                        LazyVGrid(
+                            columns: [GridItem(.adaptive(minimum: 300, maximum: 420), spacing: Metrics.space4)],
+                            alignment: .leading,
+                            spacing: Metrics.space4
+                        ) {
                             ForEach(Array(project.materials.enumerated()), id: \.element.id) { index, material in
-                                MaterialCard(projectID: project.id, material: material, number: index + 1,
-                                             picture: ProjectLayout.picture(material, in: project)) {
+                                MaterialCard(
+                                    projectID: project.id,
+                                    material: material,
+                                    number: index + 1,
+                                    picture: ProjectLayout.picture(material, in: project)
+                                ) {
                                     preview = ProjectLayout.picture(material, in: project)
                                 } onEdit: {
                                     openTimeline(for: material)
@@ -78,12 +100,13 @@ struct RecordStepView: View {
                         }
                     }
                     .frame(maxWidth: Metrics.contentWide, alignment: .leading)
-                    .padding(Metrics.space8)
+                    .padding(.horizontal, Metrics.space6)
+                    .padding(.vertical, Metrics.space5)
                     .frame(maxWidth: .infinity)
                 }
             }
         }
-        .background(palette.bgBase)
+        .background(palette.stage)
         .sheet(isPresented: Binding(get: { preview != nil }, set: { if !$0 { preview = nil } })) {
             if let preview {
                 PreviewSheet(url: preview) { self.preview = nil }
@@ -137,7 +160,7 @@ private struct MaterialCard: View {
                 if material.transcriptState == .running {
                     return ("动效就绪 · \(state.taskPhases[material.mediaID] ?? "识别字幕中")", palette.ai, true)
                 }
-                return ("动效就绪", palette.ai, false)
+                return ("动效就绪", palette.success, false)
             case .idle: break
             }
         }
@@ -149,79 +172,119 @@ private struct MaterialCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Metrics.space2) {
+        VStack(alignment: .leading, spacing: Metrics.space2_5) {
             Button(action: onPreview) {
-                palette.mediaGround
-                    .aspectRatio(16.0 / 9.0, contentMode: .fit)
-                    .overlay {
-                        MaterialThumbnail(url: material.exportState == .complete ? picture : nil)
-                    }
-                    .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusL))
+                ZStack {
+                    palette.mediaGround
+                        .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                        .overlay {
+                            MaterialThumbnail(url: material.exportState == .complete ? picture : nil)
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusM + 2, style: .continuous))
+                }
+                .overlay(alignment: .topLeading) {
+                    Text(String(format: "%02d", number))
+                        .font(.studio(.micro, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(Color.white.opacity(0.9))
+                        .padding(.horizontal, Metrics.space2)
+                        .padding(.vertical, 3)
+                        .background(Color.black.opacity(0.72), in: Capsule())
+                        .padding(Metrics.space2)
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    Text(material.exportState == .complete ? durationLabel(material.timelineDuration) : "—")
+                        .font(.studio(.timecode, weight: .medium))
+                        .monospacedDigit()
+                        .foregroundStyle(Color.white)
+                        .padding(.horizontal, Metrics.space2)
+                        .padding(.vertical, 3)
+                        .background(Color.black.opacity(0.76), in: Capsule())
+                        .padding(Metrics.space2)
+                }
             }
             .buttonStyle(StudioContentButtonStyle())
             .disabled(material.exportState != .complete)
             .accessibilityLabel("预览 \(material.displayTitle(index: number - 1))")
 
-            HStack(spacing: Metrics.space2) {
-                Button {
-                    draftTitle = material.title ?? ""
-                    renaming = true
-                } label: {
-                    Text(material.displayTitle(index: number - 1))
-                        .font(.studio(.bodyLargeMedium))
-                        .lineLimit(1)
-                }
-                .buttonStyle(StudioContentButtonStyle())
-                .help("点击重命名片段")
-                .popover(isPresented: $renaming, arrowEdge: .bottom) {
-                    VStack(alignment: .leading, spacing: Metrics.space3) {
-                        Text("重命名片段").font(.studio(.smallStrong))
-                        TextField("素材 \(number)", text: $draftTitle)
-                            .textFieldStyle(StudioTextFieldStyle())
-                            .onSubmit {
-                                state.renameMaterial(projectID, material.id, title: draftTitle)
-                                renaming = false
-                            }
-                        HStack {
-                            Spacer()
-                            Button { renaming = false } label: { Text(verbatim: "取消") }
-                                .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
-                            Button {
-                                state.renameMaterial(projectID, material.id, title: draftTitle)
-                                renaming = false
-                            } label: { Text(verbatim: "保存") }
-                            .buttonStyle(StudioButtonStyle(kind: .primary, size: .compact))
-                        }
-                    }
-                    .padding(Metrics.space4)
-                    .frame(width: 240)
-                    .background(palette.bgBase)
-                }
-                Spacer(minLength: Metrics.space2)
-                MaterialCardStatus(material: material)
-                Text(material.exportState == .complete ? durationLabel(material.timelineDuration) : "—")
-                    .font(.studio(.timecode)).foregroundStyle(palette.textSecondary)
-                MaterialActionsMenu(projectID: projectID, material: material, onEdit: onEdit)
-            }
-            .frame(height: Metrics.row)
-
-            if let summary = statusSummary {
+            VStack(alignment: .leading, spacing: Metrics.space2) {
                 HStack(spacing: Metrics.space2) {
-                    if summary.spinning {
-                        ProgressView().controlSize(.mini)
+                    Button {
+                        draftTitle = material.title ?? ""
+                        renaming = true
+                    } label: {
+                        Text(material.displayTitle(index: number - 1))
+                            .font(.studio(.bodyMedium))
+                            .foregroundStyle(palette.textPrimary)
+                            .lineLimit(1)
                     }
-                    Text(summary.text)
-                        .font(.studio(.caption))
-                        .foregroundStyle(summary.color)
-                        .lineLimit(1)
+                    .buttonStyle(StudioContentButtonStyle())
+                    .help("点击重命名片段")
+                    .popover(isPresented: $renaming, arrowEdge: .bottom) {
+                        VStack(alignment: .leading, spacing: Metrics.space3) {
+                            Text("重命名片段").font(.studio(.smallStrong))
+                            TextField("素材 \(number)", text: $draftTitle)
+                                .textFieldStyle(StudioTextFieldStyle())
+                                .onSubmit {
+                                    state.renameMaterial(projectID, material.id, title: draftTitle)
+                                    renaming = false
+                                }
+                            HStack {
+                                Spacer()
+                                Button { renaming = false } label: { Text(verbatim: "取消") }
+                                    .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
+                                Button {
+                                    state.renameMaterial(projectID, material.id, title: draftTitle)
+                                    renaming = false
+                                } label: { Text(verbatim: "保存") }
+                                .buttonStyle(StudioButtonStyle(kind: .primary, size: .compact))
+                            }
+                        }
+                        .padding(Metrics.space4)
+                        .frame(width: 240)
+                        .background(palette.island)
+                    }
+                    Spacer(minLength: Metrics.space2)
+                    MaterialCardStatus(material: material)
+                    MaterialActionsMenu(projectID: projectID, material: material, onEdit: onEdit)
+                }
+
+                HStack(spacing: Metrics.space2) {
+                    if let summary = statusSummary {
+                        HStack(spacing: Metrics.space1_5) {
+                            if summary.spinning {
+                                ProgressView().controlSize(.mini)
+                            }
+                            Text(summary.text)
+                                .font(.studio(.caption, weight: .medium))
+                                .foregroundStyle(summary.color)
+                                .lineLimit(1)
+                        }
+                        .padding(.horizontal, Metrics.space2)
+                        .padding(.vertical, 3)
+                        .background(summary.color.opacity(0.14), in: Capsule())
+                    } else {
+                        Text("原片就绪")
+                            .font(.studio(.caption))
+                            .foregroundStyle(palette.textSecondary)
+                            .padding(.horizontal, Metrics.space2)
+                            .padding(.vertical, 3)
+                            .background(palette.controlWell, in: Capsule())
+                    }
                     Spacer(minLength: 0)
                     if material.wantsMotion && material.motionState == .failed {
                         Button("重试动效") { state.enqueueMotion(projectID, material.id) }
-                            .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
+                            .buttonStyle(StudioButtonStyle(kind: .secondary, size: .compact))
+                    } else if material.exportState == .complete {
+                        Button("时间线编辑", action: onEdit)
+                            .buttonStyle(StudioButtonStyle(kind: .secondary, size: .compact))
                     }
                 }
             }
+            .padding(.horizontal, Metrics.space1)
         }
+        .padding(Metrics.space2_5)
+        .studioIsland(cornerRadius: Metrics.radiusIsland)
     }
 }
 
@@ -278,7 +341,7 @@ private struct MaterialCardStatus: View {
                 .padding(Metrics.space4)
                 .frame(width: 320)
                 .frame(maxHeight: 220)
-                .background(palette.bgBase)
+                .background(palette.island)
             }
         } else if material.wantsMotion, material.motionState == .complete {
             Image(systemName: "wand.and.stars")
@@ -297,15 +360,26 @@ private struct MaterialCardStatus: View {
 }
 
 struct PreviewSheet: View {
+    @Environment(\.palette) private var palette
     let url: URL
     let close: () -> Void
     @State private var player = AVPlayer()
     var body: some View {
-        VStack {
-            StudioPlayer(player: player).frame(minWidth: 700, minHeight: 400)
-            Button("关闭", action: close).buttonStyle(StudioButtonStyle()).keyboardShortcut(.cancelAction).padding(Metrics.space3)
-        }.onAppear { player.replaceCurrentItem(with: AVPlayerItem(url: url)) }
-            .onDisappear { player.pause() }
+        VStack(spacing: 0) {
+            StudioPlayer(player: player).frame(minWidth: 720, minHeight: 420)
+            HStack {
+                Spacer()
+                Button("关闭", action: close)
+                    .buttonStyle(StudioButtonStyle(kind: .secondary, size: .compact))
+                    .keyboardShortcut(.cancelAction)
+            }
+            .padding(.horizontal, Metrics.space4)
+            .padding(.vertical, Metrics.space3)
+            .background(palette.island)
+        }
+        .background(palette.island)
+        .onAppear { player.replaceCurrentItem(with: AVPlayerItem(url: url)) }
+        .onDisappear { player.pause() }
     }
 }
 
@@ -325,6 +399,7 @@ struct VideoSurface: NSViewRepresentable {
         nsView.allowsVideoFrameAnalysis = controlsStyle != .none
     }
 }
+
 func durationLabel(_ time: Double) -> String {
     guard time.isFinite else { return "00:00" }
     let seconds = max(0, Int(time))
