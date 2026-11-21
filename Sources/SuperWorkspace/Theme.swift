@@ -160,13 +160,14 @@ enum Metrics {
     static let choice: CGFloat = 36
     static let bar: CGFloat = 42
     static let toggleRow: CGFloat = 46
-    static let header: CGFloat = 80
+    static let header: CGFloat = 56
     static let sidebar: CGFloat = 220
     static let sidebarRail: CGFloat = 56
+    static let libraryDrawer: CGFloat = 220
     static let content: CGFloat = 1000
     static let contentWide: CGFloat = 1200
-    static let inspector: CGFloat = 260
-    static let chatPanel: CGFloat = 340
+    static let inspector: CGFloat = 310
+    static let chatPanel: CGFloat = 310
 
     // opacity-*
     static let opacityPressed: Double = 0.72

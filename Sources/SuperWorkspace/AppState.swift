@@ -318,15 +318,7 @@ final class AppState: ObservableObject {
                     await self.lockCanvas(projectID)
                     self.processMaterial(projectID, id)
                     self.startAIEditing(projectID, id)
-                    if self.selectedProjectID == projectID {
-                        var session = self.editorSession(projectID)
-                        session.stage = .assemble
-                        session.selectedMaterial = id
-                        session.playhead = self.projects.first(where: { $0.id == projectID })?.materials.prefix { $0.id != id }.reduce(0) { $0 + $1.timelineDuration } ?? 0
-                        self.rememberEditor(projectID, session, flush: true)
-                        self.stage = .assemble
-                    }
-                    self.showToast("素材已添加")
+                    self.showToast("素材已添加，后台处理中")
                 }
             case .failure(let error):
                 self.updateMaterial(projectID, id) { $0.exportState = .failed; $0.exportError = error.localizedDescription }
@@ -1315,7 +1307,7 @@ final class AppState: ObservableObject {
         setOrder(projectID, ids)
         return true
     }
-    /// Replaces the cutaways of one clip. Used by the in-app agent.
+    /// Replaces the cutaways of one clip. Used by the in-app agent and timeline.
     @discardableResult
     func setInserts(_ projectID: UUID, _ materialID: UUID, _ inserts: [AIEditing.Insert]) -> Bool {
         guard let (_, material) = pair(projectID, materialID) else { return false }
@@ -1324,6 +1316,72 @@ final class AppState: ObservableObject {
         guard updateMaterial(projectID, materialID, { $0.inserts = inserts.isEmpty ? nil : inserts }) else { return false }
         registerUndo(projectID, name: "调整补充画面") { $0.setInserts(projectID, materialID, old) }
         return true
+    }
+
+    @discardableResult
+    func renameMaterial(_ projectID: UUID, _ materialID: UUID, title: String) -> Bool {
+        guard let (_, material) = pair(projectID, materialID) else { return false }
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let next: String? = trimmed.isEmpty ? nil : trimmed
+        let old = material.title
+        guard old != next else { return true }
+        guard updateMaterial(projectID, materialID, { $0.title = next }) else { return false }
+        registerUndo(projectID, name: "重命名素材") { _ = $0.renameMaterial(projectID, materialID, title: old ?? "") }
+        return true
+    }
+
+    @discardableResult
+    func setMaterialSpeed(_ projectID: UUID, _ materialID: UUID, speed: Double) -> Bool {
+        guard let (_, material) = pair(projectID, materialID), material.sourceReady,
+              speed.isFinite, speed >= 0.5, speed <= 4.0 else { return false }
+        let normalized = (speed * 100).rounded() / 100
+        let next: Double? = abs(normalized - 1.0) < 0.005 ? nil : normalized
+        let old = material.playbackSpeed
+        guard abs(old - (next ?? 1.0)) >= 0.005 else { return true }
+        guard updateMaterial(projectID, materialID, { $0.speed = next }) else { return false }
+        registerUndo(projectID, name: "调整倍速") { _ = $0.setMaterialSpeed(projectID, materialID, speed: old) }
+        return true
+    }
+
+    @discardableResult
+    func addInsert(_ projectID: UUID, _ materialID: UUID, assetID: UUID, start: Double, end: Double, assetStart: Double = 0) -> Bool {
+        guard let (project, material) = pair(projectID, materialID), !project.isFrozen else { return false }
+        let library = Dictionary(uniqueKeysWithValues: project.referenceMedia.map { ($0.id, $0) })
+        guard let reference = library[assetID] else { return false }
+        let maxEnd = reference.kind == .video ? min(material.outPoint, start + max(1.0 / 30, (reference.duration ?? 0) - assetStart)) : material.outPoint
+        let clampedStart = min(max(material.inPoint, start), material.outPoint)
+        let clampedEnd = min(max(clampedStart, end), maxEnd)
+        let candidate = AIEditing.Insert(clipID: material.id, assetID: assetID, start: clampedStart, end: clampedEnd,
+                                         assetStart: reference.kind == .image ? 0 : max(0, assetStart))
+        let combined = (material.inserts ?? []) + [candidate]
+        let validated = AIEditing.validatedInserts(combined, clipID: material.id, clipStart: material.inPoint,
+                                                   clipEnd: material.outPoint, library: library)
+        guard validated.contains(candidate) else { return false }
+        return setInserts(projectID, materialID, validated)
+    }
+
+    @discardableResult
+    func updateInsert(_ projectID: UUID, _ materialID: UUID, index: Int, start: Double, end: Double) -> Bool {
+        guard let (project, material) = pair(projectID, materialID), !project.isFrozen else { return false }
+        var inserts = material.inserts ?? []
+        guard inserts.indices.contains(index) else { return false }
+        let existing = inserts[index]
+        let updated = AIEditing.Insert(clipID: material.id, assetID: existing.assetID, start: start, end: end, assetStart: existing.assetStart)
+        inserts[index] = updated
+        let library = Dictionary(uniqueKeysWithValues: project.referenceMedia.map { ($0.id, $0) })
+        let validated = AIEditing.validatedInserts(inserts, clipID: material.id, clipStart: material.inPoint,
+                                                   clipEnd: material.outPoint, library: library)
+        guard validated.contains(updated) else { return false }
+        return setInserts(projectID, materialID, validated)
+    }
+
+    @discardableResult
+    func removeInsert(_ projectID: UUID, _ materialID: UUID, index: Int) -> Bool {
+        guard let (project, material) = pair(projectID, materialID), !project.isFrozen else { return false }
+        var inserts = material.inserts ?? []
+        guard inserts.indices.contains(index) else { return false }
+        inserts.remove(at: index)
+        return setInserts(projectID, materialID, inserts)
     }
     /// Applies a new instruction and queues a motion re-render. Rendering itself is
     /// not undoable, but the prompt change and every other edit are.

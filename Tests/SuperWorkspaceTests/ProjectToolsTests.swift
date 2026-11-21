@@ -158,4 +158,53 @@ final class ProjectToolsTests: XCTestCase {
             XCTAssertNotNil(message)
         }
     }
+
+    func testClipSpeedRenameAndInsertUpdateRoundTripWithUndo() async throws {
+        try await withStorage { _ in
+            var project = fixture()
+            project.referenceMedia = [ReferenceMedia(name: "diagram.png", kind: .image, description: "结构图")]
+            try ProjectLayout.save(project)
+            let state = AppState()
+            state.select(project.id)
+
+            _ = try success(run("clip_rename", ["clip": .number(1), "title": .string("开场")], project: project, state: state))
+            var saved = try XCTUnwrap(ProjectLayout.loadAll().first)
+            XCTAssertEqual(saved.materials[0].displayTitle(index: 0), "开场")
+
+            // Resolve clip by custom title and set 2x speed.
+            _ = try success(run("clip_speed", ["clip": .string("开场"), "speed": .number(2.0)], project: saved, state: state))
+            saved = try XCTUnwrap(ProjectLayout.loadAll().first)
+            XCTAssertEqual(saved.materials[0].playbackSpeed, 2.0, accuracy: 0.001)
+            XCTAssertEqual(saved.materials[0].timelineDuration, saved.materials[0].duration / 2.0, accuracy: 0.001)
+            XCTAssertEqual(saved.materials[0].visibleSubtitles.first?.end ?? 0, 1.5, accuracy: 0.001)
+
+            // Undo restores 1x speed.
+            state.undo()
+            saved = try XCTUnwrap(ProjectLayout.loadAll().first)
+            XCTAssertEqual(saved.materials[0].playbackSpeed, 1.0, accuracy: 0.001)
+
+            // Add and update insert.
+            _ = try success(run("insert_add", [
+                "clip": .number(1), "asset": .number(1), "start": .number(1), "end": .number(3),
+            ], project: saved, state: state))
+            saved = try XCTUnwrap(ProjectLayout.loadAll().first)
+            _ = try success(run("insert_update", [
+                "clip": .number(1), "index": .number(1), "start": .number(2), "end": .number(5),
+            ], project: saved, state: state))
+            saved = try XCTUnwrap(ProjectLayout.loadAll().first)
+            XCTAssertEqual(saved.materials[0].inserts?.first?.start ?? 0, 2.0, accuracy: 0.001)
+            XCTAssertEqual(saved.materials[0].inserts?.first?.end ?? 0, 5.0, accuracy: 0.001)
+        }
+    }
+
+    func testPreviewInputsIgnoreSubtitleTextChangesButTrackSpeedAndInserts() {
+        var project = fixture()
+        let initial = AssemblyPreviewInputs(project: project)
+
+        project.materials[0].subtitles[0].text = "修改后的字幕"
+        XCTAssertEqual(AssemblyPreviewInputs(project: project), initial)
+
+        project.materials[0].speed = 1.5
+        XCTAssertNotEqual(AssemblyPreviewInputs(project: project), initial)
+    }
 }

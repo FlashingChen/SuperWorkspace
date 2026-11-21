@@ -159,7 +159,9 @@ final class AssemblyAgent: ObservableObject {
         append(.init(role: .notice, text: "已停止当前操作。"))
     }
 
-    func send(_ text: String) {
+    private var pendingContextNote: String?
+
+    func send(_ text: String, contextNote: String? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isBusy else { return }
         startIfNeeded()
@@ -168,19 +170,25 @@ final class AssemblyAgent: ObservableObject {
         guard started else { return }
         guard isReady else {
             pendingText = trimmed
+            pendingContextNote = contextNote
             return
         }
-        deliver(trimmed)
+        deliver(trimmed, contextNote: contextNote)
     }
 
-    private func deliver(_ text: String) {
+    private func deliver(_ text: String, contextNote: String? = nil) {
         messages.append(.init(role: .user, text: text))
         persist()
         isBusy = true
         streaming = ""
         activity = nil
         failure = nil
-        sendLine(["type": "prompt", "id": nextPromptID, "text": text])
+        let payload = if let contextNote, !contextNote.isEmpty {
+            "[\(contextNote)]\n\(text)"
+        } else {
+            text
+        }
+        sendLine(["type": "prompt", "id": nextPromptID, "text": payload])
         nextPromptID += 1
     }
 
@@ -207,8 +215,10 @@ final class AssemblyAgent: ObservableObject {
             failure = nil
             activity = nil
             if let pending = pendingText {
+                let context = pendingContextNote
                 pendingText = nil
-                deliver(pending)
+                pendingContextNote = nil
+                deliver(pending, contextNote: context)
             }
         case "delta":
             if let delta = event["text"] as? String { streaming += delta }
@@ -303,6 +313,8 @@ final class AssemblyAgent: ObservableObject {
         case "clip_split": label = "分割片段"
         case "clip_move": label = "移动片段"
         case "clip_remove": label = "删除片段"
+        case "clip_speed": label = "调整倍速"
+        case "clip_rename": label = "重命名片段"
         case "subtitle_update": label = "修改字幕"
         case "subtitle_insert": label = "新增字幕"
         case "subtitle_delete": label = "删除字幕"
@@ -311,6 +323,7 @@ final class AssemblyAgent: ObservableObject {
         case "subtitle_move": label = "调整字幕时间"
         case "canvas_set": label = "设置画幅"
         case "insert_add": label = "添加补充画面"
+        case "insert_update": label = "调整补充画面"
         case "insert_remove": label = "移除补充画面"
         case "motion_regenerate": label = "重做动效"
         case "job_status": label = "查询任务"
@@ -326,7 +339,8 @@ final class AssemblyAgent: ObservableObject {
 
         工作方式：
         - 动手前先调用 project_read 看当前状态。不要凭空猜片段、字幕序号或时间。
-        - 用户说「素材一」「第一段」时指 clips 里 index 为 1 的片段；说「第 12 秒」时先判断是成片时间（timelineStart）还是原视频时间（in/out），不确定就按成片时间理解并在回复里说明。
+        - 如果用户消息开头附带了「编辑器焦点」信息（如当前播放头、当前选中的片段或字幕），用户说「这里」「这段」「这条」时优先按该焦点理解。
+        - 用户说「素材一」「第一段」或片段名称时，对应 project_read 返回的 clips；说「第 12 秒」时先判断是成片时间（timelineStart）还是原视频时间（in/out），不确定就按成片时间理解并在回复里说明。
         - 每次修改只调用需要的工具，看返回值确认成功；失败就换一种做法或直接告诉用户原因。
         - 动效重做（motion_regenerate）是后台渲染，耗时几分钟到几十分钟。调用后告诉用户已开始，可以用 job_status 查询；不要假装已经完成。
         - 所有修改都可以被用户撤销，所以可以大胆执行明确的指令；但删除片段、删除字幕这类破坏性操作要先确认一次。

@@ -25,6 +25,10 @@ enum ProjectTools {
             return move(call.args, project: project, state: state)
         case "clip_remove":
             return remove(call.args, project: project, state: state)
+        case "clip_speed":
+            return setSpeed(call.args, project: project, state: state)
+        case "clip_rename":
+            return rename(call.args, project: project, state: state)
         case "subtitle_update":
             return updateSubtitle(call.args, project: project, state: state)
         case "subtitle_insert":
@@ -41,6 +45,8 @@ enum ProjectTools {
             return setCanvas(call.args, project: project, state: state)
         case "insert_add":
             return addInsert(call.args, project: project, state: state)
+        case "insert_update":
+            return updateInsert(call.args, project: project, state: state)
         case "insert_remove":
             return removeInsert(call.args, project: project, state: state)
         case "motion_regenerate":
@@ -59,9 +65,10 @@ enum ProjectTools {
         let clips = project.materials.enumerated().map { index, material -> JSONValue in
             let timelineStart = offset
             offset += material.timelineDuration
+            let rate = material.playbackSpeed
             let subtitles = material.subtitles.enumerated().map { subtitleIndex, subtitle -> JSONValue in
-                let localStart = max(material.inPoint, subtitle.start) - material.inPoint
-                let localEnd = min(material.outPoint, subtitle.end) - material.inPoint
+                let localStart = (max(material.inPoint, subtitle.start) - material.inPoint) / rate
+                let localEnd = (min(material.outPoint, subtitle.end) - material.inPoint) / rate
                 return .object([
                     ("index", .number(Double(subtitleIndex + 1))),
                     ("start", .number(rounded(subtitle.start))),
@@ -84,10 +91,12 @@ enum ProjectTools {
             return .object([
                 ("index", .number(Double(index + 1))),
                 ("id", .string(material.id.uuidString)),
+                ("title", .string(material.displayTitle(index: index))),
                 ("label", .string("素材\(chineseNumeral(index + 1))")),
                 ("sourceDuration", .number(rounded(material.duration))),
                 ("in", .number(rounded(material.inPoint))),
                 ("out", .number(rounded(material.outPoint))),
+                ("speed", .number(rounded(rate))),
                 ("timelineStart", .number(rounded(timelineStart))),
                 ("timelineDuration", .number(rounded(material.timelineDuration))),
                 ("readiness", .string(material.sourceReady ? "ready" : "processing")),
@@ -285,6 +294,57 @@ enum ProjectTools {
         ]))
     }
 
+    private static func setSpeed(_ args: [String: JSONValue], project: VideoProject, state: AppState) -> ProjectToolOutcome {
+        guard let material = resolveClip(args, in: project) else { return .failure("未找到片段。") }
+        guard !project.isFrozen else { return .failure("项目已冻结，先取消冻结再修改。") }
+        guard let speed = args["speed"]?.numberValue, speed.isFinite, speed >= 0.5, speed <= 4.0 else {
+            return .failure("倍速需在 0.5 到 4.0 之间。")
+        }
+        guard state.setMaterialSpeed(project.id, material.id, speed: speed) else {
+            return .failure("无法调整倍速。")
+        }
+        let updated = current(material.id, projectID: project.id, state: state)
+        return .success(.object([
+            ("result", .string("speed")),
+            ("clip", .string(material.id.uuidString)),
+            ("speed", .number(rounded(updated?.playbackSpeed ?? speed))),
+            ("timelineDuration", .number(rounded(updated?.timelineDuration ?? material.timelineDuration))),
+        ]))
+    }
+
+    private static func rename(_ args: [String: JSONValue], project: VideoProject, state: AppState) -> ProjectToolOutcome {
+        guard let material = resolveClip(args, in: project) else { return .failure("未找到片段。") }
+        guard let title = args["title"]?.stringValue else { return .failure("请提供新的片段名称。") }
+        guard state.renameMaterial(project.id, material.id, title: title) else { return .failure("无法重命名片段。") }
+        let index = project.materials.firstIndex { $0.id == material.id } ?? 0
+        let updated = current(material.id, projectID: project.id, state: state)
+        return .success(.object([
+            ("result", .string("renamed")),
+            ("clip", .string(material.id.uuidString)),
+            ("title", .string(updated?.displayTitle(index: index) ?? title)),
+        ]))
+    }
+
+    private static func updateInsert(_ args: [String: JSONValue], project: VideoProject, state: AppState) -> ProjectToolOutcome {
+        guard let material = resolveClip(args, in: project) else { return .failure("未找到片段。") }
+        guard !project.isFrozen else { return .failure("项目已冻结，先取消冻结再修改。") }
+        guard let index = args["index"]?.intValue, index >= 1, index <= (material.inserts ?? []).count else {
+            return .failure("补充画面序号超出范围。")
+        }
+        let existing = (material.inserts ?? [])[index - 1]
+        let start = args["start"]?.numberValue ?? existing.start
+        let end = args["end"]?.numberValue ?? existing.end
+        guard state.updateInsert(project.id, material.id, index: index - 1, start: start, end: end) else {
+            return .failure("补充画面时间不合法或与已有补充画面重叠。")
+        }
+        return .success(.object([
+            ("clip", .string(material.id.uuidString)),
+            ("index", .number(Double(index))),
+            ("start", .number(rounded(start))),
+            ("end", .number(rounded(end))),
+        ]))
+    }
+
     private static func removeInsert(_ args: [String: JSONValue], project: VideoProject, state: AppState) -> ProjectToolOutcome {
         guard let material = resolveClip(args, in: project) else { return .failure("未找到片段。") }
         guard !project.isFrozen else { return .failure("项目已冻结，先取消冻结再修改。") }
@@ -338,6 +398,9 @@ enum ProjectTools {
         if let text = value.stringValue {
             if let uuid = UUID(uuidString: text) {
                 return project.materials.first { $0.id == uuid || $0.mediaID == uuid }
+            }
+            if let byTitle = project.materials.first(where: { $0.title?.trimmingCharacters(in: .whitespacesAndNewlines) == text.trimmingCharacters(in: .whitespacesAndNewlines) }) {
+                return byTitle
             }
             let digits = text.filter(\.isNumber)
             if let index = Int(digits), index >= 1, index <= project.materials.count {

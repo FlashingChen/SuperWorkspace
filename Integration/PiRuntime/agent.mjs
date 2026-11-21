@@ -109,6 +109,14 @@ const buildTools = () => [
     position: Type.Number({description: '目标位置，1 开始'}),
   })),
   tool('clip_remove', '删除片段', '从项目中移除一个片段，可用撤销恢复。', Type.Object({clip: clipArgument()})),
+  tool('clip_speed', '调整倍速', '设置片段的播放倍速（0.5 到 4.0，1.0 为原速）。若只想加速局部，先用 clip_split 切分后再对目标段调速。', Type.Object({
+    clip: clipArgument(),
+    speed: Type.Number({description: '播放倍速，范围 0.5 到 4.0'}),
+  })),
+  tool('clip_rename', '重命名片段', '给片段设置可读名称，便于识别。', Type.Object({
+    clip: clipArgument(),
+    title: Type.String({description: '片段名称，留空恢复默认编号'}),
+  })),
   tool('subtitle_update', '修改字幕文字', '把某条字幕的文字改成 text。index 从 1 开始，与 project_read 返回的序号一致。', Type.Object({
     clip: clipArgument(),
     index: Type.Number({description: '字幕序号，1 开始'}),
@@ -148,6 +156,12 @@ const buildTools = () => [
     start: Type.Number({description: '开始时间（原视频秒数）'}),
     end: Type.Number({description: '结束时间（原视频秒数）'}),
     assetStart: Type.Optional(Type.Number({description: '补充视频的起播时间，图片固定 0'})),
+  })),
+  tool('insert_update', '调整补充画面', '修改片段上已有补充画面的起止时间（原视频秒数）。', Type.Object({
+    clip: clipArgument(),
+    index: Type.Number({description: '补充画面序号，1 开始'}),
+    start: Type.Optional(Type.Number({description: '新的开始时间（原视频秒数）'})),
+    end: Type.Optional(Type.Number({description: '新的结束时间（原视频秒数）'})),
   })),
   tool('insert_remove', '移除补充画面', '移除片段上的一条补充画面。', Type.Object({
     clip: clipArgument(),

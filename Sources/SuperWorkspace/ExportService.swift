@@ -54,9 +54,16 @@ enum ExportService {
             let start = CMTime(seconds: material.inPoint, preferredTimescale: 600)
             let end = min(duration.seconds, material.outPoint)
             guard end > material.inPoint else { throw failure("素材裁剪范围无效。") }
+            let rate = material.playbackSpeed
             let range = CMTimeRange(start: start, duration: CMTime(seconds: end - material.inPoint, preferredTimescale: 600))
+            let scaledDuration = abs(rate - 1.0) > 0.001
+                ? CMTime(seconds: (end - material.inPoint) / rate, preferredTimescale: 600)
+                : range.duration
             guard let video = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else { throw failure("无法创建视频轨道。") }
             try video.insertTimeRange(range, of: source, at: cursor)
+            if abs(rate - 1.0) > 0.001 {
+                video.scaleTimeRange(CMTimeRange(start: cursor, duration: range.duration), toDuration: scaledDuration)
+            }
             if let audioSource = try await asset.loadTracks(withMediaType: .audio).first {
                 let audioRange = try await audioSource.load(.timeRange)
                 let available = CMTimeRangeGetIntersection(range, otherRange: audioRange)
@@ -65,7 +72,16 @@ enum ExportService {
                     // a track per clip turns every other clip into silence in single-track players.
                     let audio = audioTrack ?? composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
                     audioTrack = audio
-                    try audio?.insertTimeRange(available, of: audioSource, at: CMTimeAdd(cursor, CMTimeSubtract(available.start, start)))
+                    let audioOffset = CMTimeSubtract(available.start, start)
+                    let scaledAudioOffset = abs(rate - 1.0) > 0.001
+                        ? CMTime(seconds: audioOffset.seconds / rate, preferredTimescale: 600)
+                        : audioOffset
+                    let audioInsertAt = CMTimeAdd(cursor, scaledAudioOffset)
+                    try audio?.insertTimeRange(available, of: audioSource, at: audioInsertAt)
+                    if abs(rate - 1.0) > 0.001 {
+                        let scaledAudioDuration = CMTime(seconds: available.duration.seconds / rate, preferredTimescale: 600)
+                        audio?.scaleTimeRange(CMTimeRange(start: audioInsertAt, duration: available.duration), toDuration: scaledAudioDuration)
+                    }
                 }
             }
             let fit = fittedTransform(bounds: bounds, transform: transform, canvas: renderSize)
@@ -75,9 +91,9 @@ enum ExportService {
                                                      clipEnd: end, library: library) {
                 guard let reference = library[insert.assetID] else { continue }
                 let url = ProjectLayout.reference(reference, in: project)
-                let start = CMTime(seconds: insert.start - material.inPoint, preferredTimescale: 600)
-                let duration = CMTime(seconds: insert.end - insert.start, preferredTimescale: 600)
-                let cutawayRange = CMTimeRange(start: cursor + start, duration: duration)
+                let insertStart = CMTime(seconds: (insert.start - material.inPoint) / rate, preferredTimescale: 600)
+                let insertDuration = CMTime(seconds: (insert.end - insert.start) / rate, preferredTimescale: 600)
+                let cutawayRange = CMTimeRange(start: cursor + insertStart, duration: insertDuration)
                 cutaways.append(try await cutaway(url, kind: reference.kind, range: cutawayRange,
                                                   assetStart: insert.assetStart ?? 0, canvas: renderSize, composition: composition))
             }
@@ -87,9 +103,9 @@ enum ExportService {
                 return SubtitleOverlay(start: cursor.seconds + subtitle.start, end: cursor.seconds + subtitle.end,
                                        image: caption.image, frame: caption.frame)
             } : []
-            instructions.append(AssemblyInstruction(range: CMTimeRange(start: cursor, duration: range.duration),
+            instructions.append(AssemblyInstruction(range: CMTimeRange(start: cursor, duration: scaledDuration),
                 trackID: video.trackID, transform: fit, overlays: overlays, cutaways: cutaways))
-            cursor = CMTimeAdd(cursor, range.duration)
+            cursor = CMTimeAdd(cursor, scaledDuration)
         }
         let videoComposition = AVMutableVideoComposition()
         videoComposition.customVideoCompositorClass = AssemblyCompositor.self
@@ -267,6 +283,7 @@ enum ExportService {
         if inserts.isEmpty,
            project.materials.count == 1, !project.includeSubtitles,
            let material = project.materials.first,
+           abs(material.playbackSpeed - 1.0) <= 0.001,
            material.inPoint <= 0.001, abs(material.outPoint - material.duration) <= 0.001,
            await matchesExportCanvas(ProjectLayout.picture(material, in: project), project: project) {
             try Task.checkCancellation()

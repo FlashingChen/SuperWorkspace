@@ -6,6 +6,7 @@ enum JobState: String, Codable { case idle, queued, running, complete, failed }
 struct Material: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var createdAt = Date()
+    var title: String?
     var duration: Double = 0
     var wantsMotion = false
     var exportState: JobState = .running
@@ -32,16 +33,29 @@ struct Material: Identifiable, Codable, Equatable, Sendable {
     var useOriginal: Bool?
     var trimStart: Double?
     var trimEnd: Double?
+    /// Playback speed multiplier for this clip (`0.5...4.0`, default `1.0`).
+    var speed: Double?
 
     var sourceReady: Bool { duration.isFinite && duration > 0 && exportState == .complete }
     var inPoint: Double { min(max(0, trimStart ?? 0), max(0, duration)) }
     var outPoint: Double { min(duration, max(inPoint, trimEnd ?? duration)) }
-    var timelineDuration: Double { sourceReady ? max(0, outPoint - inPoint) : 0 }
+    var playbackSpeed: Double {
+        guard let speed, speed.isFinite, speed > 0 else { return 1.0 }
+        return min(4.0, max(0.5, speed))
+    }
+    var timelineDuration: Double { sourceReady ? max(0, (outPoint - inPoint) / playbackSpeed) : 0 }
     var visibleSubtitles: [TranscriptSegment] {
-        subtitles.compactMap {
+        let rate = playbackSpeed
+        return subtitles.compactMap {
             let start = max(inPoint, $0.start), end = min(outPoint, $0.end)
-            return end > start ? TranscriptSegment(start: start - inPoint, end: end - inPoint, text: $0.text) : nil
+            return end > start ? TranscriptSegment(start: (start - inPoint) / rate, end: (end - inPoint) / rate, text: $0.text) : nil
         }
+    }
+    func displayTitle(index: Int) -> String {
+        if let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty {
+            return trimmed
+        }
+        return "素材 \(index + 1)"
     }
 
     var isReady: Bool {

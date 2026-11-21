@@ -7,15 +7,13 @@ struct MovieExportSheet: View {
     let project: VideoProject
     @State private var burnIn = true
     @State private var separateSRT = false
-    @ObservedObject private var settings = SettingsStore.shared
-    @State private var aiEditing = false
     @State private var canvas = "current"
 
     private var configured: VideoProject {
         var copy = state.projects.first(where: { $0.id == project.id }) ?? project
         copy.includeSubtitles = burnIn
         copy.exportSRT = separateSRT
-        copy.exportWithAIEditing = aiEditing
+        copy.exportWithAIEditing = false
         switch canvas {
         case "landscape": copy.canvasWidth = 1920; copy.canvasHeight = 1080
         case "portrait": copy.canvasWidth = 1080; copy.canvasHeight = 1920
@@ -25,7 +23,6 @@ struct MovieExportSheet: View {
         }
         return copy
     }
-    private var needsAIConnection: Bool { aiEditing && !settings.hasAIConnection }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Metrics.space6) {
@@ -49,13 +46,6 @@ struct MovieExportSheet: View {
                     .help("SRT 保存文字与时间码；画面中的字幕样式通过嵌入字幕保留。")
             }
             .toggleStyle(StudioToggleStyle())
-            Toggle("AI 剪辑", isOn: $aiEditing)
-                .help("参考片段字幕和粗剪后的提示词，并从素材库选用补充画面。")
-                .toggleStyle(StudioToggleStyle())
-            if needsAIConnection {
-                Text("请先在设置中连接 AI，或关闭 AI 选项后导出。")
-                    .font(.studio(.small)).foregroundStyle(palette.textSecondary)
-            }
             if !configured.canExport {
                 Text(configured.materials.contains(where: { !$0.isReady }) ? "请先完成素材导出或移除失败素材。" : "字幕仍在处理，可等待完成，或关闭字幕选项后导出视频。")
                     .font(.studio(.small)).foregroundStyle(palette.textSecondary)
@@ -67,18 +57,18 @@ struct MovieExportSheet: View {
                 Spacer()
                 Button {
                     let output = configured
-                    guard output.canExport, !needsAIConnection else { return }
+                    guard output.canExport else { return }
                     if state.updateProject(project.id, { saved in
                         saved.includeSubtitles = output.includeSubtitles; saved.exportSRT = output.exportSRT
                         saved.canvasWidth = output.canvasWidth; saved.canvasHeight = output.canvasHeight
-                        saved.exportWithAIEditing = output.exportWithAIEditing
+                        saved.exportWithAIEditing = false
                     }) {
                         state.export(projectID: project.id)
                         dismiss()
                     }
                 } label: { Label { Text(verbatim: "导出成片") } icon: { Image(systemName: "arrow.up.right") } }
                     .buttonStyle(StudioButtonStyle(kind: .primary)).keyboardShortcut(.defaultAction)
-                    .disabled(needsAIConnection || !configured.canExport || state.exportingProjects.contains(project.id))
+                    .disabled(!configured.canExport || state.exportingProjects.contains(project.id))
             }
         }
         .padding(Metrics.space7).frame(width: 520)
@@ -87,7 +77,6 @@ struct MovieExportSheet: View {
         .onAppear {
             burnIn = project.includeSubtitles
             separateSRT = project.exportSRT ?? false
-            aiEditing = project.exportWithAIEditing ?? false
         }
     }
 

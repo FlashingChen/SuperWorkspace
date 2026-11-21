@@ -6,16 +6,17 @@ struct AssemblyChatPanel: View {
     @Environment(\.palette) private var palette
     let project: VideoProject
     @ObservedObject var agent: AssemblyAgent
-    let onClose: () -> Void
+    var focusContext: String? = nil
+    var onClose: (() -> Void)? = nil
 
     @State private var draft = ""
     @FocusState private var composerFocused: Bool
 
     private let examples = [
-        "素材一 12 到 18 秒的动画不好看，重做一下",
+        "把当前选中的片段加速到 1.5 倍",
+        "在当前位置插入素材库第 1 张图，显示 3 秒",
+        "把素材一 12 到 18 秒的动效重做一下",
         "把素材二前 3 秒剪掉",
-        "第 1 段第 2 条字幕改成「我们继续」",
-        "把素材三移到最前面",
     ]
 
     var body: some View {
@@ -29,10 +30,6 @@ struct AssemblyChatPanel: View {
         .background(palette.bgBase)
         .onAppear {
             agent.startIfNeeded()
-            Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(150))
-                composerFocused = true
-            }
         }
     }
 
@@ -42,15 +39,17 @@ struct AssemblyChatPanel: View {
                 .font(.studio(.small, weight: .semibold))
                 .foregroundStyle(palette.ai)
                 .accessibilityHidden(true)
-            Text("AI 剪辑助手").font(.studio(.subhead))
+            Text("AI 剪辑助手").font(.studio(.smallStrong))
             Spacer()
-            Text(status).font(.studio(.small)).foregroundStyle(statusColor)
-            Button(action: onClose) { Image(systemName: "xmark") }
-                .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
-                .accessibilityLabel("关闭 AI 面板")
+            Text(status).font(.studio(.caption)).foregroundStyle(statusColor)
+            if let onClose {
+                Button(action: onClose) { Image(systemName: "xmark") }
+                    .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
+                    .accessibilityLabel("关闭 AI 面板")
+            }
         }
         .padding(.horizontal, Metrics.space3)
-        .frame(height: Metrics.bar)
+        .frame(height: Metrics.row)
     }
 
     private var conversation: some View {
@@ -154,6 +153,19 @@ struct AssemblyChatPanel: View {
 
     private var composer: some View {
         VStack(spacing: Metrics.space2) {
+            if let focusContext, !focusContext.isEmpty {
+                HStack(spacing: Metrics.space1_5) {
+                    Image(systemName: "scope")
+                        .font(.studio(.micro))
+                        .foregroundStyle(palette.accent)
+                        .accessibilityHidden(true)
+                    Text(focusContext)
+                        .font(.studio(.caption))
+                        .foregroundStyle(palette.textSecondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+            }
             HStack(alignment: .bottom, spacing: Metrics.space2) {
                 TextField("说要改什么…", text: $draft, axis: .vertical)
                     .textFieldStyle(StudioTextFieldStyle())
@@ -167,8 +179,8 @@ struct AssemblyChatPanel: View {
                 .disabled(!agent.isBusy && draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .accessibilityLabel(agent.isBusy ? "停止" : "发送")
             }
-            Text("修改会立即应用，可用⌘Z撤销")
-                .font(.studio(.small))
+            Text("修改实时落到时间线，可用 ⌘Z 撤销")
+                .font(.studio(.caption))
                 .foregroundStyle(palette.textMuted)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -179,7 +191,7 @@ struct AssemblyChatPanel: View {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !agent.isBusy else { return }
         draft = ""
-        agent.send(text)
+        agent.send(text, contextNote: focusContext)
     }
 
     private func scroll(_ proxy: ScrollViewProxy, animated: Bool = true) {

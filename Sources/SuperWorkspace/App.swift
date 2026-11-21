@@ -75,6 +75,9 @@ struct RootView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .onChange(of: state.stage) { _, next in
+            if next == .assemble { projectPanelExpanded = false }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
             state.shutdownAssemblyAgents()
             state.saveSession()
@@ -180,28 +183,83 @@ struct RootView: View {
                     .lineLimit(1).frame(maxWidth: 180, alignment: .leading)
                 Spacer()
                 if let project = state.currentProject {
-                    Button { state.stage = .library } label: {
-                        Label("素材库", systemImage: "photo.on.rectangle")
-                            .font(.studio(.bodyMedium))
-                            .padding(.horizontal, Metrics.space3)
-                            .frame(height: Metrics.choice)
+                    let activeCount = activeBackgroundJobCount(for: project)
+                    if activeCount > 0 {
+                        Button { state.stage = .record } label: {
+                            HStack(spacing: Metrics.space1_5) {
+                                ProgressView().controlSize(.mini)
+                                Text("\(activeCount) 项后台处理中")
+                            }
+                        }
+                        .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
+                        .help("查看后台动效与字幕任务")
                     }
-                    .buttonStyle(StudioSelectionStyle(selected: state.stage == .library))
-                    .accessibilityAddTraits(state.stage == .library ? .isSelected : [])
+                    if state.stage == .assemble {
+                        canvasMenu(for: project)
+                    } else {
+                        Button { state.stage = .library } label: {
+                            Label("素材库", systemImage: "photo.on.rectangle")
+                                .font(.studio(.bodyMedium))
+                                .padding(.horizontal, Metrics.space3)
+                                .frame(height: Metrics.choice)
+                        }
+                        .buttonStyle(StudioSelectionStyle(selected: state.stage == .library))
+                        .accessibilityAddTraits(state.stage == .library ? .isSelected : [])
+                    }
                     ProjectActionsMenu(project: project)
                 }
                 if let project = state.currentProject, state.stage == .assemble {
                     Button { showExport = true } label: {
                         Label { Text(verbatim: state.exportingProjects.contains(project.id) ? "正在导出" : "导出成片") } icon: { Image(systemName: "arrow.up.right") }
                     }
-                    .buttonStyle(StudioButtonStyle(kind: .primary))
+                    .buttonStyle(StudioButtonStyle(kind: .primary, size: .compact))
                     .disabled(project.materials.isEmpty || project.isFrozen || state.exportingProjects.contains(project.id))
                     .help(project.isFrozen ? "项目已冻结，取消冻结后再导出成片" : "导出成片")
                 }
 
             }
         }
-        .padding(.horizontal, Metrics.space6).frame(height: Metrics.header)
+        .padding(.horizontal, Metrics.space5).frame(height: Metrics.header)
+    }
+
+    private func activeBackgroundJobCount(for project: VideoProject) -> Int {
+        var seen: Set<UUID> = []
+        var count = 0
+        for material in project.materials where seen.insert(material.mediaID).inserted {
+            if material.exportState == .running || material.transcriptState == .running
+                || (material.wantsMotion && [.queued, .running].contains(material.motionState)) {
+                count += 1
+            }
+        }
+        return count
+    }
+
+    private func canvasLabel(for project: VideoProject) -> String {
+        guard let w = project.canvasWidth, let h = project.canvasHeight else { return "跟随素材" }
+        if Int(w) == 1920 && Int(h) == 1080 { return "16:9" }
+        if Int(w) == 1080 && Int(h) == 1920 { return "9:16" }
+        if Int(w) == 1080 && Int(h) == 1080 { return "1:1" }
+        return "\(Int(w))×\(Int(h))"
+    }
+
+    private func canvasMenu(for project: VideoProject) -> some View {
+        Menu {
+            Button("横屏 16:9（1920 × 1080）") { state.setCanvas(project.id, width: 1920, height: 1080) }
+            Button("竖屏 9:16（1080 × 1920）") { state.setCanvas(project.id, width: 1080, height: 1920) }
+            Button("方形 1:1（1080 × 1080）") { state.setCanvas(project.id, width: 1080, height: 1080) }
+            Divider()
+            Button("跟随素材") { state.setCanvas(project.id, width: nil, height: nil) }
+        } label: {
+            Label(canvasLabel(for: project), systemImage: "aspectratio")
+                .font(.studio(.small, weight: .medium))
+                .padding(.horizontal, Metrics.space2)
+                .frame(height: Metrics.controlCompact)
+        }
+        .menuStyle(StudioMenuStyle())
+        .fixedSize()
+        .disabled(project.isFrozen)
+        .help("切换成片画幅")
+        .accessibilityLabel("成片画幅：\(canvasLabel(for: project))")
     }
 
     private func frozenNotice(_ project: VideoProject) -> some View {
