@@ -46,6 +46,7 @@ struct RootView: View {
     @AppStorage("projectPanelExpanded") private var projectPanelExpanded = true
     @State private var showNew = false
     @State private var showExport = false
+    @State private var showLibrary = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -61,7 +62,7 @@ struct RootView: View {
                             Group {
                                 switch state.stage {
                                 case .record: RecordStepView(project: project)
-                                case .assemble: AssemblyView(project: project)
+                                case .assemble: AssemblyView(project: project, onOpenLibrary: { showLibrary = true })
                                 case .library: ProjectMediaLibrary(projectID: project.id)
                                 }
                             }
@@ -88,6 +89,26 @@ struct RootView: View {
         .sheet(isPresented: $showNew) { NewProjectSheet().environmentObject(state) }
         .sheet(isPresented: $showExport) {
             if let project = state.currentProject { MovieExportSheet(project: project).environmentObject(state) }
+        }
+        .sheet(isPresented: $showLibrary) {
+            if let project = state.currentProject {
+                VStack(spacing: 0) {
+                    ProjectMediaLibrary(projectID: project.id)
+                        .environmentObject(state)
+                    Divider()
+                    HStack {
+                        Spacer()
+                        Button("完成") { showLibrary = false }
+                            .buttonStyle(StudioButtonStyle(kind: .primary, size: .compact))
+                            .keyboardShortcut(.cancelAction)
+                    }
+                    .padding(.horizontal, Metrics.space5)
+                    .frame(height: Metrics.bar)
+                    .background(palette.bgBase)
+                }
+                .frame(minWidth: 720, idealWidth: 820, minHeight: 480, idealHeight: 560)
+                .background(palette.bgBase)
+            }
         }
         .overlay(alignment: .bottomTrailing) {
             if let toast = state.toast {
@@ -155,71 +176,78 @@ struct RootView: View {
     }
 
     private var workspaceHeader: some View {
-        ZStack {
-            HStack(spacing: Metrics.space2_5) {
+        HStack(spacing: Metrics.space3) {
+            Text(state.currentProject?.name ?? "项目库")
+                .font(.studio(.bodyMedium))
+                .foregroundStyle(palette.textSecondary)
+                .lineLimit(1)
+                .frame(maxWidth: 180, alignment: .leading)
+
+            Spacer(minLength: Metrics.space2)
+
+            HStack(spacing: Metrics.space2) {
                 ForEach(Array([WorkStage.record, .assemble].enumerated()), id: \.element) { index, stage in
                     if index > 0 {
                         Image(systemName: "arrow.right")
-                            .font(.system(size: 14, weight: .light))
+                            .font(.system(size: 12, weight: .light))
                             .foregroundStyle(palette.textMuted).accessibilityHidden(true)
                     }
                     Button { state.stage = stage } label: {
-                        HStack(spacing: Metrics.space2) {
+                        HStack(spacing: Metrics.space1_5) {
                             Text("\(index + 1)").monospacedDigit()
                             Text(stage.rawValue)
                         }
-                        .font(.studio(.bodyMedium))
-                        .padding(.horizontal, Metrics.space6).frame(height: Metrics.choice)
+                        .font(.studio(.small, weight: .medium))
+                        .padding(.horizontal, Metrics.space4)
+                        .frame(height: Metrics.controlCompact)
                     }
-                    .buttonStyle(StudioSelectionStyle(selected: state.currentProject != nil && state.stage == stage, cornerRadius: Metrics.choice / 2))
+                    .buttonStyle(StudioSelectionStyle(selected: state.currentProject != nil && state.stage == stage, cornerRadius: Metrics.controlCompact / 2))
                     .accessibilityAddTraits(state.currentProject != nil && state.stage == stage ? .isSelected : [])
                     .disabled(state.currentProject == nil)
                 }
             }
-            HStack {
-                Text(state.currentProject?.name ?? "项目库")
-                    .font(.studio(.bodyMedium))
-                    .foregroundStyle(palette.textSecondary)
-                    .lineLimit(1).frame(maxWidth: 180, alignment: .leading)
-                Spacer()
+
+            Spacer(minLength: Metrics.space2)
+
+            HStack(spacing: Metrics.space2) {
                 if let project = state.currentProject {
                     let activeCount = activeBackgroundJobCount(for: project)
                     if activeCount > 0 {
                         Button { state.stage = .record } label: {
                             HStack(spacing: Metrics.space1_5) {
                                 ProgressView().controlSize(.mini)
-                                Text("\(activeCount) 项后台处理中")
+                                Text("\(activeCount) 项处理中")
                             }
                         }
                         .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
                         .help("查看后台动效与字幕任务")
                     }
+                    Button { showLibrary = true } label: {
+                        Label(project.referenceMedia.isEmpty ? "素材库" : "素材库 (\(project.referenceMedia.count))",
+                              systemImage: "photo.on.rectangle")
+                    }
+                    .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
+                    .help("管理图片、视频等补充素材")
                     if state.stage == .assemble {
                         canvasMenu(for: project)
-                    } else {
-                        Button { state.stage = .library } label: {
-                            Label("素材库", systemImage: "photo.on.rectangle")
-                                .font(.studio(.bodyMedium))
-                                .padding(.horizontal, Metrics.space3)
-                                .frame(height: Metrics.choice)
-                        }
-                        .buttonStyle(StudioSelectionStyle(selected: state.stage == .library))
-                        .accessibilityAddTraits(state.stage == .library ? .isSelected : [])
                     }
                     ProjectActionsMenu(project: project)
-                }
-                if let project = state.currentProject, state.stage == .assemble {
-                    Button { showExport = true } label: {
-                        Label { Text(verbatim: state.exportingProjects.contains(project.id) ? "正在导出" : "导出成片") } icon: { Image(systemName: "arrow.up.right") }
+                    if state.stage == .assemble {
+                        Button { showExport = true } label: {
+                            Label { Text(verbatim: state.exportingProjects.contains(project.id) ? "正在导出" : "导出成片") } icon: { Image(systemName: "arrow.up.right") }
+                        }
+                        .buttonStyle(StudioButtonStyle(kind: .primary, size: .compact))
+                        .disabled(project.materials.isEmpty || project.isFrozen || state.exportingProjects.contains(project.id))
+                        .help(project.isFrozen ? "项目已冻结，取消冻结后再导出成片" : "导出成片")
                     }
-                    .buttonStyle(StudioButtonStyle(kind: .primary, size: .compact))
-                    .disabled(project.materials.isEmpty || project.isFrozen || state.exportingProjects.contains(project.id))
-                    .help(project.isFrozen ? "项目已冻结，取消冻结后再导出成片" : "导出成片")
                 }
-
             }
         }
-        .padding(.horizontal, Metrics.space5).frame(height: Metrics.header)
+        .padding(.horizontal, Metrics.space4)
+        .frame(height: Metrics.header)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(palette.surface2.opacity(0.6)).frame(height: 1)
+        }
     }
 
     private func activeBackgroundJobCount(for project: VideoProject) -> Int {

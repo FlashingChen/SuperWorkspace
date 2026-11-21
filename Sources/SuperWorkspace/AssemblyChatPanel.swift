@@ -7,6 +7,8 @@ struct AssemblyChatPanel: View {
     let project: VideoProject
     @ObservedObject var agent: AssemblyAgent
     var focusContext: String? = nil
+    var onImportMedia: (() -> Void)? = nil
+    var onOpenLibrary: (() -> Void)? = nil
     var onClose: (() -> Void)? = nil
 
     @State private var draft = ""
@@ -166,7 +168,25 @@ struct AssemblyChatPanel: View {
                     Spacer(minLength: 0)
                 }
             }
-            HStack(alignment: .bottom, spacing: Metrics.space2) {
+            HStack(alignment: .bottom, spacing: Metrics.space1_5) {
+                if onImportMedia != nil || onOpenLibrary != nil {
+                    Menu {
+                        if let onImportMedia {
+                            Button("导入图片或视频到素材库", systemImage: "plus.rectangle.on.folder", action: onImportMedia)
+                        }
+                        if let onOpenLibrary {
+                            Button("查看项目素材库（\(project.referenceMedia.count)）", systemImage: "photo.on.rectangle", action: onOpenLibrary)
+                        }
+                    } label: {
+                        Image(systemName: "paperclip")
+                            .frame(width: Metrics.controlCompact, height: Metrics.controlCompact)
+                    }
+                    .menuStyle(StudioMenuStyle())
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help("添加或查看素材库")
+                    .accessibilityLabel("素材库附件")
+                }
                 TextField("说要改什么…", text: $draft, axis: .vertical)
                     .textFieldStyle(StudioTextFieldStyle())
                     .lineLimit(1...4)

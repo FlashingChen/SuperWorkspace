@@ -65,7 +65,6 @@ struct AssemblyTimeline: View {
     @Binding var selectedSubtitle: String?
     @Binding var selectedInsert: InsertSelection?
     @Binding var focusSubtitle: String?
-    @Binding var showsLibrary: Bool
     @Binding var showsSubtitlesPreview: Bool
     @Binding var previewRate: Double
     /// A caption field owns the keyboard, so a window-wide delete shortcut must stand down.
@@ -73,6 +72,7 @@ struct AssemblyTimeline: View {
     let onSeek: (Double) -> Void
     let onPlay: () -> Void
     let onMove: (UUID, UUID, Bool) -> Void
+    let onOpenSubtitles: () -> Void
     @Binding var zoom: Double
     @State private var dropTarget: UUID?
     @State private var insertTrackTargeted = false
@@ -80,6 +80,7 @@ struct AssemblyTimeline: View {
     @State private var fittedDuration = 0.0
     @State private var draft: RangeDraft?
     @State private var snapGuideTime: Double?
+    @State private var editingSubtitleKey: String?
 
     private var displayProject: VideoProject {
         var copy = project
@@ -112,8 +113,16 @@ struct AssemblyTimeline: View {
     private var hasInserts: Bool {
         displayProject.materials.contains { !($0.inserts ?? []).isEmpty }
     }
-    private var insertTrackHeight: CGFloat { hasInserts || insertTrackTargeted ? 30 : 22 }
-    private let gutter: CGFloat = 76
+    private let rulerHeight: CGFloat = 24
+    private var insertTrackHeight: CGFloat { hasInserts || insertTrackTargeted ? 28 : 20 }
+    private let subtitleTrackHeight: CGFloat = 30
+    private let videoTrackHeight: CGFloat = 72
+    private let trackSpacing: CGFloat = 6
+    private let gutter: CGFloat = 68
+
+    private var totalTracksHeight: CGFloat {
+        rulerHeight + insertTrackHeight + subtitleTrackHeight + videoTrackHeight + trackSpacing * 3 + 20
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -123,39 +132,44 @@ struct AssemblyTimeline: View {
                 let viewport = max(1, geometry.size.width - gutter - 24)
                 let scale = min(600, max(0.05, viewport / max(1, fittedDuration > 0 ? fittedDuration : layout.duration)) * zoom)
                 let width = max(viewport, layout.duration * scale + 32)
-                HStack(spacing: 0) {
-                    VStack(spacing: Metrics.space2) {
-                        Color.clear.frame(height: 28)
+                let canvasHeight = max(totalTracksHeight, geometry.size.height)
+                HStack(alignment: .top, spacing: 0) {
+                    VStack(spacing: trackSpacing) {
+                        Color.clear.frame(height: rulerHeight)
                         trackLabel("插图", symbol: "photo").frame(height: insertTrackHeight)
-                        trackLabel("字幕", symbol: "captions.bubble").frame(height: 32)
-                        trackLabel("视频", symbol: "film").frame(height: 76)
+                        trackLabel("字幕", symbol: "captions.bubble").frame(height: subtitleTrackHeight)
+                        trackLabel("视频", symbol: "film").frame(height: videoTrackHeight)
                         Spacer(minLength: 0)
                     }
-                    .frame(width: gutter)
+                    .frame(width: gutter, height: canvasHeight, alignment: .top)
                     .background(palette.bgSidebar)
+                    .overlay(alignment: .trailing) {
+                        Rectangle().fill(palette.surface2.opacity(0.5)).frame(width: 1)
+                    }
+
                     ScrollView(.horizontal) {
                         ZStack(alignment: .topLeading) {
-                            grid(width: width, height: geometry.size.height - 16, scale: scale)
-                            VStack(alignment: .leading, spacing: Metrics.space2) {
+                            grid(width: width, height: canvasHeight - 12, scale: scale)
+                            VStack(alignment: .leading, spacing: trackSpacing) {
                                 ruler(width: width, scale: scale)
                                 insertTrack(width: width, scale: scale)
                                 subtitleTrack(width: width, scale: scale)
                                 videoTrack(width: width, scale: scale)
-                                Spacer(minLength: 10)
+                                Spacer(minLength: 16)
                             }
                             if let snapGuideTime {
                                 Rectangle()
                                     .fill(palette.accent)
-                                    .frame(width: 1, height: max(160, geometry.size.height - 18))
+                                    .frame(width: 1, height: canvasHeight - 14)
                                     .offset(x: min(layout.duration, max(0, snapGuideTime)) * scale)
                                     .allowsHitTesting(false)
                             }
-                            playheadView(height: max(160, geometry.size.height - 18))
+                            playheadView(height: canvasHeight - 14)
                                 .offset(x: min(layout.duration, max(0, playhead)) * scale - 9)
                                 .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("assemblyTimeline"))
                                     .onChanged { onSeek(layout.time(at: $0.location.x, scale: scale)) })
                         }
-                        .frame(width: width, height: max(190, geometry.size.height - 16), alignment: .topLeading)
+                        .frame(width: width, height: canvasHeight, alignment: .topLeading)
                         .coordinateSpace(name: "assemblyTimeline")
                         .padding(.horizontal, Metrics.space3)
                     }
@@ -164,24 +178,14 @@ struct AssemblyTimeline: View {
             }
         }
         .background(palette.bgDeep)
-        .frame(minHeight: 240, idealHeight: 280, maxHeight: 420)
+        .frame(minHeight: 230, idealHeight: 256, maxHeight: 380)
         .onAppear { fittedDuration = max(1, layout.duration) }
-        .onExitCommand { draft = nil; snapGuideTime = nil }
+        .onExitCommand { draft = nil; snapGuideTime = nil; editingSubtitleKey = nil }
         .modifier(MaterialRemovalConfirmation(projectID: project.id, materialID: $pendingRemoval))
     }
 
     private var controls: some View {
         HStack(spacing: Metrics.space1_5) {
-            Button { showsLibrary.toggle() } label: {
-                Label("素材库", systemImage: "photo.on.rectangle")
-            }
-            .buttonStyle(StudioSelectionStyle(selected: showsLibrary))
-            .frame(height: Metrics.controlCompact)
-            .help(showsLibrary ? "收起素材库抽屉" : "打开素材库抽屉")
-            .accessibilityLabel(showsLibrary ? "收起素材库" : "打开素材库")
-
-            Rectangle().fill(palette.surface2).frame(width: 1, height: 16).padding(.horizontal, Metrics.space1)
-
             Button(action: splitAtPlayhead) { Image(systemName: "scissors") }
                 .help(splitHelp).accessibilityLabel("分割")
                 .keyboardShortcut("b", modifiers: .command).disabled(!canSplit)
@@ -192,17 +196,17 @@ struct AssemblyTimeline: View {
                 .help(deleteHelp).accessibilityLabel("删除选中项")
                 .accessibilityIdentifier("assembly.subtitles.delete")
                 .keyboardShortcut(.delete, modifiers: .command)
-                .disabled(!canDeleteSelectedItem || editingCaption)
+                .disabled(!canDeleteSelectedItem || editingCaption || editingSubtitleKey != nil)
             Button { state.undo() } label: { Image(systemName: "arrow.uturn.backward") }
                 .help("撤销").accessibilityLabel("撤销").disabled(!state.canUndo)
             Button { state.redo() } label: { Image(systemName: "arrow.uturn.forward") }
                 .help("重做").accessibilityLabel("重做").disabled(!state.canRedo)
 
-            Spacer()
+            Spacer(minLength: Metrics.space2)
 
             Button { onSeek(playhead - 1 / 30) } label: { Image(systemName: "backward.end") }
                 .help("上一帧").accessibilityLabel("上一帧").disabled(!canPlay)
-            Button(action: onPlay) { Image(systemName: isPlaying ? "pause.fill" : "play.fill").frame(width: 20) }
+            Button(action: onPlay) { Image(systemName: isPlaying ? "pause.fill" : "play.fill").frame(width: 18) }
                 .help(isPlaying ? "暂停（空格）" : "播放（空格）")
                 .accessibilityLabel(isPlaying ? "暂停时间线" : "播放时间线")
                 .keyboardShortcut(.space, modifiers: []).disabled(!canPlay)
@@ -212,34 +216,25 @@ struct AssemblyTimeline: View {
                 .foregroundStyle(palette.textPrimary)
                 .accessibilityIdentifier("assembly.playhead.timecode")
             Text("/ \(AssemblyTimelineLayout.timecode(layout.duration))").foregroundStyle(palette.textMuted)
-
-            Menu {
-                ForEach([1.0, 1.25, 1.5, 2.0], id: \.self) { rate in
-                    Button(rateLabel(rate)) { previewRate = rate }
-                }
-            } label: {
+            Button { cyclePreviewRate() } label: {
                 Text(rateLabel(previewRate))
-                    .font(.studio(.caption, weight: .medium))
                     .monospacedDigit()
             }
-            .menuStyle(StudioMenuStyle())
-            .fixedSize()
-            .help("预览播放倍速（仅影响试看，不改变导出）")
+            .help("切换试看倍速（1x / 1.25x / 1.5x / 2x）")
             .accessibilityLabel("预览倍速 \(rateLabel(previewRate))")
 
-            Button { showsSubtitlesPreview.toggle() } label: {
-                Image(systemName: showsSubtitlesPreview ? "captions.bubble.fill" : "captions.bubble")
-                    .foregroundStyle(showsSubtitlesPreview ? palette.accent : palette.textMuted)
-            }
-            .help(showsSubtitlesPreview ? "隐藏预览字幕" : "显示预览字幕")
-            .accessibilityLabel(showsSubtitlesPreview ? "隐藏预览字幕" : "显示预览字幕")
+            Spacer(minLength: Metrics.space2)
 
-            Spacer()
+            Button(action: onOpenSubtitles) {
+                Label("字幕", systemImage: "captions.bubble")
+            }
+            .help("浏览全片字幕与 AI 校对")
+            .accessibilityIdentifier("assembly.subtitles.review")
 
             Button { zoom = max(0.5, zoom / 1.4) } label: { Image(systemName: "minus.magnifyingglass") }
                 .keyboardShortcut("-", modifiers: .command)
                 .accessibilityLabel("缩小时间线")
-            StudioSlider(value: Binding(get: { log2(zoom) }, set: { zoom = pow(2, $0) }), range: -1...6).frame(width: 84).accessibilityLabel("时间线缩放")
+            StudioSlider(value: Binding(get: { log2(zoom) }, set: { zoom = pow(2, $0) }), range: -1...6).frame(width: 76).accessibilityLabel("时间线缩放")
             Button { zoom = min(64, zoom * 1.4) } label: { Image(systemName: "plus.magnifyingglass") }
                 .keyboardShortcut("=", modifiers: .command)
                 .accessibilityLabel("放大时间线")
@@ -249,7 +244,16 @@ struct AssemblyTimeline: View {
         }
         .font(.studio(.timecode))
         .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
-        .padding(.horizontal, Metrics.space4).frame(height: 44)
+        .padding(.horizontal, Metrics.space3).frame(height: 40)
+    }
+
+    private func cyclePreviewRate() {
+        let rates = [1.0, 1.25, 1.5, 2.0]
+        if let idx = rates.firstIndex(where: { abs($0 - previewRate) < 0.01 }) {
+            previewRate = rates[(idx + 1) % rates.count]
+        } else {
+            previewRate = 1.0
+        }
     }
 
     private func rateLabel(_ rate: Double) -> String {
@@ -267,7 +271,7 @@ struct AssemblyTimeline: View {
             var path = Path()
             for index in 0...min(2000, Int(layout.duration / interval) + 1) {
                 let x = Double(index) * interval * scale
-                path.move(to: CGPoint(x: x, y: 28))
+                path.move(to: CGPoint(x: x, y: rulerHeight))
                 path.addLine(to: CGPoint(x: x, y: size.height))
             }
             context.stroke(path, with: .color(palette.surface2.opacity(0.35)), lineWidth: 1)
@@ -282,16 +286,16 @@ struct AssemblyTimeline: View {
                 let x = time * scale
                 let major = index % 5 == 0
                 var tick = Path()
-                tick.move(to: CGPoint(x: x, y: size.height - (major ? 9 : 4)))
+                tick.move(to: CGPoint(x: x, y: size.height - (major ? 8 : 4)))
                 tick.addLine(to: CGPoint(x: x, y: size.height))
                 context.stroke(tick, with: .color(palette.surface3), lineWidth: 1)
                 if major {
                     context.draw(Text(durationLabel(time)).font(.studio(.timecode)).foregroundStyle(palette.textSecondary),
-                        at: CGPoint(x: x + 4, y: 8), anchor: .leading)
+                        at: CGPoint(x: x + 4, y: 7), anchor: .leading)
                 }
             }
         }
-        .frame(width: width, height: 28).contentShape(Rectangle())
+        .frame(width: width, height: rulerHeight).contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 0).onChanged { onSeek(layout.time(at: $0.location.x, scale: scale)) })
         .accessibilityLabel("时间标尺，点击或拖动定位")
         .accessibilityIdentifier("assembly.timeline.ruler")
@@ -408,7 +412,7 @@ struct AssemblyTimeline: View {
                                   severity: severities[SubtitleKey.make(clip.id, index)])
                 }
             }
-        }.frame(width: width, height: 32).clipped()
+        }.frame(width: width, height: subtitleTrackHeight).clipped()
     }
 
     private var reviewSeverities: [String: SubtitleReviewIssue.Severity] {
@@ -449,16 +453,43 @@ struct AssemblyTimeline: View {
 
         return block
             .contentShape(Rectangle())
+            .onTapGesture(count: 2) {
+                selectedMaterial = clip.id
+                selectedSubtitle = key
+                selectedInsert = nil
+                onSeek(start)
+                if material.transcriptState != .running { editingSubtitleKey = key }
+            }
             .onTapGesture {
                 selectedMaterial = clip.id
                 selectedSubtitle = key
                 selectedInsert = nil
                 onSeek(start)
             }
+            .popover(isPresented: Binding(
+                get: { editingSubtitleKey == key },
+                set: { if !$0 { editingSubtitleKey = nil } }
+            ), arrowEdge: .top) {
+                VStack(alignment: .leading, spacing: Metrics.space2) {
+                    Text("编辑字幕 · \(durationLabel(start))")
+                        .font(.studio(.caption, weight: .medium))
+                        .foregroundStyle(palette.textSecondary)
+                    TextField("输入字幕内容", text: Binding(
+                        get: { state.projects.first(where: { $0.id == project.id })?.materials.first(where: { $0.id == clip.id })?.subtitles[safe: index]?.text ?? subtitle.text },
+                        set: { state.editSubtitle(projectID: project.id, materialID: clip.id, index: index, text: $0) }
+                    ), axis: .vertical)
+                    .textFieldStyle(StudioTextFieldStyle())
+                    .lineLimit(1...3)
+                    .onSubmit { editingSubtitleKey = nil }
+                }
+                .padding(Metrics.space3)
+                .frame(width: 280)
+                .background(palette.bgBase)
+            }
             .gesture(drag)
             .overlay {
                 if selected && width >= 22 && material.transcriptState != .running {
-                    rangeGrips(materialID: clip.id, target: .subtitle(index), height: 30, color: palette.warning, scale: scale)
+                    rangeGrips(materialID: clip.id, target: .subtitle(index), height: subtitleTrackHeight - 2, color: palette.warning, scale: scale)
                 }
             }
             .overlay(alignment: .topTrailing) {
@@ -507,7 +538,7 @@ struct AssemblyTimeline: View {
                         .frame(height: 22)
                         .allowsHitTesting(false)
                 }
-                .frame(width: clipWidth, height: 74)
+                .frame(width: clipWidth, height: videoTrackHeight - 2)
                 .overlay(alignment: .topLeading) {
                     HStack(spacing: Metrics.space1) {
                         Text("\(material.displayTitle(index: clip.index)) · \(durationLabel(clip.duration))")
@@ -574,14 +605,14 @@ struct AssemblyTimeline: View {
                 }
                 .overlay {
                     if selectedMaterial == clip.id && clipWidth >= 22 && material.sourceReady {
-                        rangeGrips(materialID: clip.id, target: .clip, height: 74, color: palette.accent, scale: scale)
+                        rangeGrips(materialID: clip.id, target: .clip, height: videoTrackHeight - 2, color: palette.accent, scale: scale)
                     }
                 }
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("\(material.displayTitle(index: clip.index))，时长 \(durationLabel(clip.duration))，可拖动排序")
                 .offset(x: clip.start * scale)
             }
-        }.frame(width: width, height: 76).clipped()
+        }.frame(width: width, height: videoTrackHeight).clipped()
     }
 
     private func motionBadge(for material: Material) -> (text: String, color: Color)? {
