@@ -41,11 +41,13 @@ background 压在最底，fixedLabels 浮在最上，两者都不进相机；obj
 
 人物原片、抠像遮挡层和人后大字需要运镜时共用一个相机父级，不能分别估算裁切。禁止把整个原始录屏放进 cameraWorld 来获得运镜。
 
-直接复用工作目录预置的 `src/sw-kit`（导出 `WorldCamera`、`StageFrame`、`MediaCard`、`PhoneMockup`、`defaultTheme`、`createTheme`、`SAFE_ZONES` 与 `ease`/`pop`/`stagger`），不要重复从零编写相机组件、缓动函数、字体配置或项目脚手架。`cx/cy` 是镜头瞄准的世界坐标。对象位置按世界坐标布局，相机变化时保持各自的布局。按口播确定起点、过渡和落点后直接实现。
+直接复用工作目录预置的 `src/sw-kit`（导出 `WorldCamera`、`StageFrame`、`MediaCard`、`PhoneMockup`、`defaultTheme`、`createTheme`、`SAFE_ZONES` 与 `ease`/`pop`/`stagger`），不要重复从零编写相机组件、缓动函数、字体配置或项目脚手架。`WorldCamera` 自动读取画布宽高（直接写 `<WorldCamera keys={...}>` 即可，也兼容 `width`/`height` 与 `viewportWidth`/`viewportHeight`），`cx/cy` 是镜头瞄准的世界坐标。对象位置按世界坐标布局，相机变化时保持各自的布局。
+
+**保持连续长分幕与大幅度运镜**：把连续讲解组织成 **2–4 个较长的连续分幕（Act，每幕 7–15 秒）**，把同一主题的多组对象与连线铺在同一个大世界画布上，用 `WorldCamera` 做有明显感知的推拉（如 `0.78×–1.45×`）与横向/纵向巡航（400–1200px）；不要把 30–50 秒切碎成 7–8 个 3–4 秒的翻页小卡片，也不要每个分镜都强加统一的顶部标题条。
 
 ## 宿主工具与分镜清单
 
-工作目录已随包注入 `sw-motion.mjs` 与 `src/sw-kit/`。把所有全屏图解分镜（`shots`）和局部透明叠层（`overlays`）写入 `motion-manifest.json`：
+工作目录已随包注入 `sw-motion.mjs` 与 `src/sw-kit/`。把所有全屏分幕（`shots`）和局部透明叠层（`overlays`）写入 `motion-manifest.json`：
 
 ```json
 {
@@ -53,13 +55,13 @@ background 压在最底，fixedLabels 浮在最上，两者都不进相机；obj
   "fps": 60,
   "width": 3024,
   "height": 1702,
-  "shots": [{ "id": "Act1", "composition": "Act1", "start": 1.8, "end": 8.5, "files": ["src/shots/Act1.tsx"] }],
+  "shots": [{ "id": "Act1", "composition": "Act1", "start": 1.8, "end": 10.5, "files": ["src/acts/Act1.tsx"] }],
   "overlays": [{ "id": "Ov1", "composition": "Ov1", "start": 0.0, "end": 1.8, "x": 1800, "y": 220, "width": 760, "height": 300, "files": ["src/overlays/Overlays.tsx"] }]
 }
 ```
 
-- 预检：`node sw-motion.mjs inspect`（定向微调时加 `--shots <id>`）会并行渲染关键帧、检查空白帧与字幕安全区侵入，并拼成 1–2 张 Contact Sheet（`out/inspect/contact-sheet-*.png`），取代零散的 `remotion still` 和手工裁图。
-- 渲染与合成：`node sw-motion.mjs render` 自动按源码哈希复用 `.sw-cache/` 中未改动分镜的渲染缓存、并发渲染变更分镜（透明叠层直接走 ProRes 4444 alpha，不生成 `.rgba` 中间文件），并由宿主用 FFmpeg 硬件编码无损拼出 `motion-pending.mp4`。不要手写 `composite.sh`。
+- 预检：`node sw-motion.mjs inspect`（定向微调时加 `--shots <id>`）会并行渲染关键帧、检查空白帧与字幕安全区侵入，并直接拼成 1–2 张 JPEG Contact Sheet（`out/inspect/contact-sheet-*.jpg`）。不要自己写 `sheet.sh` 或零散跑 `remotion still`；预检控制在 1–2 轮内。
+- 渲染与合成：`node sw-motion.mjs render` 自动按每个分镜声明的 `files` 哈希复用 `.sw-cache/` 中未改动分镜的缓存、并发渲染变更分镜（透明叠层直接走 ProRes 4444 alpha，不生成 `.rgba` 中间文件），并由宿主用 FFmpeg 硬件编码无损拼出 `motion-pending.mp4`。不要手写 `composite.sh`；`render` 返回 `ok: true` 后直接汇报交付，禁止在成片后再抽帧裁剪或触发第二轮整片重渲。
 
 ## 画面文字语言
 

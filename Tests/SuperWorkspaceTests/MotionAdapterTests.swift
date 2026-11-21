@@ -72,6 +72,19 @@ final class MotionAdapterTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: workspace.appendingPathComponent("src/sw-kit/theme.ts").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: workspace.appendingPathComponent("remotion.config.ts").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: workspace.appendingPathComponent("src/index.ts").path))
+        let cameraSource = try String(
+            contentsOf: workspace.appendingPathComponent("src/sw-kit/WorldCamera.tsx"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(cameraSource.contains("useVideoConfig"))
+        XCTAssertTrue(cameraSource.contains("viewportWidth ?? width ?? config.width"))
+
+        let adapterSource = try String(
+            contentsOf: workspace.appendingPathComponent("sw-motion.mjs"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(adapterSource.contains("contact-sheet-${sheets.length + 1}.jpg"))
+        XCTAssertTrue(adapterSource.contains("'-c:v', 'mjpeg'"))
         XCTAssertEqual(try String(contentsOf: customConfig, encoding: .utf8), "{\"custom\":true}")
     }
 
