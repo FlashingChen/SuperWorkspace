@@ -292,4 +292,13 @@ final class ProjectToolsTests: XCTestCase {
             XCTAssertTrue((saved.htmlMotions ?? []).isEmpty)
         }
     }
+
+    func testMutatingToolAllowlistExcludesReadOnlyTools() {
+        for readOnly in ["project_read", "job_status", "silence_analyze", "read", "grep", "find", "ls"] {
+            XCTAssertFalse(AssemblyAgent.isMutatingTool(readOnly), "\(readOnly) should not be marked mutating")
+        }
+        for mutating in ["clip_speed", "callout_add", "audio_add", "motion_html_add", "motion_html_update"] {
+            XCTAssertTrue(AssemblyAgent.isMutatingTool(mutating), "\(mutating) should be marked mutating")
+        }
+    }
 }

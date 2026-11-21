@@ -205,7 +205,7 @@ struct AssemblyChatPanel: View {
     private func assistantProse(_ text: String, message: AssemblyAgent.Message?) -> some View {
         VStack(alignment: .leading, spacing: Metrics.space2_5) {
             if !text.isEmpty {
-                Text(text)
+                markdownText(text)
                     .font(.studio(.body))
                     .foregroundStyle(palette.textPrimary)
                     .lineSpacing(3)
@@ -218,9 +218,20 @@ struct AssemblyChatPanel: View {
         }
     }
 
+    private func markdownText(_ text: String) -> Text {
+        if let attributed = try? AttributedString(
+            markdown: text,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        ) {
+            return Text(attributed)
+        }
+        return Text(text)
+    }
+
     private func resultCard(message: AssemblyAgent.Message, edits: [String], steps: Int) -> some View {
         let summary = summarizedEdits(edits)
         let undone = message.isUndone == true
+        let canUndoThisTurn = !undone && agent.canUndoTurn(messageID: message.id)
         return VStack(alignment: .leading, spacing: Metrics.space2) {
             HStack(spacing: Metrics.space1_5) {
                 Image(systemName: undone ? "arrow.uturn.backward.circle" : "checkmark.circle.fill")
@@ -246,13 +257,14 @@ struct AssemblyChatPanel: View {
                         }
                         .buttonStyle(StudioButtonStyle(kind: .secondary, size: .compact))
                     }
-                    Button {
-                        agent.undoTurn(messageID: message.id)
-                    } label: {
-                        Label("撤销本轮", systemImage: "arrow.uturn.backward")
+                    if canUndoThisTurn {
+                        Button {
+                            agent.undoTurn(messageID: message.id)
+                        } label: {
+                            Label("撤销本轮", systemImage: "arrow.uturn.backward")
+                        }
+                        .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
                     }
-                    .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
-                    .disabled(!state.canUndo)
                 }
             }
         }

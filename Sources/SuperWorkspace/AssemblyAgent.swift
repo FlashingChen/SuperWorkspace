@@ -13,6 +13,7 @@ final class AssemblyAgent: ObservableObject {
         var edits: [String]? = nil
         var editSteps: Int? = nil
         var focusTime: Double? = nil
+        var postTurnFingerprint: String? = nil
         var isUndone: Bool? = nil
         var createdAt = Date()
     }
@@ -188,13 +189,25 @@ final class AssemblyAgent: ObservableObject {
         deliver(trimmed, contextNote: contextNote)
     }
 
+    func canUndoTurn(messageID: UUID) -> Bool {
+        guard let state, state.canUndo, !isBusy,
+              let latest = messages.last(where: { $0.role == .assistant && !($0.edits ?? []).isEmpty }),
+              latest.id == messageID,
+              latest.isUndone != true,
+              let expected = latest.postTurnFingerprint,
+              let current = currentProjectFingerprint() else { return false }
+        return expected == current
+    }
+
     func undoTurn(messageID: UUID) {
-        guard let state, let idx = messages.firstIndex(where: { $0.id == messageID }),
-              messages[idx].isUndone != true else { return }
+        guard canUndoTurn(messageID: messageID),
+              let state,
+              let idx = messages.firstIndex(where: { $0.id == messageID }) else { return }
         let steps = max(1, messages[idx].editSteps ?? messages[idx].edits?.count ?? 1)
         for _ in 0..<steps { state.undo() }
         messages[idx].isUndone = true
         needsStateRefresh = true
+        lastTurnProjectFingerprint = currentProjectFingerprint()
         persist()
     }
 
@@ -309,8 +322,9 @@ final class AssemblyAgent: ObservableObject {
             let edits = turnEdits.isEmpty ? nil : turnEdits
             let steps = turnEdits.isEmpty ? nil : turnEdits.count
             let focus = turnFocusTime
+            let postFP = edits != nil ? currentProjectFingerprint() : nil
             if !final.isEmpty || edits != nil {
-                append(.init(role: .assistant, text: final, edits: edits, editSteps: steps, focusTime: focus))
+                append(.init(role: .assistant, text: final, edits: edits, editSteps: steps, focusTime: focus, postTurnFingerprint: postFP))
             }
             finishTurn()
         case "error":
@@ -424,8 +438,17 @@ final class AssemblyAgent: ObservableObject {
         return "\(label)：\(detail)"
     }
 
-    private static func isMutatingTool(_ name: String) -> Bool {
-        !["project_read", "job_status", "silence_analyze"].contains(name)
+    static func isMutatingTool(_ name: String) -> Bool {
+        [
+            "clip_trim", "clip_split", "clip_move", "clip_remove", "clip_speed", "clip_rename",
+            "subtitle_update", "subtitle_insert", "subtitle_delete", "subtitle_merge", "subtitle_split", "subtitle_move",
+            "canvas_set",
+            "insert_add", "insert_update", "insert_remove",
+            "audio_add", "audio_update", "audio_remove",
+            "callout_add", "callout_update", "callout_remove",
+            "motion_html_add", "motion_html_update", "motion_html_remove",
+            "motion_regenerate",
+        ].contains(name)
     }
 
     private static func systemPrompt(project: VideoProject) -> String {

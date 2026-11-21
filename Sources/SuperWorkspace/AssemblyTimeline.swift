@@ -285,7 +285,10 @@ struct AssemblyTimeline: View {
     }
 
     private func rateLabel(_ rate: Double) -> String {
-        rate == floor(rate) ? "\(Int(rate))x" : String(format: "%.2gx", rate)
+        let rounded = (rate * 100).rounded() / 100
+        if abs(rounded - rounded.rounded()) < 0.005 { return "\(Int(rounded.rounded()))x" }
+        if abs(rounded * 10 - (rounded * 10).rounded()) < 0.05 { return String(format: "%.1fx", rounded) }
+        return String(format: "%.2fx", rounded)
     }
 
     private func trackLabel(_ title: String, symbol: String) -> some View {
