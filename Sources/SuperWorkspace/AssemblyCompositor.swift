@@ -6,6 +6,7 @@ struct SubtitleOverlay: @unchecked Sendable {
     let end: Double
     let image: CGImage
     let frame: CGRect
+    var fadeDuration: Double = 0
 }
 
 struct Cutaway: @unchecked Sendable {
@@ -146,9 +147,22 @@ final class AssemblyCompositor: NSObject, AVVideoCompositing, @unchecked Sendabl
             }
             let time = request.compositionTime.seconds
             for overlay in instruction.overlays where time >= overlay.start && time < overlay.end {
-                let text = CIImage(cgImage: overlay.image)
+                var text = CIImage(cgImage: overlay.image)
                     .transformed(by: CGAffineTransform(scaleX: overlay.frame.width / CGFloat(overlay.image.width), y: overlay.frame.height / CGFloat(overlay.image.height)))
                     .transformed(by: CGAffineTransform(translationX: overlay.frame.minX, y: overlay.frame.minY))
+                if overlay.fadeDuration > 0 {
+                    let fadeIn = min(1.0, max(0.0, (time - overlay.start) / overlay.fadeDuration))
+                    let fadeOut = min(1.0, max(0.0, (overlay.end - time) / overlay.fadeDuration))
+                    let alpha = min(fadeIn, fadeOut)
+                    if alpha < 0.999 {
+                        text = text.applyingFilter("CIColorMatrix", parameters: [
+                            "inputRVector": CIVector(x: 1, y: 0, z: 0, w: 0),
+                            "inputGVector": CIVector(x: 0, y: 1, z: 0, w: 0),
+                            "inputBVector": CIVector(x: 0, y: 0, z: 1, w: 0),
+                            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: alpha),
+                        ])
+                    }
+                }
                 image = text.composited(over: image)
             }
             context.render(image, to: output, bounds: bounds, colorSpace: CGColorSpaceCreateDeviceRGB())

@@ -207,4 +207,53 @@ final class ProjectToolsTests: XCTestCase {
         project.materials[0].speed = 1.5
         XCTAssertNotEqual(AssemblyPreviewInputs(project: project), initial)
     }
+
+    func testCalloutAndAudioToolsRoundTripWithUndoAndRenderer() async throws {
+        try await withStorage { _ in
+            var project = fixture()
+            project.referenceMedia = [ReferenceMedia(name: "bgm.mp3", kind: .audio, description: "轻快配乐", duration: 60)]
+            try ProjectLayout.save(project)
+            let state = AppState()
+            state.select(project.id)
+
+            _ = try success(run("callout_add", [
+                "text": .string("第一步：准备素材"),
+                "subtitle": .string("导入图片与配乐"),
+                "start": .number(1.0),
+                "end": .number(4.0),
+                "style": .string("title"),
+            ], project: project, state: state))
+            var saved = try XCTUnwrap(ProjectLayout.loadAll().first)
+            XCTAssertEqual(saved.callouts?.count, 1)
+            let callout = try XCTUnwrap(saved.callouts?.first)
+            let rendered = CalloutRenderer.render(callout, canvas: CGSize(width: 1920, height: 1080))
+            XCTAssertNotNil(rendered)
+
+            _ = try success(run("callout_update", [
+                "index": .number(1),
+                "text": .string("第一步：导入素材"),
+            ], project: saved, state: state))
+            saved = try XCTUnwrap(ProjectLayout.loadAll().first)
+            XCTAssertEqual(saved.callouts?.first?.text, "第一步：导入素材")
+
+            _ = try success(run("audio_add", [
+                "asset": .number(1),
+                "kind": .string("music"),
+                "start": .number(0),
+                "end": .number(15),
+                "volume": .number(0.22),
+            ], project: saved, state: state))
+            saved = try XCTUnwrap(ProjectLayout.loadAll().first)
+            XCTAssertEqual(saved.audioClips?.count, 1)
+            XCTAssertEqual(saved.audioClips?.first?.duckUnderSpeech, true)
+
+            state.undo()
+            saved = try XCTUnwrap(ProjectLayout.loadAll().first)
+            XCTAssertTrue((saved.audioClips ?? []).isEmpty)
+
+            _ = try success(run("callout_remove", ["index": .number(1)], project: saved, state: state))
+            saved = try XCTUnwrap(ProjectLayout.loadAll().first)
+            XCTAssertTrue((saved.callouts ?? []).isEmpty)
+        }
+    }
 }

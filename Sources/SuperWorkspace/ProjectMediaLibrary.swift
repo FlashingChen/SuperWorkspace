@@ -15,19 +15,31 @@ enum ReferenceMediaImport {
            CGImageSourceCreateThumbnailAtIndex(image, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true,
                                                           kCGImageSourceThumbnailMaxPixelSize: 64] as CFDictionary) != nil {
             media = ReferenceMedia(name: name, kind: .image)
-        } else {
+        } else if type?.conforms(to: .audio) == true {
             let asset = AVURLAsset(url: input)
             let (playable, duration) = try await asset.load(.isPlayable, .duration)
             guard playable, duration.seconds.isFinite, duration.seconds > 0,
-                  let track = try await asset.loadTracks(withMediaType: .video).first else {
-                throw ShellError.exitStatus(-1, "无法读取图片或视频。")
+                  try await asset.loadTracks(withMediaType: .audio).first != nil else {
+                throw ShellError.exitStatus(-1, "无法读取音频文件。")
             }
-            let range = try await track.load(.timeRange)
-            let usable = min(duration.seconds, range.end.seconds)
-            guard range.start.seconds <= 0, usable.isFinite, usable >= 1.0 / 30 else {
-                throw ShellError.exitStatus(-1, "视频画面起点或时长不受支持。")
+            media = ReferenceMedia(name: name, kind: .audio, duration: duration.seconds)
+        } else {
+            let asset = AVURLAsset(url: input)
+            let (playable, duration) = try await asset.load(.isPlayable, .duration)
+            if playable, duration.seconds.isFinite, duration.seconds > 0,
+               let track = try await asset.loadTracks(withMediaType: .video).first {
+                let range = try await track.load(.timeRange)
+                let usable = min(duration.seconds, range.end.seconds)
+                guard range.start.seconds <= 0, usable.isFinite, usable >= 1.0 / 30 else {
+                    throw ShellError.exitStatus(-1, "视频画面起点或时长不受支持。")
+                }
+                media = ReferenceMedia(name: name, kind: .video, duration: usable)
+            } else if playable, duration.seconds.isFinite, duration.seconds > 0,
+                      try await asset.loadTracks(withMediaType: .audio).first != nil {
+                media = ReferenceMedia(name: name, kind: .audio, duration: duration.seconds)
+            } else {
+                throw ShellError.exitStatus(-1, "无法读取图片、视频或音频。")
             }
-            media = ReferenceMedia(name: name, kind: .video, duration: usable)
         }
         let destination = ProjectLayout.reference(media, in: project)
         try await Task.detached(priority: .userInitiated) {
@@ -56,6 +68,8 @@ enum ReferenceMediaPreview {
             generator.maximumSize = CGSize(width: maxSize, height: maxSize)
             let time = CMTime(seconds: (media.duration ?? 0) / 2, preferredTimescale: 600)
             return try? await generator.image(at: time).image
+        case .audio:
+            return nil
         }
     }
 }
@@ -72,7 +86,9 @@ private struct ReferenceMediaThumbnail: View {
             if let image {
                 Image(decorative: image, scale: 1).resizable().scaledToFit()
             } else {
-                Image(systemName: media.kind == .image ? "photo" : "film")
+                Image(systemName: media.kind == .image ? "photo" : (media.kind == .audio ? "music.note" : "film"))
+                    .font(media.kind == .audio ? .title2 : .body)
+                    .foregroundStyle(media.kind == .audio ? palette.success : palette.textSecondary)
             }
         }
         .aspectRatio(16.0 / 9.0, contentMode: .fit)
@@ -120,7 +136,7 @@ struct ProjectMediaLibrary: View {
                         }
                     }.padding(2)
                 } else if !pending {
-                    Text("导入图片或视频，供 AI 剪辑时选用。")
+                    Text("导入图片、视频或音频（BGM / 音效），供动效与 AI 剪辑使用。")
                         .font(.studio(.body)).foregroundStyle(palette.textSecondary)
                 }
             }
@@ -129,7 +145,7 @@ struct ProjectMediaLibrary: View {
             .frame(maxWidth: .infinity)
         }
         .foregroundStyle(palette.textPrimary).background(palette.bgBase)
-        .fileImporter(isPresented: $importing, allowedContentTypes: [.image, .movie], allowsMultipleSelection: true) { result in
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.image, .movie, .audio], allowsMultipleSelection: true) { result in
             switch result {
             case .success(let urls): importMedia(urls)
             case .failure(let error): notice = error.localizedDescription

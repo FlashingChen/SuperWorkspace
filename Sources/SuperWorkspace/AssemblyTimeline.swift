@@ -113,15 +113,22 @@ struct AssemblyTimeline: View {
     private var hasInserts: Bool {
         displayProject.materials.contains { !($0.inserts ?? []).isEmpty }
     }
+    private var hasCallouts: Bool { !(displayProject.callouts ?? []).isEmpty }
+    private var hasAudioClips: Bool { !(displayProject.audioClips ?? []).isEmpty }
     private let rulerHeight: CGFloat = 24
+    private let calloutTrackHeight: CGFloat = 26
     private var insertTrackHeight: CGFloat { hasInserts || insertTrackTargeted ? 28 : 20 }
     private let subtitleTrackHeight: CGFloat = 30
     private let videoTrackHeight: CGFloat = 72
+    private let audioTrackHeight: CGFloat = 26
     private let trackSpacing: CGFloat = 6
     private let gutter: CGFloat = 68
 
     private var totalTracksHeight: CGFloat {
-        rulerHeight + insertTrackHeight + subtitleTrackHeight + videoTrackHeight + trackSpacing * 3 + 20
+        var h = rulerHeight + insertTrackHeight + subtitleTrackHeight + videoTrackHeight + trackSpacing * 3 + 20
+        if hasCallouts { h += calloutTrackHeight + trackSpacing }
+        if hasAudioClips { h += audioTrackHeight + trackSpacing }
+        return h
     }
 
     var body: some View {
@@ -136,9 +143,15 @@ struct AssemblyTimeline: View {
                 HStack(alignment: .top, spacing: 0) {
                     VStack(spacing: trackSpacing) {
                         Color.clear.frame(height: rulerHeight)
+                        if hasCallouts {
+                            trackLabel("花字", symbol: "textformat.size").frame(height: calloutTrackHeight)
+                        }
                         trackLabel("插图", symbol: "photo").frame(height: insertTrackHeight)
                         trackLabel("字幕", symbol: "captions.bubble").frame(height: subtitleTrackHeight)
                         trackLabel("视频", symbol: "film").frame(height: videoTrackHeight)
+                        if hasAudioClips {
+                            trackLabel("音乐", symbol: "music.note").frame(height: audioTrackHeight)
+                        }
                         Spacer(minLength: 0)
                     }
                     .frame(width: gutter, height: canvasHeight, alignment: .top)
@@ -152,9 +165,15 @@ struct AssemblyTimeline: View {
                             grid(width: width, height: canvasHeight - 12, scale: scale)
                             VStack(alignment: .leading, spacing: trackSpacing) {
                                 ruler(width: width, scale: scale)
+                                if hasCallouts {
+                                    calloutTrack(width: width, scale: scale)
+                                }
                                 insertTrack(width: width, scale: scale)
                                 subtitleTrack(width: width, scale: scale)
                                 videoTrack(width: width, scale: scale)
+                                if hasAudioClips {
+                                    audioTrack(width: width, scale: scale)
+                                }
                                 Spacer(minLength: 16)
                             }
                             if let snapGuideTime {
@@ -299,6 +318,78 @@ struct AssemblyTimeline: View {
         .gesture(DragGesture(minimumDistance: 0).onChanged { onSeek(layout.time(at: $0.location.x, scale: scale)) })
         .accessibilityLabel("时间标尺，点击或拖动定位")
         .accessibilityIdentifier("assembly.timeline.ruler")
+    }
+
+    private func calloutTrack(width: CGFloat, scale: Double) -> some View {
+        ZStack(alignment: .leading) {
+            palette.surface1.opacity(0.25)
+            ForEach(displayProject.callouts ?? []) { item in
+                let blockWidth = CGFloat(max(20, (item.end - item.start) * scale - 2))
+                let shape = RoundedRectangle(cornerRadius: Metrics.radiusXS)
+                HStack(spacing: Metrics.space1) {
+                    Text(item.style.label)
+                        .font(.studio(.micro, weight: .semibold))
+                        .foregroundStyle(palette.brand)
+                    Text(item.text).font(.studio(.caption)).lineLimit(1)
+                }
+                .padding(.horizontal, Metrics.space1_5)
+                .frame(width: blockWidth, height: calloutTrackHeight - 2, alignment: .leading)
+                .foregroundStyle(palette.textPrimary)
+                .background(palette.brand.opacity(0.22))
+                .clipShape(shape)
+                .overlay(shape.strokeBorder(palette.brand.opacity(0.55), lineWidth: 1))
+                .contentShape(Rectangle())
+                .onTapGesture { onSeek(item.start) }
+                .contextMenu {
+                    Button("定位到花字开头") { onSeek(item.start) }
+                    Divider()
+                    Button("删除花字", role: .destructive) { _ = state.removeCallout(project.id, id: item.id) }
+                }
+                .offset(x: item.start * scale)
+            }
+        }
+        .frame(width: width, height: calloutTrackHeight)
+        .clipped()
+    }
+
+    private func audioTrack(width: CGFloat, scale: Double) -> some View {
+        let library = Dictionary(uniqueKeysWithValues: project.referenceMedia.map { ($0.id, $0) })
+        return ZStack(alignment: .leading) {
+            palette.surface1.opacity(0.25)
+            ForEach(displayProject.audioClips ?? []) { clip in
+                let name = library[clip.assetID]?.name ?? (clip.kind == .music ? "背景音乐" : "音效")
+                let blockWidth = CGFloat(max(20, (clip.end - clip.start) * scale - 2))
+                let shape = RoundedRectangle(cornerRadius: Metrics.radiusXS)
+                HStack(spacing: Metrics.space1) {
+                    Image(systemName: clip.kind == .music ? "music.note" : "waveform")
+                        .font(.studio(.micro)).foregroundStyle(palette.success)
+                    Text(name).font(.studio(.caption)).lineLimit(1)
+                    Text("\(Int((clip.volume * 100).rounded()))%")
+                        .font(.studio(.micro)).foregroundStyle(palette.textSecondary)
+                }
+                .padding(.horizontal, Metrics.space1_5)
+                .frame(width: blockWidth, height: audioTrackHeight - 2, alignment: .leading)
+                .foregroundStyle(palette.textPrimary)
+                .background(palette.success.opacity(0.20))
+                .clipShape(shape)
+                .overlay(shape.strokeBorder(palette.success.opacity(0.5), lineWidth: 1))
+                .contentShape(Rectangle())
+                .onTapGesture { onSeek(clip.start) }
+                .contextMenu {
+                    Button("定位到音频开头") { onSeek(clip.start) }
+                    if clip.kind == .music {
+                        Button(clip.duckUnderSpeech ? "关闭人声避让" : "开启人声避让") {
+                            _ = state.updateAudioClip(project.id, id: clip.id) { $0.duckUnderSpeech.toggle() }
+                        }
+                    }
+                    Divider()
+                    Button("删除音频", role: .destructive) { _ = state.removeAudioClip(project.id, id: clip.id) }
+                }
+                .offset(x: clip.start * scale)
+            }
+        }
+        .frame(width: width, height: audioTrackHeight)
+        .clipped()
     }
 
     private func insertTrack(width: CGFloat, scale: Double) -> some View {

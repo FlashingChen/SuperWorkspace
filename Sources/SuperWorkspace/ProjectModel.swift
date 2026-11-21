@@ -73,12 +73,57 @@ struct Material: Identifiable, Codable, Equatable, Sendable {
 }
 
 struct ReferenceMedia: Identifiable, Codable, Equatable, Sendable {
-    enum Kind: String, Codable, Sendable { case image, video }
+    enum Kind: String, Codable, Sendable { case image, video, audio }
     var id = UUID()
     let name: String
     let kind: Kind
     var description = ""
     var duration: Double?
+}
+
+struct AudioClip: Identifiable, Codable, Equatable, Sendable {
+    enum Kind: String, Codable, Sendable { case music, effect }
+    var id = UUID()
+    var assetID: UUID
+    var kind: Kind = .music
+    /// Program timeline start/end in seconds.
+    var start: Double
+    var end: Double
+    var assetStart: Double = 0
+    /// Linear gain `0.0...1.5`.
+    var volume: Double = 0.25
+    var fadeIn: Double = 0.8
+    var fadeOut: Double = 1.0
+    var duckUnderSpeech: Bool = true
+}
+
+struct CalloutOverlay: Identifiable, Codable, Equatable, Sendable {
+    enum Style: String, Codable, Sendable, CaseIterable {
+        case title
+        case badge
+        case callout
+        case lowerThird
+
+        var label: String {
+            switch self {
+            case .title: return "大标题"
+            case .badge: return "角标"
+            case .callout: return "重点气泡"
+            case .lowerThird: return "信息条"
+            }
+        }
+    }
+    var id = UUID()
+    /// Program timeline start/end in seconds.
+    var start: Double
+    var end: Double
+    var text: String
+    var subtitle: String?
+    var style: Style = .callout
+    /// Normalized canvas coordinates (`0...1`, top-left origin).
+    var x: Double = 0.5
+    var y: Double = 0.2
+    var accentHex: String?
 }
 
 struct VideoProject: Identifiable, Codable, Equatable, Sendable {
@@ -89,6 +134,8 @@ struct VideoProject: Identifiable, Codable, Equatable, Sendable {
     var materials: [Material] = []
     var includeSubtitles = true
     var referenceMedia: [ReferenceMedia] = []
+    var audioClips: [AudioClip]?
+    var callouts: [CalloutOverlay]?
     var exportWithAIEditing: Bool?
     var exportSRT: Bool?
     var lastExportSRTName: String?
@@ -99,7 +146,11 @@ struct VideoProject: Identifiable, Codable, Equatable, Sendable {
     var frozenAt: Date?
     var isFrozen: Bool { frozenAt != nil }
 
-    enum CodingKeys: String, CodingKey { case id, name, createdAt, updatedAt, materials, includeSubtitles, canvasWidth, canvasHeight, lastExportName, exportSRT, lastExportSRTName, referenceMedia, exportWithAIEditing, frozenAt }
+    enum CodingKeys: String, CodingKey {
+        case id, name, createdAt, updatedAt, materials, includeSubtitles, canvasWidth, canvasHeight,
+             lastExportName, exportSRT, lastExportSRTName, referenceMedia, audioClips, callouts,
+             exportWithAIEditing, frozenAt
+    }
     init(name: String) { self.name = name }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -109,6 +160,8 @@ struct VideoProject: Identifiable, Codable, Equatable, Sendable {
         updatedAt = try c.decode(Date.self, forKey: .updatedAt)
         materials = try c.decodeIfPresent([Material].self, forKey: .materials) ?? []
         referenceMedia = try c.decodeIfPresent([ReferenceMedia].self, forKey: .referenceMedia) ?? []
+        audioClips = try c.decodeIfPresent([AudioClip].self, forKey: .audioClips)
+        callouts = try c.decodeIfPresent([CalloutOverlay].self, forKey: .callouts)
         exportWithAIEditing = try c.decodeIfPresent(Bool.self, forKey: .exportWithAIEditing)
         includeSubtitles = try c.decodeIfPresent(Bool.self, forKey: .includeSubtitles) ?? true
         canvasWidth = try c.decodeIfPresent(Double.self, forKey: .canvasWidth)

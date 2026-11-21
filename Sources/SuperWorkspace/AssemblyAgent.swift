@@ -10,15 +10,20 @@ final class AssemblyAgent: ObservableObject {
         var id = UUID()
         var role: Role
         var text: String
+        var edits: [String]? = nil
+        var editSteps: Int? = nil
         var createdAt = Date()
     }
 
     @Published private(set) var messages: [Message] = []
     @Published private(set) var streaming = ""
     @Published private(set) var activity: String?
+    @Published private(set) var turnStartedAt: Date?
     @Published private(set) var isBusy = false
     @Published private(set) var isReady = false
     @Published private(set) var failure: String?
+
+    private var turnEdits: [String] = []
 
     private let projectID: UUID
     private weak var state: AppState?
@@ -180,6 +185,8 @@ final class AssemblyAgent: ObservableObject {
         messages.append(.init(role: .user, text: text))
         persist()
         isBusy = true
+        turnStartedAt = Date()
+        turnEdits = []
         streaming = ""
         activity = nil
         failure = nil
@@ -227,14 +234,22 @@ final class AssemblyAgent: ObservableObject {
         case "tool_end":
             if let name = event["name"] as? String {
                 let ok = event["ok"] as? Bool ?? false
-                activity = Self.toolLabel(name, detail: nil) + (ok ? "完成" : "未通过")
+                let label = Self.toolLabel(name, detail: nil)
+                activity = label + (ok ? "完成" : "未通过")
+                if ok && Self.isMutatingTool(name) {
+                    turnEdits.append(label)
+                }
             }
         case "notice":
             if let text = event["text"] as? String { activity = sanitize(text) }
         case "done":
             let text = (event["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             let final = (text?.isEmpty == false ? text : nil) ?? streaming.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !final.isEmpty { append(.init(role: .assistant, text: final)) }
+            let edits = turnEdits.isEmpty ? nil : turnEdits
+            let steps = turnEdits.isEmpty ? nil : turnEdits.count
+            if !final.isEmpty || edits != nil {
+                append(.init(role: .assistant, text: final, edits: edits, editSteps: steps))
+            }
             finishTurn()
         case "error":
             let message = (event["message"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -247,6 +262,8 @@ final class AssemblyAgent: ObservableObject {
 
     private func finishTurn() {
         isBusy = false
+        turnStartedAt = nil
+        turnEdits = []
         streaming = ""
         activity = nil
         persist()
@@ -325,6 +342,13 @@ final class AssemblyAgent: ObservableObject {
         case "insert_add": label = "添加补充画面"
         case "insert_update": label = "调整补充画面"
         case "insert_remove": label = "移除补充画面"
+        case "audio_add": label = "添加音乐/音效"
+        case "audio_update": label = "调整音乐/音效"
+        case "audio_remove": label = "移除音乐/音效"
+        case "callout_add": label = "添加花字标注"
+        case "callout_update": label = "调整花字标注"
+        case "callout_remove": label = "移除花字标注"
+        case "silence_analyze": label = "分析静音停顿"
         case "motion_regenerate": label = "重做动效"
         case "job_status": label = "查询任务"
         default: label = name.isEmpty ? "处理中" : name
@@ -333,9 +357,18 @@ final class AssemblyAgent: ObservableObject {
         return "\(label)：\(detail)"
     }
 
+    private static func isMutatingTool(_ name: String) -> Bool {
+        !["project_read", "job_status", "silence_analyze"].contains(name)
+    }
+
     private static func systemPrompt(project: VideoProject) -> String {
         """
-        你是这个视频项目里的剪辑助手，直接操作项目，不要泛泛而谈。
+        你是这个视频项目里的全权剪辑导演，直接操作项目轨道，不要泛泛而谈。
+
+        你能直接做的事：
+        - 结构与节奏：裁剪片段（clip_trim）、切分片段（clip_split）、排序（clip_move）、调速（clip_speed，局部加速先切分再调速）、重命名（clip_rename）、扫描静音停顿（silence_analyze）并自动剪掉多余空白。
+        - 视觉包装：叠加花字/大标题/角标/下三分之一信息条（callout_add/update/remove）、从素材库插入补充画面（insert_add/update/remove）、切换成片画幅（canvas_set）、后台重做 Remotion 动效（motion_regenerate）。
+        - 声音与字幕：添加背景音乐或音效（audio_add/update/remove，音乐自动支持淡入淡出与人声避让）、增删改合分字幕（subtitle_*）。
 
         工作方式：
         - 动手前先调用 project_read 看当前状态。不要凭空猜片段、字幕序号或时间。
@@ -343,8 +376,8 @@ final class AssemblyAgent: ObservableObject {
         - 用户说「素材一」「第一段」或片段名称时，对应 project_read 返回的 clips；说「第 12 秒」时先判断是成片时间（timelineStart）还是原视频时间（in/out），不确定就按成片时间理解并在回复里说明。
         - 每次修改只调用需要的工具，看返回值确认成功；失败就换一种做法或直接告诉用户原因。
         - 动效重做（motion_regenerate）是后台渲染，耗时几分钟到几十分钟。调用后告诉用户已开始，可以用 job_status 查询；不要假装已经完成。
-        - 所有修改都可以被用户撤销，所以可以大胆执行明确的指令；但删除片段、删除字幕这类破坏性操作要先确认一次。
-        - 不要自己读写 project.json、transcript.json 或任何项目数据文件，那些由应用维护；需要通过工具。
+        - 所有修改都可以被用户撤销，所以可以大胆执行明确的指令；但删除整个片段这类破坏性操作要先确认一次。
+        - 不要自己读写 project.json、transcript.json 或任何项目数据文件，那些由应用维护；必须通过工具。
         - 回复用简体中文，简短直接：做了什么、影响哪个片段/时间段、下一步是什么。不要复述工具参数。
 
         当前项目：\(project.name)，共 \(project.materials.count) 个片段。

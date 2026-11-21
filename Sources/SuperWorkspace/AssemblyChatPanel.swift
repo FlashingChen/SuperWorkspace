@@ -1,12 +1,14 @@
 import SwiftUI
 
-/// The assembly-page chat window. Talks to one `AssemblyAgent` per project and
-/// shows streaming text plus the current project operation.
+/// The assembly-page AI director panel. Claude-style plain-prose responses,
+/// live elapsed activity indicator, and per-turn result cards with play & undo.
 struct AssemblyChatPanel: View {
+    @EnvironmentObject private var state: AppState
     @Environment(\.palette) private var palette
     let project: VideoProject
     @ObservedObject var agent: AssemblyAgent
     var focusContext: String? = nil
+    var onPlayPreview: (() -> Void)? = nil
     var onImportMedia: (() -> Void)? = nil
     var onOpenLibrary: (() -> Void)? = nil
     var onClose: (() -> Void)? = nil
@@ -14,11 +16,34 @@ struct AssemblyChatPanel: View {
     @State private var draft = ""
     @FocusState private var composerFocused: Bool
 
-    private let examples = [
-        "把当前选中的片段加速到 1.5 倍",
-        "在当前位置插入素材库第 1 张图，显示 3 秒",
-        "把素材一 12 到 18 秒的动效重做一下",
-        "把素材二前 3 秒剪掉",
+    private struct QuickAction: Identifiable {
+        let id = UUID()
+        let symbol: String
+        let title: String
+        let prompt: String
+    }
+
+    private let quickActions: [QuickAction] = [
+        .init(
+            symbol: "scissors",
+            title: "智能精剪停顿与空白",
+            prompt: "帮我分析各片段的静音停顿，把超过 0.8 秒的多余空白和明显口误剪掉，让节奏紧凑自然。"
+        ),
+        .init(
+            symbol: "textformat.size",
+            title: "在开头做一个大标题花字",
+            prompt: "根据项目主题和开场字幕，在成片开头前 3 秒叠加一个大标题花字（title 样式）。"
+        ),
+        .init(
+            symbol: "gauge.with.needle",
+            title: "把当前片段加速到 1.5 倍",
+            prompt: "把当前选中的片段加速到 1.5 倍速。"
+        ),
+        .init(
+            symbol: "music.note",
+            title: "为全片配背景音乐",
+            prompt: "如果素材库里有音频素材，帮我铺成全片背景音乐，开启人声避让和首尾淡入淡出；如果没有音频，提醒我先导入。"
+        ),
     ]
 
     var body: some View {
@@ -41,9 +66,12 @@ struct AssemblyChatPanel: View {
                 .font(.studio(.small, weight: .semibold))
                 .foregroundStyle(palette.ai)
                 .accessibilityHidden(true)
-            Text("AI 剪辑助手").font(.studio(.smallStrong))
+            Text("AI 剪辑导演").font(.studio(.smallStrong))
             Spacer()
-            Text(status).font(.studio(.caption)).foregroundStyle(statusColor)
+            HStack(spacing: Metrics.space1) {
+                Circle().fill(statusColor).frame(width: 6, height: 6)
+                Text(status).font(.studio(.caption)).foregroundStyle(palette.textSecondary)
+            }
             if let onClose {
                 Button(action: onClose) { Image(systemName: "xmark") }
                     .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
@@ -51,34 +79,30 @@ struct AssemblyChatPanel: View {
             }
         }
         .padding(.horizontal, Metrics.space3)
-        .frame(height: Metrics.row)
+        .frame(height: 40)
     }
 
     private var conversation: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: Metrics.space3) {
+                LazyVStack(alignment: .leading, spacing: Metrics.space4) {
                     if agent.messages.isEmpty { introduction }
                     ForEach(agent.messages) { message in
-                        bubble(message).id(message.id)
+                        messageRow(message).id(message.id)
                     }
                     if !agent.streaming.isEmpty {
-                        assistantBubble(agent.streaming).id("streaming")
+                        assistantProse(agent.streaming, edits: nil, editSteps: nil).id("streaming")
                     }
-                    if let activity = agent.activity {
-                        HStack(spacing: Metrics.space2) {
-                            ProgressView().controlSize(.mini)
-                            Text(activity).font(.studio(.small)).foregroundStyle(palette.textSecondary).lineLimit(2)
-                        }
-                        .padding(.leading, Metrics.space1)
+                    if agent.isBusy {
+                        liveActivityRow.id("activity")
                     }
                     if let failure = agent.failure {
                         Text(failure)
                             .font(.studio(.small))
                             .foregroundStyle(palette.warning)
-                            .padding(Metrics.space2)
+                            .padding(Metrics.space2_5)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(palette.surface1, in: RoundedRectangle(cornerRadius: Metrics.radiusS))
+                            .background(palette.surface1, in: RoundedRectangle(cornerRadius: Metrics.radiusM))
                     }
                     Color.clear.frame(height: 1).id("bottom")
                 }
@@ -93,28 +117,69 @@ struct AssemblyChatPanel: View {
 
     private var introduction: some View {
         VStack(alignment: .leading, spacing: Metrics.space3) {
-            Text("直接说想改什么，它会定位片段、动手修改，改动都能撤销。")
+            Text("直接说想改什么——剪停顿、调倍速、加花字、配音乐、插素材库画面或重做动效，改动会实时长在时间线上。")
                 .font(.studio(.small))
                 .foregroundStyle(palette.textSecondary)
-            ForEach(examples, id: \.self) { example in
-                Button {
-                    draft = example
-                    composerFocused = true
-                } label: {
-                    Text(example)
-                        .font(.studio(.small))
-                        .multilineTextAlignment(.leading)
-                        .padding(Metrics.space2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                .lineSpacing(3)
+            VStack(spacing: Metrics.space1_5) {
+                ForEach(quickActions) { action in
+                    Button {
+                        agent.send(action.prompt, contextNote: focusContext)
+                    } label: {
+                        HStack(spacing: Metrics.space2) {
+                            Image(systemName: action.symbol)
+                                .font(.studio(.small))
+                                .foregroundStyle(palette.ai)
+                                .frame(width: 18)
+                            Text(action.title)
+                                .font(.studio(.small))
+                                .foregroundStyle(palette.textPrimary)
+                                .multilineTextAlignment(.leading)
+                            Spacer(minLength: 0)
+                            Image(systemName: "arrow.up.right")
+                                .font(.studio(.micro))
+                                .foregroundStyle(palette.textMuted)
+                        }
+                        .padding(.horizontal, Metrics.space2_5)
+                        .padding(.vertical, Metrics.space2)
+                        .background(palette.surface1.opacity(0.65), in: RoundedRectangle(cornerRadius: Metrics.radiusM))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: Metrics.radiusM)
+                                .strokeBorder(palette.surface2, lineWidth: 1)
+                        }
+                    }
+                    .buttonStyle(StudioContentButtonStyle())
+                    .disabled(agent.isBusy)
                 }
-                .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
             }
         }
         .padding(.bottom, Metrics.space2)
     }
 
+    private var liveActivityRow: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let elapsed = agent.turnStartedAt.map { max(0, Int(context.date.timeIntervalSince($0))) } ?? 0
+            HStack(spacing: Metrics.space2) {
+                ProgressView().controlSize(.mini)
+                Text(agent.activity ?? "思考中…")
+                    .font(.studio(.small))
+                    .foregroundStyle(palette.textSecondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if elapsed > 0 {
+                    Text("\(elapsed)s")
+                        .font(.studio(.timecode))
+                        .foregroundStyle(palette.textMuted)
+                }
+            }
+            .padding(.horizontal, Metrics.space2_5)
+            .padding(.vertical, Metrics.space2)
+            .background(palette.surface1.opacity(0.55), in: RoundedRectangle(cornerRadius: Metrics.radiusM))
+        }
+    }
+
     @ViewBuilder
-    private func bubble(_ message: AssemblyAgent.Message) -> some View {
+    private func messageRow(_ message: AssemblyAgent.Message) -> some View {
         switch message.role {
         case .user:
             HStack {
@@ -127,7 +192,7 @@ struct AssemblyChatPanel: View {
                     .textSelection(.enabled)
             }
         case .assistant:
-            assistantBubble(message.text)
+            assistantProse(message.text, edits: message.edits, editSteps: message.editSteps)
         case .notice:
             Text(message.text)
                 .font(.studio(.small))
@@ -137,20 +202,75 @@ struct AssemblyChatPanel: View {
         }
     }
 
-    private func assistantBubble(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: Metrics.space2) {
-            Text("AI")
-                .font(.studio(.small, weight: .semibold))
-                .foregroundStyle(palette.ai)
-                .padding(.top, Metrics.space1)
-            Text(text)
-                .font(.studio(.body))
-                .foregroundStyle(palette.textPrimary)
-                .padding(.horizontal, Metrics.space3).padding(.vertical, Metrics.space2)
-                .background(palette.surface1, in: RoundedRectangle(cornerRadius: Metrics.radiusM))
-                .textSelection(.enabled)
-            Spacer(minLength: 0)
+    private func assistantProse(_ text: String, edits: [String]?, editSteps: Int?) -> some View {
+        VStack(alignment: .leading, spacing: Metrics.space2_5) {
+            if !text.isEmpty {
+                Text(text)
+                    .font(.studio(.body))
+                    .foregroundStyle(palette.textPrimary)
+                    .lineSpacing(3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            if let edits, !edits.isEmpty {
+                resultCard(edits: edits, steps: editSteps ?? edits.count)
+            }
         }
+    }
+
+    private func resultCard(edits: [String], steps: Int) -> some View {
+        let summary = summarizedEdits(edits)
+        return VStack(alignment: .leading, spacing: Metrics.space2) {
+            HStack(spacing: Metrics.space1_5) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.studio(.small))
+                    .foregroundStyle(palette.success)
+                Text("已应用 \(steps) 项修改")
+                    .font(.studio(.caption, weight: .semibold))
+                    .foregroundStyle(palette.textPrimary)
+                Spacer(minLength: 0)
+            }
+            Text(summary)
+                .font(.studio(.caption))
+                .foregroundStyle(palette.textSecondary)
+                .lineLimit(3)
+            HStack(spacing: Metrics.space2) {
+                if let onPlayPreview {
+                    Button {
+                        onPlayPreview()
+                    } label: {
+                        Label("播放看看", systemImage: "play.fill")
+                    }
+                    .buttonStyle(StudioButtonStyle(kind: .secondary, size: .compact))
+                }
+                Button {
+                    for _ in 0..<steps { state.undo() }
+                } label: {
+                    Label("撤销本轮", systemImage: "arrow.uturn.backward")
+                }
+                .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
+                .disabled(!state.canUndo)
+            }
+        }
+        .padding(Metrics.space2_5)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(palette.surface1, in: RoundedRectangle(cornerRadius: Metrics.radiusM))
+        .overlay {
+            RoundedRectangle(cornerRadius: Metrics.radiusM)
+                .strokeBorder(palette.surface2, lineWidth: 1)
+        }
+    }
+
+    private func summarizedEdits(_ edits: [String]) -> String {
+        var counts: [(String, Int)] = []
+        for edit in edits {
+            if let idx = counts.firstIndex(where: { $0.0 == edit }) {
+                counts[idx].1 += 1
+            } else {
+                counts.append((edit, 1))
+            }
+        }
+        return counts.map { $1 > 1 ? "\($0) ×\($1)" : $0 }.joined(separator: " · ")
     }
 
     private var composer: some View {
@@ -172,7 +292,7 @@ struct AssemblyChatPanel: View {
                 if onImportMedia != nil || onOpenLibrary != nil {
                     Menu {
                         if let onImportMedia {
-                            Button("导入图片或视频到素材库", systemImage: "plus.rectangle.on.folder", action: onImportMedia)
+                            Button("导入图片、视频或音频", systemImage: "plus.rectangle.on.folder", action: onImportMedia)
                         }
                         if let onOpenLibrary {
                             Button("查看项目素材库（\(project.referenceMedia.count)）", systemImage: "photo.on.rectangle", action: onOpenLibrary)
@@ -184,7 +304,7 @@ struct AssemblyChatPanel: View {
                     .menuStyle(StudioMenuStyle())
                     .menuIndicator(.hidden)
                     .fixedSize()
-                    .help("添加或查看素材库")
+                    .help("添加或查看素材库（图片/视频/音乐）")
                     .accessibilityLabel("素材库附件")
                 }
                 TextField("说要改什么…", text: $draft, axis: .vertical)
@@ -199,8 +319,8 @@ struct AssemblyChatPanel: View {
                 .disabled(!agent.isBusy && draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .accessibilityLabel(agent.isBusy ? "停止" : "发送")
             }
-            Text("修改实时落到时间线，可用 ⌘Z 撤销")
-                .font(.studio(.caption))
+            Text("支持花字、音乐/音效、倍速、插图、剪停顿与字幕，均可 ⌘Z 撤销")
+                .font(.studio(.micro))
                 .foregroundStyle(palette.textMuted)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -224,7 +344,7 @@ struct AssemblyChatPanel: View {
 
     private var status: String {
         if agent.isBusy { return "处理中" }
-        if agent.isReady { return "在线" }
+        if agent.isReady { return "就绪" }
         if agent.failure != nil { return "未连接" }
         return "连接中"
     }

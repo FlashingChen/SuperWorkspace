@@ -161,6 +161,8 @@ enum AIEditing {
             case .image: guard assetStart == 0 else { throw invalidPlan() }
             case .video:
                 guard let duration = asset.duration, assetStart + (insert.end - insert.start) <= duration else { throw invalidPlan() }
+            case .audio:
+                throw invalidPlan()
             }
             lastEnd[clip.id] = insert.end
         }
@@ -196,6 +198,8 @@ enum AIEditing {
             case .video:
                 guard let duration = asset.duration, duration.isFinite,
                       assetStart + (insert.end - insert.start) <= duration + 0.001 else { continue }
+            case .audio:
+                continue
             }
             accepted.append(insert)
             lastEnd = insert.end

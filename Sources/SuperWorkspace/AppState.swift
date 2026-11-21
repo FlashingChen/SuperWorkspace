@@ -1383,6 +1383,98 @@ final class AppState: ObservableObject {
         inserts.remove(at: index)
         return setInserts(projectID, materialID, inserts)
     }
+
+    @discardableResult
+    func setAudioClips(_ projectID: UUID, _ clips: [AudioClip], undoName: String = "调整音频轨") -> Bool {
+        guard let project = projects.first(where: { $0.id == projectID }), !project.isFrozen else { return false }
+        let old = project.audioClips ?? []
+        guard old != clips else { return true }
+        guard updateProject(projectID, { $0.audioClips = clips.isEmpty ? nil : clips }) else { return false }
+        registerUndo(projectID, name: undoName) { _ = $0.setAudioClips(projectID, old, undoName: undoName) }
+        return true
+    }
+
+    @discardableResult
+    func addAudioClip(_ projectID: UUID, _ clip: AudioClip) -> Bool {
+        guard let project = projects.first(where: { $0.id == projectID }), !project.isFrozen,
+              clip.start.isFinite, clip.end.isFinite, clip.start >= 0, clip.end - clip.start >= 1.0 / 30,
+              project.referenceMedia.contains(where: { $0.id == clip.assetID && $0.kind == .audio }) else { return false }
+        var clips = project.audioClips ?? []
+        clips.append(clip)
+        clips.sort { $0.start < $1.start }
+        return setAudioClips(projectID, clips, undoName: "添加音频")
+    }
+
+    @discardableResult
+    func updateAudioClip(_ projectID: UUID, id: UUID, mutate: (inout AudioClip) -> Void) -> Bool {
+        guard let project = projects.first(where: { $0.id == projectID }), !project.isFrozen else { return false }
+        var clips = project.audioClips ?? []
+        guard let idx = clips.firstIndex(where: { $0.id == id }) else { return false }
+        var updated = clips[idx]
+        mutate(&updated)
+        guard updated.start.isFinite, updated.end.isFinite, updated.start >= 0, updated.end - updated.start >= 1.0 / 30 else { return false }
+        updated.volume = min(1.5, max(0, updated.volume.isFinite ? updated.volume : 0.25))
+        updated.fadeIn = max(0, updated.fadeIn.isFinite ? updated.fadeIn : 0)
+        updated.fadeOut = max(0, updated.fadeOut.isFinite ? updated.fadeOut : 0)
+        clips[idx] = updated
+        clips.sort { $0.start < $1.start }
+        return setAudioClips(projectID, clips, undoName: "调整音频")
+    }
+
+    @discardableResult
+    func removeAudioClip(_ projectID: UUID, id: UUID) -> Bool {
+        guard let project = projects.first(where: { $0.id == projectID }), !project.isFrozen else { return false }
+        var clips = project.audioClips ?? []
+        let before = clips.count
+        clips.removeAll { $0.id == id }
+        guard clips.count != before else { return false }
+        return setAudioClips(projectID, clips, undoName: "删除音频")
+    }
+
+    @discardableResult
+    func setCallouts(_ projectID: UUID, _ callouts: [CalloutOverlay], undoName: String = "调整花字") -> Bool {
+        guard let project = projects.first(where: { $0.id == projectID }), !project.isFrozen else { return false }
+        let old = project.callouts ?? []
+        guard old != callouts else { return true }
+        guard updateProject(projectID, { $0.callouts = callouts.isEmpty ? nil : callouts }) else { return false }
+        registerUndo(projectID, name: undoName) { _ = $0.setCallouts(projectID, old, undoName: undoName) }
+        return true
+    }
+
+    @discardableResult
+    func addCallout(_ projectID: UUID, _ callout: CalloutOverlay) -> Bool {
+        guard let project = projects.first(where: { $0.id == projectID }), !project.isFrozen,
+              callout.start.isFinite, callout.end.isFinite, callout.start >= 0, callout.end - callout.start >= 1.0 / 30,
+              !callout.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        var callouts = project.callouts ?? []
+        callouts.append(callout)
+        callouts.sort { $0.start < $1.start }
+        return setCallouts(projectID, callouts, undoName: "添加花字")
+    }
+
+    @discardableResult
+    func updateCallout(_ projectID: UUID, id: UUID, mutate: (inout CalloutOverlay) -> Void) -> Bool {
+        guard let project = projects.first(where: { $0.id == projectID }), !project.isFrozen else { return false }
+        var callouts = project.callouts ?? []
+        guard let idx = callouts.firstIndex(where: { $0.id == id }) else { return false }
+        var updated = callouts[idx]
+        mutate(&updated)
+        guard updated.start.isFinite, updated.end.isFinite, updated.start >= 0, updated.end - updated.start >= 1.0 / 30,
+              !updated.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        callouts[idx] = updated
+        callouts.sort { $0.start < $1.start }
+        return setCallouts(projectID, callouts, undoName: "调整花字")
+    }
+
+    @discardableResult
+    func removeCallout(_ projectID: UUID, id: UUID) -> Bool {
+        guard let project = projects.first(where: { $0.id == projectID }), !project.isFrozen else { return false }
+        var callouts = project.callouts ?? []
+        let before = callouts.count
+        callouts.removeAll { $0.id == id }
+        guard callouts.count != before else { return false }
+        return setCallouts(projectID, callouts, undoName: "删除花字")
+    }
     /// Applies a new instruction and queues a motion re-render. Rendering itself is
     /// not undoable, but the prompt change and every other edit are.
     func regenerateMotion(_ projectID: UUID, _ id: UUID, instruction: String?) {

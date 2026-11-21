@@ -98,6 +98,7 @@ struct AssemblyView: View {
                         project: project,
                         agent: chatAgent,
                         focusContext: editorFocusContext,
+                        onPlayPreview: { if !isPlaying && player.currentItem != nil { togglePlayback() } },
                         onImportMedia: { importingMedia = true },
                         onOpenLibrary: onOpenLibrary
                     )
@@ -110,7 +111,7 @@ struct AssemblyView: View {
         .sheet(isPresented: $showsSubtitlesSheet) {
             subtitlesSheet
         }
-        .fileImporter(isPresented: $importingMedia, allowedContentTypes: [.image, .movie], allowsMultipleSelection: true) { result in
+        .fileImporter(isPresented: $importingMedia, allowedContentTypes: [.image, .movie, .audio], allowsMultipleSelection: true) { result in
             if case .success(let urls) = result { importReferenceMedia(urls) }
         }
         .onAppear {
@@ -547,6 +548,7 @@ struct AssemblyView: View {
             try Task.checkCancellation()
             let item = AVPlayerItem(asset: assembly.composition)
             item.videoComposition = assembly.videoComposition
+            item.audioMix = assembly.audioMix
             if let observer { player.removeTimeObserver(observer); self.observer = nil }
             player.replaceCurrentItem(with: item)
             let duration = AssemblyTimelineLayout(materials: project.materials).duration
@@ -584,6 +586,8 @@ struct AssemblyPreviewInputs: Equatable {
         let inserts: [AIEditing.Insert]?
     }
     let clips: [ClipSignature]
+    let audioClips: [AudioClip]?
+    let callouts: [CalloutOverlay]?
     let width: Double?
     let height: Double?
     init(project: VideoProject) {
@@ -600,6 +604,8 @@ struct AssemblyPreviewInputs: Equatable {
                 inserts: $0.inserts
             )
         }
+        audioClips = project.audioClips
+        callouts = project.callouts
         width = project.canvasWidth
         height = project.canvasHeight
     }

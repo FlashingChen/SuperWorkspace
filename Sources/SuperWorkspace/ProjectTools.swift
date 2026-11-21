@@ -49,6 +49,20 @@ enum ProjectTools {
             return updateInsert(call.args, project: project, state: state)
         case "insert_remove":
             return removeInsert(call.args, project: project, state: state)
+        case "audio_add":
+            return addAudio(call.args, project: project, state: state)
+        case "audio_update":
+            return updateAudio(call.args, project: project, state: state)
+        case "audio_remove":
+            return removeAudio(call.args, project: project, state: state)
+        case "callout_add":
+            return addCallout(call.args, project: project, state: state)
+        case "callout_update":
+            return updateCallout(call.args, project: project, state: state)
+        case "callout_remove":
+            return removeCallout(call.args, project: project, state: state)
+        case "silence_analyze":
+            return analyzeSilence(call.args, project: project)
         case "motion_regenerate":
             return regenerateMotion(call.args, project: project, state: state)
         case "job_status":
@@ -119,19 +133,49 @@ enum ProjectTools {
                 ("duration", media.duration.map { .number(rounded($0)) } ?? .null),
             ])
         }
+        let audioClips = (project.audioClips ?? []).enumerated().map { index, clip -> JSONValue in
+            .object([
+                ("index", .number(Double(index + 1))),
+                ("id", .string(clip.id.uuidString)),
+                ("assetID", .string(clip.assetID.uuidString)),
+                ("kind", .string(clip.kind.rawValue)),
+                ("start", .number(rounded(clip.start))),
+                ("end", .number(rounded(clip.end))),
+                ("volume", .number(rounded(clip.volume))),
+                ("fadeIn", .number(rounded(clip.fadeIn))),
+                ("fadeOut", .number(rounded(clip.fadeOut))),
+                ("duckUnderSpeech", .bool(clip.duckUnderSpeech)),
+            ])
+        }
+        let callouts = (project.callouts ?? []).enumerated().map { index, item -> JSONValue in
+            .object([
+                ("index", .number(Double(index + 1))),
+                ("id", .string(item.id.uuidString)),
+                ("start", .number(rounded(item.start))),
+                ("end", .number(rounded(item.end))),
+                ("text", .string(item.text)),
+                ("subtitle", .string(item.subtitle ?? "")),
+                ("style", .string(item.style.rawValue)),
+                ("x", .number(rounded(item.x))),
+                ("y", .number(rounded(item.y))),
+            ])
+        }
         return .object([
             ("project", .object([
                 ("id", .string(project.id.uuidString)),
                 ("name", .string(project.name)),
                 ("frozen", .bool(project.isFrozen)),
+                ("totalDuration", .number(rounded(offset))),
                 ("canvasWidth", project.canvasWidth.map { .number(rounded($0)) } ?? .null),
                 ("canvasHeight", project.canvasHeight.map { .number(rounded($0)) } ?? .null),
             ])),
             ("clips", .array(clips)),
+            ("audioClips", .array(audioClips)),
+            ("callouts", .array(callouts)),
             ("library", .array(library)),
             ("notes", .array([
-                .string("时间单位均为秒。in/out 是片段在原视频中的时间；timelineStart 是成片时间轴上的起点。"),
-                .string("clip 参数可以传片段序号（1 开始）或片段 id。subtitle 的 index 从 1 开始。"),
+                .string("时间单位均为秒。in/out 是片段在原视频中的时间；timelineStart、audioClips 与 callouts 的 start/end 是成片时间轴秒数。"),
+                .string("clip 参数可以传片段序号（1 开始）、自定义片段名称或片段 id。subtitle 的 index 从 1 开始。"),
             ])),
         ])
     }
@@ -356,6 +400,192 @@ enum ProjectTools {
         guard state.setInserts(project.id, material.id, inserts) else { return .failure("保存补充画面失败。") }
         return .success(.object([("clip", .string(material.id.uuidString)),
                                  ("inserts", .number(Double(inserts.count)))]))
+    }
+
+    private static func addAudio(_ args: [String: JSONValue], project: VideoProject, state: AppState) -> ProjectToolOutcome {
+        guard !project.isFrozen else { return .failure("项目已冻结，先取消冻结再修改。") }
+        guard let asset = resolveAsset(args, in: project), asset.kind == .audio else {
+            return .failure("未找到素材库音频，请先导入音频素材并传入序号或 id。")
+        }
+        let total = AssemblyTimelineLayout(materials: project.materials).duration
+        let kind: AudioClip.Kind = args["kind"]?.stringValue == "effect" ? .effect : .music
+        let start = max(0, args["start"]?.numberValue ?? 0)
+        let defaultEnd = kind == .music ? max(start + 1, total) : min(max(start + 1, total), start + (asset.duration ?? 2))
+        let end = args["end"]?.numberValue ?? defaultEnd
+        let volume = args["volume"]?.numberValue ?? (kind == .music ? 0.25 : 0.85)
+        let fadeIn = args["fadeIn"]?.numberValue ?? (kind == .music ? 0.8 : 0)
+        let fadeOut = args["fadeOut"]?.numberValue ?? (kind == .music ? 1.0 : 0)
+        let duck = args["duckUnderSpeech"]?.boolValue ?? (kind == .music)
+        let clip = AudioClip(
+            assetID: asset.id, kind: kind, start: start, end: end,
+            assetStart: max(0, args["assetStart"]?.numberValue ?? 0),
+            volume: min(1.5, max(0, volume)),
+            fadeIn: max(0, fadeIn), fadeOut: max(0, fadeOut), duckUnderSpeech: duck
+        )
+        guard state.addAudioClip(project.id, clip) else { return .failure("无法添加音频，请检查时间范围。") }
+        return .success(.object([
+            ("result", .string("audio_added")),
+            ("id", .string(clip.id.uuidString)),
+            ("kind", .string(kind.rawValue)),
+            ("start", .number(rounded(clip.start))),
+            ("end", .number(rounded(clip.end))),
+            ("volume", .number(rounded(clip.volume))),
+        ]))
+    }
+
+    private static func updateAudio(_ args: [String: JSONValue], project: VideoProject, state: AppState) -> ProjectToolOutcome {
+        guard !project.isFrozen else { return .failure("项目已冻结，先取消冻结再修改。") }
+        guard let target = resolveAudioClip(args, in: project) else { return .failure("未找到音频条，请传入序号或 id。") }
+        let ok = state.updateAudioClip(project.id, id: target.id) { clip in
+            if let s = args["start"]?.numberValue { clip.start = max(0, s) }
+            if let e = args["end"]?.numberValue { clip.end = max(clip.start + 0.05, e) }
+            if let v = args["volume"]?.numberValue { clip.volume = min(1.5, max(0, v)) }
+            if let fi = args["fadeIn"]?.numberValue { clip.fadeIn = max(0, fi) }
+            if let fo = args["fadeOut"]?.numberValue { clip.fadeOut = max(0, fo) }
+            if let duck = args["duckUnderSpeech"]?.boolValue { clip.duckUnderSpeech = duck }
+        }
+        guard ok else { return .failure("更新音频失败。") }
+        return .success(.object([("result", .string("audio_updated")), ("id", .string(target.id.uuidString))]))
+    }
+
+    private static func removeAudio(_ args: [String: JSONValue], project: VideoProject, state: AppState) -> ProjectToolOutcome {
+        guard !project.isFrozen else { return .failure("项目已冻结，先取消冻结再修改。") }
+        guard let target = resolveAudioClip(args, in: project) else { return .failure("未找到音频条，请传入序号或 id。") }
+        guard state.removeAudioClip(project.id, id: target.id) else { return .failure("删除音频失败。") }
+        return .success(.object([("result", .string("audio_removed")), ("id", .string(target.id.uuidString))]))
+    }
+
+    private static func addCallout(_ args: [String: JSONValue], project: VideoProject, state: AppState) -> ProjectToolOutcome {
+        guard !project.isFrozen else { return .failure("项目已冻结，先取消冻结再修改。") }
+        guard let text = args["text"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+            return .failure("请提供花字文案 text。")
+        }
+        guard let start = args["start"]?.numberValue else { return .failure("请提供花字开始时间 start（成片秒数）。") }
+        let end = args["end"]?.numberValue ?? (start + 3.0)
+        let style = args["style"]?.stringValue.flatMap(CalloutOverlay.Style.init(rawValue:)) ?? .callout
+        let defaultY: Double = switch style {
+        case .title: 0.45
+        case .badge: 0.12
+        case .callout: 0.22
+        case .lowerThird: 0.78
+        }
+        let defaultX: Double = style == .lowerThird ? 0.34 : 0.5
+        let item = CalloutOverlay(
+            start: max(0, start),
+            end: max(start + 0.2, end),
+            text: text,
+            subtitle: args["subtitle"]?.stringValue,
+            style: style,
+            x: args["x"]?.numberValue ?? defaultX,
+            y: args["y"]?.numberValue ?? defaultY,
+            accentHex: args["accentHex"]?.stringValue
+        )
+        guard state.addCallout(project.id, item) else { return .failure("添加花字失败，请检查时间范围。") }
+        return .success(.object([
+            ("result", .string("callout_added")),
+            ("id", .string(item.id.uuidString)),
+            ("style", .string(item.style.rawValue)),
+            ("start", .number(rounded(item.start))),
+            ("end", .number(rounded(item.end))),
+            ("text", .string(item.text)),
+        ]))
+    }
+
+    private static func updateCallout(_ args: [String: JSONValue], project: VideoProject, state: AppState) -> ProjectToolOutcome {
+        guard !project.isFrozen else { return .failure("项目已冻结，先取消冻结再修改。") }
+        guard let target = resolveCallout(args, in: project) else { return .failure("未找到花字，请传入序号或 id。") }
+        let ok = state.updateCallout(project.id, id: target.id) { item in
+            if let t = args["text"]?.stringValue, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { item.text = t }
+            if let s = args["subtitle"]?.stringValue { item.subtitle = s.isEmpty ? nil : s }
+            if let start = args["start"]?.numberValue { item.start = max(0, start) }
+            if let end = args["end"]?.numberValue { item.end = max(item.start + 0.1, end) }
+            if let style = args["style"]?.stringValue.flatMap(CalloutOverlay.Style.init(rawValue:)) { item.style = style }
+            if let x = args["x"]?.numberValue { item.x = min(0.95, max(0.05, x)) }
+            if let y = args["y"]?.numberValue { item.y = min(0.92, max(0.08, y)) }
+            if let hex = args["accentHex"]?.stringValue { item.accentHex = hex.isEmpty ? nil : hex }
+        }
+        guard ok else { return .failure("更新花字失败。") }
+        return .success(.object([("result", .string("callout_updated")), ("id", .string(target.id.uuidString))]))
+    }
+
+    private static func removeCallout(_ args: [String: JSONValue], project: VideoProject, state: AppState) -> ProjectToolOutcome {
+        guard !project.isFrozen else { return .failure("项目已冻结，先取消冻结再修改。") }
+        guard let target = resolveCallout(args, in: project) else { return .failure("未找到花字，请传入序号或 id。") }
+        guard state.removeCallout(project.id, id: target.id) else { return .failure("删除花字失败。") }
+        return .success(.object([("result", .string("callout_removed")), ("id", .string(target.id.uuidString))]))
+    }
+
+    private static func analyzeSilence(_ args: [String: JSONValue], project: VideoProject) -> ProjectToolOutcome {
+        guard let material = resolveClip(args, in: project) else { return .failure("未找到片段。") }
+        let minDuration = max(0.25, args["minDuration"]?.numberValue ?? 0.6)
+        let threshold = min(0.2, max(0.005, args["threshold"]?.numberValue ?? 0.02))
+        let wavURL = ProjectLayout.materialDirectory(material, in: project).appendingPathComponent("audio-16k.wav")
+        guard let data = try? Data(contentsOf: wavURL, options: .mappedIfSafe), data.count > 44 else {
+            return .failure("该片段尚无音频波形缓存（需先完成字幕音频提取）。")
+        }
+        let sampleRate = 16000
+        let windowSamples = sampleRate / 20 // 50ms windows
+        let totalSamples = (data.count - 44) / 2
+        let startWindow = max(0, Int(material.inPoint * 20))
+        let endWindow = min(totalSamples / windowSamples, Int(ceil(material.outPoint * 20)))
+        var silences: [(Double, Double)] = []
+        var quietStart: Double?
+        data.withUnsafeBytes { raw in
+            let samples = raw.baseAddress!.advanced(by: 44).assumingMemoryBound(to: Int16.self)
+            for w in startWindow..<endWindow {
+                let from = w * windowSamples
+                let to = min(totalSamples, from + windowSamples)
+                var peak: Int32 = 0
+                for i in from..<to {
+                    let v = abs(Int32(samples[i]))
+                    if v > peak { peak = v }
+                }
+                let amp = Double(peak) / 32768.0
+                let t = Double(w) * 0.05
+                if amp < threshold {
+                    if quietStart == nil { quietStart = t }
+                } else if let s = quietStart {
+                    if t - s >= minDuration { silences.append((s, t)) }
+                    quietStart = nil
+                }
+            }
+            if let s = quietStart {
+                let endT = Double(endWindow) * 0.05
+                if endT - s >= minDuration { silences.append((s, endT)) }
+            }
+        }
+        return .success(.object([
+            ("clip", .string(material.id.uuidString)),
+            ("silences", .array(silences.prefix(60).map { s, e in
+                .object([
+                    ("start", .number(rounded(s))),
+                    ("end", .number(rounded(e))),
+                    ("duration", .number(rounded(e - s))),
+                ])
+            })),
+        ]))
+    }
+
+    private static func resolveAudioClip(_ args: [String: JSONValue], in project: VideoProject) -> AudioClip? {
+        let clips = project.audioClips ?? []
+        if let id = args["id"]?.stringValue.flatMap(UUID.init(uuidString:)) {
+            return clips.first { $0.id == id }
+        }
+        if let index = args["index"]?.intValue, index >= 1, index <= clips.count {
+            return clips[index - 1]
+        }
+        return nil
+    }
+
+    private static func resolveCallout(_ args: [String: JSONValue], in project: VideoProject) -> CalloutOverlay? {
+        let items = project.callouts ?? []
+        if let id = args["id"]?.stringValue.flatMap(UUID.init(uuidString:)) {
+            return items.first { $0.id == id }
+        }
+        if let index = args["index"]?.intValue, index >= 1, index <= items.count {
+            return items[index - 1]
+        }
+        return nil
     }
 
     private static func regenerateMotion(_ args: [String: JSONValue], project: VideoProject, state: AppState) -> ProjectToolOutcome {

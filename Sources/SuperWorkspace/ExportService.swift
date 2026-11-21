@@ -6,6 +6,7 @@ import QuartzCore
 struct Assembly {
     let composition: AVMutableComposition
     let videoComposition: AVMutableVideoComposition
+    let audioMix: AVAudioMix?
     let size: CGSize
 }
 
@@ -97,22 +98,119 @@ enum ExportService {
                 cutaways.append(try await cutaway(url, kind: reference.kind, range: cutawayRange,
                                                   assetStart: insert.assetStart ?? 0, canvas: renderSize, composition: composition))
             }
-            let overlays: [SubtitleOverlay] = includeSubtitles ? material.visibleSubtitles.compactMap { subtitle in
+            var overlays: [SubtitleOverlay] = includeSubtitles ? material.visibleSubtitles.compactMap { subtitle in
                 guard !subtitle.text.isEmpty, subtitle.end > subtitle.start else { return nil }
                 guard let caption = SubtitleRenderer.caption(subtitle.text, canvas: renderSize) else { return nil }
                 return SubtitleOverlay(start: cursor.seconds + subtitle.start, end: cursor.seconds + subtitle.end,
                                        image: caption.image, frame: caption.frame)
             } : []
+            let segStart = cursor.seconds
+            let segEnd = segStart + scaledDuration.seconds
+            for callout in project.callouts ?? [] where callout.end > segStart && callout.start < segEnd {
+                if let rendered = CalloutRenderer.render(callout, canvas: renderSize) {
+                    overlays.append(rendered)
+                }
+            }
             instructions.append(AssemblyInstruction(range: CMTimeRange(start: cursor, duration: scaledDuration),
                 trackID: video.trackID, transform: fit, overlays: overlays, cutaways: cutaways))
             cursor = CMTimeAdd(cursor, scaledDuration)
         }
+        let audioMix = try await attachAudioClips(
+            project: project,
+            library: library,
+            totalDuration: cursor.seconds,
+            composition: composition
+        )
         let videoComposition = AVMutableVideoComposition()
         videoComposition.customVideoCompositorClass = AssemblyCompositor.self
         videoComposition.renderSize = canvas!
         videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
         videoComposition.instructions = instructions
-        return Assembly(composition: composition, videoComposition: videoComposition, size: canvas!)
+        return Assembly(composition: composition, videoComposition: videoComposition, audioMix: audioMix, size: canvas!)
+    }
+
+    private static func attachAudioClips(
+        project: VideoProject,
+        library: [UUID: ReferenceMedia],
+        totalDuration: Double,
+        composition: AVMutableComposition
+    ) async throws -> AVAudioMix? {
+        let clips = (project.audioClips ?? []).filter { $0.end > $0.start && $0.start < totalDuration }
+        guard !clips.isEmpty, totalDuration > 0 else { return nil }
+        let speechRanges = project.assembledSubtitles.filter { $0.end > $0.start }
+        var parameters: [AVMutableAudioMixInputParameters] = []
+        for clip in clips {
+            guard let reference = library[clip.assetID], reference.kind == .audio else { continue }
+            let url = ProjectLayout.reference(reference, in: project)
+            let asset = AVURLAsset(url: url)
+            guard let source = try? await asset.loadTracks(withMediaType: .audio).first,
+                  let sourceRange = try? await source.load(.timeRange),
+                  sourceRange.duration.seconds > 0 else { continue }
+            let clampedStart = max(0, clip.start)
+            let clampedEnd = min(totalDuration, clip.end)
+            let targetDuration = clampedEnd - clampedStart
+            guard targetDuration >= 1.0 / 30 else { continue }
+            guard let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else { continue }
+
+            // Loop background music seamlessly if shorter than target range; sound effects play once.
+            var remaining = targetDuration
+            var writeCursor = CMTime(seconds: clampedStart, preferredTimescale: 600)
+            var sourceOffset = min(max(0, clip.assetStart), max(0, sourceRange.duration.seconds - 0.05))
+            while remaining > 0.01 {
+                let avail = max(0, sourceRange.duration.seconds - sourceOffset)
+                guard avail > 0.01 else { break }
+                let chunk = min(remaining, avail)
+                let srcRange = CMTimeRange(
+                    start: CMTime(seconds: sourceRange.start.seconds + sourceOffset, preferredTimescale: 600),
+                    duration: CMTime(seconds: chunk, preferredTimescale: 600)
+                )
+                try? track.insertTimeRange(srcRange, of: source, at: writeCursor)
+                writeCursor = CMTimeAdd(writeCursor, srcRange.duration)
+                remaining -= chunk
+                sourceOffset = 0
+                if clip.kind == .effect { break }
+            }
+
+            let params = AVMutableAudioMixInputParameters(track: track)
+            let baseVol = Float(min(1.5, max(0, clip.volume)))
+            params.setVolume(baseVol, at: CMTime(seconds: clampedStart, preferredTimescale: 600))
+
+            if clip.duckUnderSpeech && clip.kind == .music && !speechRanges.isEmpty {
+                let duckVol = baseVol * 0.35
+                let ramp = 0.25
+                for speech in speechRanges where speech.end > clampedStart && speech.start < clampedEnd {
+                    let s = max(clampedStart, speech.start)
+                    let e = min(clampedEnd, speech.end)
+                    guard e > s else { continue }
+                    let downStart = max(clampedStart, s - ramp)
+                    params.setVolumeRamp(fromStartVolume: baseVol, toEndVolume: duckVol,
+                                         timeRange: CMTimeRange(start: CMTime(seconds: downStart, preferredTimescale: 600),
+                                                                duration: CMTime(seconds: max(0.05, s - downStart), preferredTimescale: 600)))
+                    let upEnd = min(clampedEnd, e + ramp)
+                    params.setVolumeRamp(fromStartVolume: duckVol, toEndVolume: baseVol,
+                                         timeRange: CMTimeRange(start: CMTime(seconds: e, preferredTimescale: 600),
+                                                                duration: CMTime(seconds: max(0.05, upEnd - e), preferredTimescale: 600)))
+                }
+            }
+
+            let fadeIn = min(max(0, clip.fadeIn), targetDuration / 2)
+            if fadeIn > 0.02 {
+                params.setVolumeRamp(fromStartVolume: 0, toEndVolume: baseVol,
+                                     timeRange: CMTimeRange(start: CMTime(seconds: clampedStart, preferredTimescale: 600),
+                                                            duration: CMTime(seconds: fadeIn, preferredTimescale: 600)))
+            }
+            let fadeOut = min(max(0, clip.fadeOut), targetDuration / 2)
+            if fadeOut > 0.02 {
+                params.setVolumeRamp(fromStartVolume: baseVol, toEndVolume: 0,
+                                     timeRange: CMTimeRange(start: CMTime(seconds: clampedEnd - fadeOut, preferredTimescale: 600),
+                                                            duration: CMTime(seconds: fadeOut, preferredTimescale: 600)))
+            }
+            parameters.append(params)
+        }
+        guard !parameters.isEmpty else { return nil }
+        let mix = AVMutableAudioMix()
+        mix.inputParameters = parameters
+        return mix
     }
 
     // MARK: - Fallback background
@@ -264,6 +362,8 @@ enum ExportService {
             return Cutaway(range: CMTimeRange(start: range.start, duration: duration),
                            content: .video(target.trackID, backdrop: backdrop(for: canvas)),
                            transform: fittedTransform(bounds: bounds, transform: transform, canvas: canvas))
+        case .audio:
+            throw failure("音频素材不能作为画面插入。")
         }
     }
 
@@ -281,6 +381,8 @@ enum ExportService {
         // 单素材、未裁剪、不烧字幕：直接复制画面与声音，避免整片重编码。
         try Task.checkCancellation()
         if inserts.isEmpty,
+           (project.audioClips ?? []).isEmpty,
+           (project.callouts ?? []).isEmpty,
            project.materials.count == 1, !project.includeSubtitles,
            let material = project.materials.first,
            abs(material.playbackSpeed - 1.0) <= 0.001,
@@ -316,6 +418,7 @@ enum ExportService {
         session.outputURL = output
         session.outputFileType = .mp4
         session.videoComposition = assembly.videoComposition
+        session.audioMix = assembly.audioMix
         session.shouldOptimizeForNetworkUse = true
         await session.export()
         guard session.status == .completed, progress?.isCancelled != true, !Task.isCancelled else {
