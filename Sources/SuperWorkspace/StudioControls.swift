@@ -166,6 +166,46 @@ struct StudioTextFieldStyle: TextFieldStyle {
     }
 }
 
+struct StudioSearchField: View {
+    @Environment(\.palette) private var palette
+    let placeholder: String
+    @Binding var text: String
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: Metrics.space2) {
+            Image(systemName: "magnifyingglass")
+                .font(.studio(.caption))
+                .foregroundStyle(palette.textMuted)
+                .accessibilityHidden(true)
+            TextField(placeholder, text: $text)
+                .textFieldStyle(.plain)
+                .focused($focused)
+                .font(.studio(.small))
+                .foregroundStyle(palette.textPrimary)
+                .tint(palette.accent)
+                .accessibilityLabel(placeholder)
+            if !text.isEmpty {
+                Button { text = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.studio(.caption))
+                        .foregroundStyle(palette.textMuted)
+                        .frame(width: 20, height: 20)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(StudioContentButtonStyle(cornerRadius: 999))
+                .accessibilityLabel("清除搜索")
+            }
+        }
+        .padding(.horizontal, Metrics.space3)
+        .frame(height: Metrics.controlCompact)
+        .background(palette.controlWell, in: Capsule())
+        .overlay {
+            Capsule().strokeBorder(focused ? palette.borderStrong : palette.islandOutline, lineWidth: 1)
+        }
+    }
+}
+
 struct StudioDisclosureStyle: DisclosureGroupStyle {
     func makeBody(configuration: Configuration) -> some View {
         VStack(alignment: .leading, spacing: Metrics.space3) {
