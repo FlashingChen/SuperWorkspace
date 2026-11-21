@@ -96,7 +96,7 @@ struct AssemblyChatPanel: View {
                             .foregroundStyle(palette.warning)
                             .padding(Metrics.space2_5)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(palette.surface1, in: RoundedRectangle(cornerRadius: Metrics.radiusM))
+                            .background(palette.cardFill, in: RoundedRectangle(cornerRadius: Metrics.radiusM, style: .continuous))
                     }
                     Color.clear.frame(height: 1).id("bottom")
                 }

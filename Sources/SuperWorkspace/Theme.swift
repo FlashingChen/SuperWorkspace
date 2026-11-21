@@ -262,6 +262,7 @@ enum Metrics {
 enum StudioMotion {
     private static var reducesMotion: Bool {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            || UserDefaults.standard.bool(forKey: "reduceMotion")
     }
 
     static var interactive: Animation? {

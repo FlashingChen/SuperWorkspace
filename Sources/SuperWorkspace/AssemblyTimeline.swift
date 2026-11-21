@@ -206,7 +206,7 @@ struct AssemblyTimeline: View {
             }
         }
         .background(palette.island)
-        .frame(minHeight: 230, idealHeight: 256, maxHeight: 380)
+        .frame(minHeight: 230, maxHeight: .infinity)
         .onAppear { fittedDuration = max(1, layout.duration) }
         .onExitCommand { draft = nil; snapGuideTime = nil; editingSubtitleKey = nil }
         .modifier(MaterialRemovalConfirmation(projectID: project.id, materialID: $pendingRemoval))

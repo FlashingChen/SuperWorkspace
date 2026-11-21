@@ -79,6 +79,13 @@ struct RootView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(Metrics.space3)
+        .background {
+            Button("新建项目") { showNew = true }
+                .keyboardShortcut("n", modifiers: .command)
+                .opacity(0)
+                .frame(width: 0, height: 0)
+                .accessibilityHidden(true)
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
             state.shutdownAssemblyAgents()
             state.saveSession()
@@ -192,7 +199,7 @@ struct RootView: View {
                             .frame(height: 24)
                             .background(palette.ai.opacity(0.14), in: Capsule())
                         }
-                        .buttonStyle(StudioContentButtonStyle())
+                        .buttonStyle(StudioContentButtonStyle(cornerRadius: 999))
                         .help("查看后台动效与字幕任务")
                     } else {
                         HStack(spacing: Metrics.space1_5) {
@@ -243,7 +250,7 @@ struct RootView: View {
                                         Capsule().strokeBorder(palette.islandOutline, lineWidth: 1)
                                     }
                             }
-                            .buttonStyle(StudioContentButtonStyle())
+                            .buttonStyle(StudioContentButtonStyle(cornerRadius: 999))
                             .help(assemblyAIOpen ? "收起 AI 剪辑导演" : "展开 AI 剪辑导演")
                             .accessibilityLabel(assemblyAIOpen ? "收起 AI 剪辑导演" : "展开 AI 剪辑导演")
                         }
@@ -276,7 +283,6 @@ struct RootView: View {
                             Label("新建项目", systemImage: "plus")
                         }
                         .buttonStyle(StudioButtonStyle(kind: .primary, size: .compact))
-                        .keyboardShortcut("n", modifiers: .command)
                     }
                 }
             }
@@ -341,7 +347,7 @@ struct RootView: View {
         } label: {
             HStack(spacing: Metrics.space1_5) {
                 Image(systemName: "square.grid.2x2")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.studio(.caption, weight: .medium))
                     .foregroundStyle(palette.textSecondary)
                 Text(current.name)
                     .font(.studio(.small, weight: .medium))
@@ -349,17 +355,11 @@ struct RootView: View {
                     .lineLimit(1)
                     .frame(maxWidth: 190, alignment: .leading)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.studio(.micro, weight: .semibold))
                     .foregroundStyle(palette.textMuted)
             }
-            .padding(.horizontal, Metrics.space2_5)
-            .frame(height: Metrics.controlCompact)
-            .background(palette.controlWell, in: Capsule())
-            .overlay {
-                Capsule().strokeBorder(palette.islandOutline, lineWidth: 1)
-            }
         }
-        .menuStyle(StudioMenuStyle())
+        .menuStyle(StudioMenuStyle(surface: .pill))
         .fixedSize()
         .help("切换项目或返回项目库")
         .accessibilityLabel("当前项目：\(current.name)")
@@ -446,13 +446,16 @@ struct ProjectLibraryView: View {
                             Spacer()
                             HStack(spacing: Metrics.space0_5) {
                                 ForEach(Filter.allCases, id: \.self) { item in
-                                    Button(item.rawValue) {
+                                    Button {
                                         withAnimation(StudioMotion.interactive) { filter = item }
+                                    } label: {
+                                        Text(item.rawValue)
+                                            .font(.studio(.caption, weight: filter == item ? .semibold : .medium))
+                                            .padding(.horizontal, Metrics.space2_5)
+                                            .frame(height: 24)
                                     }
-                                    .font(.studio(.caption, weight: filter == item ? .semibold : .medium))
-                                    .padding(.horizontal, Metrics.space2_5)
-                                    .frame(height: 24)
                                     .buttonStyle(StudioSelectionStyle(selected: filter == item, cornerRadius: 999))
+                                    .accessibilityAddTraits(filter == item ? .isSelected : [])
                                 }
                             }
                             .padding(3)
@@ -544,7 +547,7 @@ struct ProjectLibraryView: View {
         Button(action: onCreate) {
             VStack(spacing: Metrics.space2_5) {
                 Image(systemName: "plus")
-                    .font(.system(size: 18, weight: .medium))
+                    .font(.studio(.title, weight: .medium))
                     .foregroundStyle(palette.textPrimary)
                     .frame(width: 38, height: 38)
                     .background(palette.controlWell, in: Circle())
@@ -562,7 +565,7 @@ struct ProjectLibraryView: View {
                     .strokeBorder(palette.islandOutline, style: StrokeStyle(lineWidth: 1, dash: [5, 5]))
             }
         }
-        .buttonStyle(StudioContentButtonStyle())
+        .buttonStyle(StudioContentButtonStyle(cornerRadius: Metrics.radiusIsland))
     }
 }
 

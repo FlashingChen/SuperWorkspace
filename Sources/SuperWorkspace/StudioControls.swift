@@ -102,6 +102,7 @@ struct StudioMessageSheet: View {
 
 /// Thumbnail and navigation labels own their geometry; this adds interaction feedback.
 struct StudioContentButtonStyle: ButtonStyle {
+    var cornerRadius: CGFloat = Metrics.radiusM
     @Environment(\.palette) private var palette
     @Environment(\.isEnabled) private var isEnabled
     @State private var hovering = false
@@ -110,7 +111,7 @@ struct StudioContentButtonStyle: ButtonStyle {
         configuration.label
             .background(
                 hovering ? palette.hoverWash : .clear,
-                in: RoundedRectangle(cornerRadius: Metrics.radiusM, style: .continuous)
+                in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
             )
             .opacity(isEnabled ? (configuration.isPressed ? Metrics.opacityPressed : 1) : Metrics.opacityDisabled)
             .animation(StudioMotion.hover, value: hovering)
@@ -188,6 +189,9 @@ struct StudioDisclosureStyle: DisclosureGroupStyle {
 }
 
 struct StudioMenuStyle: MenuStyle {
+    enum Surface { case quiet, pill }
+    var surface: Surface = .quiet
+    var compact: Bool = false
     @Environment(\.palette) private var palette
     @State private var hovering = false
 
@@ -195,11 +199,23 @@ struct StudioMenuStyle: MenuStyle {
         Menu(configuration)
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
-            .padding(.horizontal, Metrics.space1_5)
-            .frame(minWidth: Metrics.controlCompact, minHeight: Metrics.controlCompact)
-            .background(hovering ? palette.hoverWash : .clear, in: Capsule())
+            .padding(.horizontal, surface == .pill ? (compact ? Metrics.space2 : Metrics.space2_5) : Metrics.space1_5)
+            .frame(minWidth: compact ? 0 : Metrics.controlCompact, minHeight: compact ? 24 : Metrics.controlCompact)
+            .background(menuBackground, in: Capsule())
+            .overlay {
+                if surface == .pill && !compact {
+                    Capsule().strokeBorder(palette.islandOutline, lineWidth: 1)
+                }
+            }
             .animation(StudioMotion.hover, value: hovering)
             .onHover { hovering = $0 }
+    }
+
+    private var menuBackground: Color {
+        switch surface {
+        case .quiet: hovering ? palette.hoverWash : .clear
+        case .pill: hovering ? palette.selectionWash.opacity(0.75) : palette.controlWell
+        }
     }
 }
 

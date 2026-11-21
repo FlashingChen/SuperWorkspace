@@ -246,12 +246,17 @@ struct AssemblyView: View {
             }
             if let previewError {
                 VStack(spacing: Metrics.space3) {
-                    Text(previewError).multilineTextAlignment(.center)
+                    Text(previewError)
+                        .font(.studio(.small))
+                        .foregroundStyle(palette.textPrimary)
+                        .multilineTextAlignment(.center)
                     Button("重试预览") { schedulePreview() }
-                        .buttonStyle(StudioButtonStyle())
+                        .buttonStyle(StudioButtonStyle(kind: .primary, size: .compact))
                 }
-                .foregroundStyle(.white)
-                .padding(Metrics.space6)
+                .padding(Metrics.space5)
+                .frame(maxWidth: 360)
+                .studioIsland(cornerRadius: Metrics.radiusL)
+                .padding(Metrics.space4)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -282,14 +287,12 @@ struct AssemblyView: View {
                 Text(canvasRatioLabel)
                     .font(.studio(.caption, weight: .medium))
                     .foregroundStyle(palette.textSecondary)
-                    .padding(.horizontal, Metrics.space2)
-                    .frame(height: 24)
-                    .background(palette.controlWell, in: Capsule())
             }
-            .menuStyle(StudioMenuStyle())
+            .menuStyle(StudioMenuStyle(surface: .pill, compact: true))
             .fixedSize()
             .disabled(project.isFrozen)
             .help("切换成片画幅")
+            .accessibilityLabel("成片画幅：\(canvasRatioLabel)")
 
             Button {
                 showsSubtitlesPreview.toggle()
@@ -301,7 +304,7 @@ struct AssemblyView: View {
                     .frame(height: 24)
                     .background(showsSubtitlesPreview ? palette.selectionWash : palette.controlWell, in: Capsule())
             }
-            .buttonStyle(StudioContentButtonStyle())
+            .buttonStyle(StudioContentButtonStyle(cornerRadius: 999))
             .help("切换预览字幕显示")
 
             Menu {
@@ -313,13 +316,11 @@ struct AssemblyView: View {
                     .font(.studio(.caption, weight: .medium))
                     .monospacedDigit()
                     .foregroundStyle(palette.textSecondary)
-                    .padding(.horizontal, Metrics.space2)
-                    .frame(height: 24)
-                    .background(palette.controlWell, in: Capsule())
             }
-            .menuStyle(StudioMenuStyle())
+            .menuStyle(StudioMenuStyle(surface: .pill, compact: true))
             .fixedSize()
             .help("预览播放倍速")
+            .accessibilityLabel("预览倍速：\(String(format: "%.2g×", previewRate))")
 
             Rectangle()
                 .fill(palette.hairline)
@@ -327,12 +328,12 @@ struct AssemblyView: View {
 
             Button(action: togglePlayback) {
                 Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.studio(.caption, weight: .bold))
                     .foregroundStyle(palette.onAccent)
                     .frame(width: 26, height: 26)
                     .background(palette.accent, in: Circle())
             }
-            .buttonStyle(StudioContentButtonStyle())
+            .buttonStyle(StudioContentButtonStyle(cornerRadius: 999))
             .disabled(player.currentItem == nil)
             .accessibilityLabel(isPlaying ? "暂停预览" : "播放预览")
 
