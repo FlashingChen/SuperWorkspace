@@ -108,6 +108,7 @@ enum ProjectTools {
                 ])
             }
             let motion = state.motionPhases[material.mediaID]
+            let manifest = MotionManifest.load(in: ProjectLayout.materialDirectory(material, in: project))
             return .object([
                 ("index", .number(Double(index + 1))),
                 ("id", .string(material.id.uuidString)),
@@ -125,6 +126,7 @@ enum ProjectTools {
                 ("motionError", .string(material.motionError ?? "")),
                 ("showsOriginal", .bool(material.useOriginal ?? false)),
                 ("editingPrompt", .string(material.editingPrompt ?? "")),
+                ("motionManifest", manifest?.summaryJSON() ?? .null),
                 ("subtitles", .array(subtitles)),
                 ("inserts", .array(inserts)),
             ])
@@ -679,11 +681,41 @@ enum ProjectTools {
             return .failure("这个片段的动效已经在处理中，等它完成再改。")
         }
         let instruction = args["instruction"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestedShotID = args["shotID"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestedTime = args["atTime"]?.numberValue
+
+        let manifest = MotionManifest.load(in: ProjectLayout.materialDirectory(material, in: project))
+        var resolvedTarget: MotionManifest.Target?
+        if let manifest {
+            if let shotID = requestedShotID, !shotID.isEmpty {
+                resolvedTarget = manifest.target(id: shotID)
+            } else if let atTime = requestedTime {
+                resolvedTarget = manifest.targets(at: atTime).first
+            }
+        }
+
+        if let target = resolvedTarget {
+            let directive = MotionManifest.refinementBrief(
+                target: target,
+                instruction: (instruction?.isEmpty == false ? instruction! : "优化该分镜的排版、可读性与运镜节奏。")
+            )
+            state.refineMotionShot(project.id, material.id, directive: directive)
+            return .success(.object([
+                ("clip", .string(material.id.uuidString)),
+                ("state", .string("queued")),
+                ("mode", .string("shot_refinement")),
+                ("targetShot", .string(target.id)),
+                ("targetRange", .string(String(format: "%.2fs-%.2fs", target.start, target.end))),
+                ("note", .string("已派发分镜「\(target.id)」的后台定向微调任务，未改动分镜将命中缓存，完成后预览会自动更新。")),
+            ]))
+        }
+
         state.regenerateMotion(project.id, material.id, instruction: instruction)
         return .success(.object([
             ("clip", .string(material.id.uuidString)),
             ("state", .string("queued")),
-            ("note", .string("动效已进入后台队列，渲染需要几分钟到几十分钟；完成后预览会自动更新。可以先用 job_status 查询进度。")),
+            ("mode", .string("full")),
+            ("note", .string("动效已进入后台队列，完成后预览会自动更新。可以先用 job_status 查询进度。")),
         ]))
     }
 

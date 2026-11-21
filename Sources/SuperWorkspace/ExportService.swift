@@ -36,19 +36,15 @@ enum ExportService {
             }
         }
         let library = Dictionary(uniqueKeysWithValues: project.referenceMedia.map { ($0.id, $0) })
-        var renderedHTMLMotions: [SubtitleOverlay] = []
-        if includeHTMLMotions, let motions = project.htmlMotions, !motions.isEmpty, let renderCanvas = canvas {
-            for motion in motions where motion.end > motion.start {
-                let url = ProjectLayout.htmlMotion(motion, in: project)
-                let frames = await HTMLMotionRenderer.renderFrames(motion, url: url, canvas: renderCanvas)
-                renderedHTMLMotions.append(contentsOf: frames)
-            }
-        }
+        var observedFrameRates: [Float] = []
         for material in project.materials {
             try Task.checkCancellation()
             guard material.isReady else { throw failure("素材尚未完成，请先完成录制导出或移除失败素材。") }
             let asset = AVURLAsset(url: ProjectLayout.picture(material, in: project))
             guard let source = try await asset.loadTracks(withMediaType: .video).first else { throw failure("素材没有视频轨道。") }
+            if let nominal = try? await source.load(.nominalFrameRate), nominal.isFinite, nominal > 0 {
+                observedFrameRates.append(nominal)
+            }
             let duration = try await asset.load(.duration)
             guard duration.seconds.isFinite, duration.seconds > 0 else { throw failure("素材时长无效。") }
             let size = try await source.load(.naturalSize)
@@ -121,13 +117,35 @@ enum ExportService {
                 }
             }
             if includeHTMLMotions {
-                for frame in renderedHTMLMotions where frame.end > segStart && frame.start < segEnd {
-                    overlays.append(frame)
-                }
+                // HTML motion overlays are attached after the material loop once output FPS and canvas are known.
             }
             instructions.append(AssemblyInstruction(range: CMTimeRange(start: cursor, duration: scaledDuration),
                 trackID: video.trackID, transform: fit, overlays: overlays, cutaways: cutaways))
             cursor = CMTimeAdd(cursor, scaledDuration)
+        }
+        let outputFPS = Self.resolvedFrameRate(from: observedFrameRates)
+        if includeHTMLMotions, let motions = project.htmlMotions, !motions.isEmpty, let renderCanvas = canvas {
+            var renderedHTMLMotions: [SubtitleOverlay] = []
+            for motion in motions where motion.end > motion.start {
+                let url = ProjectLayout.htmlMotion(motion, in: project)
+                let frames = await HTMLMotionRenderer.renderFrames(motion, url: url, canvas: renderCanvas, fps: Double(outputFPS))
+                renderedHTMLMotions.append(contentsOf: frames)
+            }
+            if !renderedHTMLMotions.isEmpty {
+                instructions = instructions.map { inst in
+                    let segStart = inst.timeRange.start.seconds
+                    let segEnd = inst.timeRange.end.seconds
+                    let matching = renderedHTMLMotions.filter { $0.end > segStart && $0.start < segEnd }
+                    guard !matching.isEmpty else { return inst }
+                    return AssemblyInstruction(
+                        range: inst.timeRange,
+                        trackID: inst.trackID,
+                        transform: inst.transform,
+                        overlays: inst.overlays + matching,
+                        cutaways: inst.cutaways
+                    )
+                }
+            }
         }
         let audioMix = try await attachAudioClips(
             project: project,
@@ -138,9 +156,16 @@ enum ExportService {
         let videoComposition = AVMutableVideoComposition()
         videoComposition.customVideoCompositorClass = AssemblyCompositor.self
         videoComposition.renderSize = canvas!
-        videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
+        videoComposition.frameDuration = CMTime(value: 1, timescale: outputFPS)
         videoComposition.instructions = instructions
         return Assembly(composition: composition, videoComposition: videoComposition, audioMix: audioMix, size: canvas!)
+    }
+
+    /// Preserves 60 fps output whenever any source clip is high frame rate (>= 45 fps),
+    /// otherwise keeps 30 fps for standard recordings.
+    static func resolvedFrameRate(from nominalRates: [Float]) -> Int32 {
+        let peak = nominalRates.filter { $0.isFinite && $0 > 0 }.max() ?? 30
+        return peak >= 45 ? 60 : 30
     }
 
     private static func attachAudioClips(

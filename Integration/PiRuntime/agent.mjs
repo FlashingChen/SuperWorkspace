@@ -242,9 +242,11 @@ const buildTools = () => [
     index: Type.Optional(Type.Number({description: '动效序号，1 开始'})),
     id: Type.Optional(Type.String({description: '动效 id'})),
   })),
-  tool('motion_regenerate', '重做动效', '为整个片段重新生成 Remotion 动效。instruction 写清哪里不好看、想要什么效果，会并入该片段的剪辑说明。渲染在后台进行，需要几分钟到几十分钟。', Type.Object({
+  tool('motion_regenerate', '重做或定向微调动效', '为片段重做 Remotion 动效，或通过 shotID / atTime 精准定位到某个分镜做后台增量微调（未改动分镜命中缓存，约 1 分钟完成）。', Type.Object({
     clip: clipArgument(),
-    instruction: Type.Optional(Type.String({description: '对动效的具体要求，例如「12–18 秒这一段不遮挡字幕，改成侧边卡片」'})),
+    instruction: Type.Optional(Type.String({description: '对动效的具体要求，例如「第 14 秒的字太挤，把卡片往右挪一点」'})),
+    shotID: Type.Optional(Type.String({description: '要定向微调的分镜或叠层 id（来自 project_read 的 motionManifest）'})),
+    atTime: Type.Optional(Type.Number({description: '片段源视频秒数，宿主会自动匹配该时间点所在的分镜做增量微调'})),
   })),
   tool('job_status', '查询任务', '查看各片段的动效状态与进度。', Type.Object({})),
 ];

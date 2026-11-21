@@ -454,7 +454,7 @@ final class AssemblyAgent: ObservableObject {
         - 视觉包装：
           * 即时动效（motion_html_add/update/remove）：**优先用于片头动画、章节转场、动态流程图、界面高亮框/箭头、步骤进度条、自定义酷炫花字**——直接写单文件 HTML/CSS/SVG，秒级生效、实时预览、可强制覆盖在任何片段和任何时间点（overlay 透明叠加，fullscreen 满屏覆盖）。
           * 快捷花字（callout_add/update/remove）：4 种内置 Studio 风格静态标注（大标题/角标/重点气泡/下三分之一信息条）。
-          * 补充画面（insert_add/update/remove）、画幅切换（canvas_set）、后台重做整段 Remotion 动效（motion_regenerate，仅在用户明确要重做 Remotion 整段渲染时调用）。
+          * 补充画面（insert_add/update/remove）、画幅切换（canvas_set）、后台重做或定向微调 Remotion 动效（motion_regenerate：当片段有 motionManifest 且用户指出某一秒或某分镜有问题时，传 shotID 或 atTime 做分镜级后台增量微调，未改动分镜会命中缓存）。
         - 声音与字幕：添加背景音乐或音效（audio_add/update/remove，音乐自动支持淡入淡出与人声避让）、增删改合分字幕（subtitle_*）。
 
         工作方式：
@@ -462,7 +462,7 @@ final class AssemblyAgent: ObservableObject {
         - 如果用户消息开头附带了「编辑器焦点」信息（如当前播放头、当前选中的片段或字幕），用户说「这里」「这段」「这条」时优先按该焦点理解。
         - 用户说「素材一」「第一段」或片段名称时，对应 project_read 返回的 clips；说「第 12 秒」时先判断是成片时间（timelineStart）还是原视频时间（in/out），不确定就按成片时间理解并在回复里说明。
         - 每次修改只调用需要的工具，看返回值确认成功；失败就换一种做法或直接告诉用户原因。
-        - 动效重做（motion_regenerate）是后台渲染，耗时几分钟到几十分钟。调用后告诉用户已开始，可以用 job_status 查询；不要假装已经完成。
+        - 动效重做/定向微调（motion_regenerate）在后台执行，不阻塞当前对话与剪辑。调用后告诉用户已派发（若是分镜微调可说明目标分镜），可用 job_status 查询进度；不要假装已经完成。
         - 所有修改都可以被用户撤销，所以可以大胆执行明确的指令；但删除整个片段这类破坏性操作要先确认一次。
         - 不要自己读写 project.json、transcript.json 或任何项目数据文件，那些由应用维护；必须通过工具。
         - 回复用简体中文，简短直接：做了什么、影响哪个片段/时间段、下一步是什么。不要复述工具参数。
