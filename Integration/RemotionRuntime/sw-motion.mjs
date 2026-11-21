@@ -188,8 +188,6 @@ function hashItem(item, kind, renderSpec) {
   const hash = createHash('sha256');
   hash.update(JSON.stringify({kind, item, renderSpec}));
   const files = new Set();
-  const rootFile = join(cwd, 'src', 'Root.tsx');
-  if (existsSync(rootFile)) files.add(rootFile);
   for (const f of collectSourceFiles(join(cwd, 'src', 'sw-kit'))) files.add(f);
   if (Array.isArray(item.files) && item.files.length > 0) {
     for (const rel of item.files) {
@@ -209,6 +207,17 @@ function hashItem(item, kind, renderSpec) {
     hash.update(readFileSync(f));
   }
   return hash.digest('hex').slice(0, 12);
+}
+
+async function runOptionalTypecheck() {
+  const tscBin = join(cwd, 'node_modules', '.bin', 'tsc');
+  if (!existsSync(tscBin)) return null;
+  try {
+    await runCmd(tscBin, ['--noEmit'], {timeout: 60_000});
+    return null;
+  } catch (err) {
+    return (err.stdout || err.stderr || err.message || 'tsc --noEmit failed').trim();
+  }
 }
 
 async function mapLimit(items, limit, worker) {
@@ -255,8 +264,8 @@ async function buildContactSheets(frameEntries, outDir) {
   for (let offset = 0; offset < frameEntries.length; offset += perSheet) {
     const batch = frameEntries.slice(offset, offset + perSheet);
     const cols = Math.min(3, batch.length);
-    const sheetPath = join(outDir, `contact-sheet-${sheets.length + 1}.png`);
-    const inputs = batch.flatMap((entry) => ['-i', entry.path]);
+    const sheetPath = join(outDir, `contact-sheet-${sheets.length + 1}.jpg`);
+    const inputs = batch.flatMap((entry) => ['-i', entry.jpgPath || entry.path]);
     const filters = batch.map((_, idx) =>
       `[${idx}:v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2:color=#0b1018[t${idx}]`,
     );
@@ -272,6 +281,8 @@ async function buildContactSheets(frameEntries, outDir) {
       '-filter_complex', filters.join(';'),
       '-map', '[out]',
       '-frames:v', '1',
+      '-c:v', 'mjpeg',
+      '-q:v', '4',
       sheetPath,
     ], {timeout: 60_000});
     sheets.push({
@@ -322,19 +333,25 @@ async function cmdInspect(opts) {
           Math.max(1, Math.floor(totalFrames * 0.85)),
         ];
     for (const f of sampleFrames) {
+      const token = `${safeFileToken(item.id)}-f${f}`;
+      const isOverlay = item.kind === 'overlay';
       jobs.push({
         id: item.id,
         kind: item.kind,
         composition: item.composition,
         frame: f,
         seconds: Number((item.start + f / fps).toFixed(2)),
-        path: join(INSPECT_DIR, `${safeFileToken(item.id)}-f${f}.png`),
+        path: join(INSPECT_DIR, isOverlay ? `${token}.png` : `${token}.jpg`),
+        jpgPath: join(INSPECT_DIR, `${token}.jpg`),
+        imageFormat: isOverlay ? 'png' : 'jpeg',
       });
     }
   }
 
   const warnings = [...validation.warnings];
   const errors = [...validation.errors];
+  const tscErr = await runOptionalTypecheck();
+  if (tscErr) errors.push(`TypeScript check failed:\n${tscErr}`);
   const renderedFrames = [];
 
   await mapLimit(jobs, 3, async (job) => {
@@ -345,13 +362,17 @@ async function cmdInspect(opts) {
       job.path,
       '--frame', String(job.frame),
       '--scale', scale,
-      '--image-format', 'png',
+      '--image-format', job.imageFormat,
     ];
     try {
       await runCmd('npx', args, {timeout: 120_000});
+      if (job.imageFormat === 'png' && job.jpgPath !== job.path) {
+        // Bundled ffmpeg may not include PNG codecs; convert alpha overlay stills via macOS sips for contact sheet stitching.
+        await runCmd('/usr/bin/sips', ['-s', 'format', 'jpeg', '-s', 'formatOptions', '80', job.path, '--out', job.jpgPath], {timeout: 30_000});
+      }
       renderedFrames.push(job);
       if (job.kind === 'shot') {
-        const issue = await checkImageVariance(job.path);
+        const issue = await checkImageVariance(job.jpgPath);
         if (issue) warnings.push(`${job.id}@f${job.frame}: ${issue}`);
       }
     } catch (err) {

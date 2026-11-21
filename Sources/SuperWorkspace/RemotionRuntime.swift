@@ -4,9 +4,9 @@ import Foundation
 enum RemotionRuntime {
     static let instructions = """
     工作目录已预置 `src/sw-kit/`（含 WorldCamera、StageFrame、MediaCard、PhoneMockup、defaultTheme、ease/pop）与宿主工具 `sw-motion.mjs`。
-    直接从 `./sw-kit` 导入基础组件，不要重复从零编写 WorldCamera、缓动工具或项目配置；已有 `src/` 工程时在其上增量修改，不推倒重建。
-    把所有全屏分镜（shots）与局部透明叠层（overlays）登记到 `motion-manifest.json`（含 id、composition、start、end、files 及 overlay 的 x/y/width/height）。
-    预览自检统一运行 `node sw-motion.mjs inspect`（自动生成拼图 Contact Sheet 并检查边界、安全区与空白帧）；最终交付统一运行 `node sw-motion.mjs render`（自动分镜哈希缓存、并发渲染、ProRes 4444 透明叠层与硬件编码合成，不要手写 .rgba 或 composite.sh）。
+    直接从 `./sw-kit` 导入基础组件（`WorldCamera` 自动读取画布宽高，直接传 `keys` 即可），不要重复从零编写相机、缓动或工程配置；优先组织为 2–4 个连续长分幕（每幕 7–15 秒，大世界画布 + 明显幅度运镜），不要切碎成 3–4 秒小卡片。
+    把所有全屏分幕（shots）与局部透明叠层（overlays）登记到 `motion-manifest.json`（含 id、composition、start、end、files 及 overlay 的 x/y/width/height）。
+    预检统一运行 `node sw-motion.mjs inspect`（直接输出 JPEG Contact Sheet，不要手写 sheet.sh）；最终交付统一运行 `node sw-motion.mjs render`（按分镜 files 哈希命中 `.sw-cache/`、并发渲染、ProRes 4444 透明叠层与硬件编码合成，返回 `ok: true` 后直接交付，不要再二次抽帧重渲）。
     """
 
     static func prepare(in workDirectory: URL, node: URL, environment: [String: String]) async throws {
