@@ -13,7 +13,8 @@ struct Assembly {
 @MainActor
 enum ExportService {
     static func assemble(project: VideoProject, includeSubtitles: Bool = false,
-                         inserts: [AIEditing.Insert] = []) async throws -> Assembly {
+                         inserts: [AIEditing.Insert] = [],
+                         includeHTMLMotions: Bool = false) async throws -> Assembly {
         guard !project.materials.isEmpty else { throw failure("还没有素材。") }
         let composition = AVMutableComposition()
         var instructions: [AssemblyInstruction] = []
@@ -35,6 +36,14 @@ enum ExportService {
             }
         }
         let library = Dictionary(uniqueKeysWithValues: project.referenceMedia.map { ($0.id, $0) })
+        var renderedHTMLMotions: [SubtitleOverlay] = []
+        if includeHTMLMotions, let motions = project.htmlMotions, !motions.isEmpty, let renderCanvas = canvas {
+            for motion in motions where motion.end > motion.start {
+                let url = ProjectLayout.htmlMotion(motion, in: project)
+                let frames = await HTMLMotionRenderer.renderFrames(motion, url: url, canvas: renderCanvas)
+                renderedHTMLMotions.append(contentsOf: frames)
+            }
+        }
         for material in project.materials {
             try Task.checkCancellation()
             guard material.isReady else { throw failure("素材尚未完成，请先完成录制导出或移除失败素材。") }
@@ -109,6 +118,11 @@ enum ExportService {
             for callout in project.callouts ?? [] where callout.end > segStart && callout.start < segEnd {
                 if let rendered = CalloutRenderer.render(callout, canvas: renderSize) {
                     overlays.append(rendered)
+                }
+            }
+            if includeHTMLMotions {
+                for frame in renderedHTMLMotions where frame.end > segStart && frame.start < segEnd {
+                    overlays.append(frame)
                 }
             }
             instructions.append(AssemblyInstruction(range: CMTimeRange(start: cursor, duration: scaledDuration),
@@ -383,6 +397,7 @@ enum ExportService {
         if inserts.isEmpty,
            (project.audioClips ?? []).isEmpty,
            (project.callouts ?? []).isEmpty,
+           (project.htmlMotions ?? []).isEmpty,
            project.materials.count == 1, !project.includeSubtitles,
            let material = project.materials.first,
            abs(material.playbackSpeed - 1.0) <= 0.001,
@@ -403,7 +418,7 @@ enum ExportService {
             progress?.fraction = 1
             return output
         }
-        let assembly = try await assemble(project: project, includeSubtitles: project.includeSubtitles, inserts: inserts)
+        let assembly = try await assemble(project: project, includeSubtitles: project.includeSubtitles, inserts: inserts, includeHTMLMotions: true)
         guard let session = AVAssetExportSession(asset: assembly.composition, presetName: AVAssetExportPresetHighestQuality) else { throw failure("无法创建导出任务。") }
         guard progress?.isCancelled != true else { throw CancellationError() }
         progress?.session = session

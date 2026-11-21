@@ -1475,6 +1475,78 @@ final class AppState: ObservableObject {
         guard callouts.count != before else { return false }
         return setCallouts(projectID, callouts, undoName: "删除花字")
     }
+
+    @discardableResult
+    func setHTMLMotions(_ projectID: UUID, _ motions: [HTMLMotionOverlay], undoName: String = "调整即时动效") -> Bool {
+        guard let project = projects.first(where: { $0.id == projectID }), !project.isFrozen else { return false }
+        let old = project.htmlMotions ?? []
+        guard old != motions else { return true }
+        guard updateProject(projectID, { $0.htmlMotions = motions.isEmpty ? nil : motions }) else { return false }
+        registerUndo(projectID, name: undoName) { _ = $0.setHTMLMotions(projectID, old, undoName: undoName) }
+        return true
+    }
+
+    @discardableResult
+    func addHTMLMotion(_ projectID: UUID, name: String, start: Double, end: Double, mode: HTMLMotionOverlay.Mode, html: String) -> HTMLMotionOverlay? {
+        guard let project = projects.first(where: { $0.id == projectID }), !project.isFrozen,
+              start.isFinite, end.isFinite, start >= 0, end - start >= 1.0 / 30,
+              !html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let id = UUID()
+        let item = HTMLMotionOverlay(
+            id: id,
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "即时动效" : name.trimmingCharacters(in: .whitespacesAndNewlines),
+            start: start,
+            end: end,
+            mode: mode,
+            fileName: "\(id.uuidString).html",
+            revision: 1
+        )
+        let dir = ProjectLayout.htmlMotionDirectory(in: project)
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try html.write(to: ProjectLayout.htmlMotion(item, in: project), atomically: true, encoding: .utf8)
+        } catch {
+            return nil
+        }
+        var motions = project.htmlMotions ?? []
+        motions.append(item)
+        motions.sort { $0.start < $1.start }
+        guard setHTMLMotions(projectID, motions, undoName: "添加即时动效") else { return nil }
+        return item
+    }
+
+    @discardableResult
+    func updateHTMLMotion(_ projectID: UUID, id: UUID, html: String? = nil, mutate: (inout HTMLMotionOverlay) -> Void) -> Bool {
+        guard let project = projects.first(where: { $0.id == projectID }), !project.isFrozen else { return false }
+        var motions = project.htmlMotions ?? []
+        guard let idx = motions.firstIndex(where: { $0.id == id }) else { return false }
+        var updated = motions[idx]
+        mutate(&updated)
+        guard updated.start.isFinite, updated.end.isFinite, updated.start >= 0, updated.end - updated.start >= 1.0 / 30 else { return false }
+        if let html, !html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let dir = ProjectLayout.htmlMotionDirectory(in: project)
+            do {
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                try html.write(to: ProjectLayout.htmlMotion(updated, in: project), atomically: true, encoding: .utf8)
+                updated.revision += 1
+            } catch {
+                return false
+            }
+        }
+        motions[idx] = updated
+        motions.sort { $0.start < $1.start }
+        return setHTMLMotions(projectID, motions, undoName: "调整即时动效")
+    }
+
+    @discardableResult
+    func removeHTMLMotion(_ projectID: UUID, id: UUID) -> Bool {
+        guard let project = projects.first(where: { $0.id == projectID }), !project.isFrozen else { return false }
+        var motions = project.htmlMotions ?? []
+        let before = motions.count
+        motions.removeAll { $0.id == id }
+        guard motions.count != before else { return false }
+        return setHTMLMotions(projectID, motions, undoName: "删除即时动效")
+    }
     /// Applies a new instruction and queues a motion re-render. Rendering itself is
     /// not undoable, but the prompt change and every other edit are.
     func regenerateMotion(_ projectID: UUID, _ id: UUID, instruction: String?) {

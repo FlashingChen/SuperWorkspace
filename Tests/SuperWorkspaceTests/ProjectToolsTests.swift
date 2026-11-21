@@ -254,6 +254,32 @@ final class ProjectToolsTests: XCTestCase {
             _ = try success(run("callout_remove", ["index": .number(1)], project: saved, state: state))
             saved = try XCTUnwrap(ProjectLayout.loadAll().first)
             XCTAssertTrue((saved.callouts ?? []).isEmpty)
+
+            // Instant HTML motion overlay across any clip range.
+            _ = try success(run("motion_html_add", [
+                "name": .string("片头动画"),
+                "start": .number(0),
+                "end": .number(3.0),
+                "mode": .string("overlay"),
+                "html": .string("<html><body style='background:transparent'><h1>Hello</h1></body></html>"),
+            ], project: saved, state: state))
+            saved = try XCTUnwrap(ProjectLayout.loadAll().first)
+            XCTAssertEqual(saved.htmlMotions?.count, 1)
+            let motionItem = try XCTUnwrap(saved.htmlMotions?.first)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: ProjectLayout.htmlMotion(motionItem, in: saved).path))
+
+            _ = try success(run("motion_html_update", [
+                "index": .number(1),
+                "end": .number(4.5),
+                "html": .string("<html><body style='background:transparent'><h1>Updated</h1></body></html>"),
+            ], project: saved, state: state))
+            saved = try XCTUnwrap(ProjectLayout.loadAll().first)
+            XCTAssertEqual(saved.htmlMotions?.first?.end ?? 0, 4.5, accuracy: 0.001)
+            XCTAssertEqual(saved.htmlMotions?.first?.revision, 2)
+
+            _ = try success(run("motion_html_remove", ["index": .number(1)], project: saved, state: state))
+            saved = try XCTUnwrap(ProjectLayout.loadAll().first)
+            XCTAssertTrue((saved.htmlMotions ?? []).isEmpty)
         }
     }
 }

@@ -30,9 +30,9 @@ struct AssemblyChatPanel: View {
             prompt: "帮我分析各片段的静音停顿，把超过 0.8 秒的多余空白和明显口误剪掉，让节奏紧凑自然。"
         ),
         .init(
-            symbol: "textformat.size",
-            title: "在开头做一个大标题花字",
-            prompt: "根据项目主题和开场字幕，在成片开头前 3 秒叠加一个大标题花字（title 样式）。"
+            symbol: "wand.and.stars",
+            title: "在开头做一个酷炫标题动效",
+            prompt: "根据项目主题和开场字幕，用 motion_html_add 在成片开头前 3 秒生成一个高级、有设计感的动态标题动画（透明叠加或满屏片头均可）。"
         ),
         .init(
             symbol: "gauge.with.needle",

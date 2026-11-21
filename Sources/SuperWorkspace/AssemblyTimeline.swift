@@ -113,9 +113,11 @@ struct AssemblyTimeline: View {
     private var hasInserts: Bool {
         displayProject.materials.contains { !($0.inserts ?? []).isEmpty }
     }
+    private var hasHTMLMotions: Bool { !(displayProject.htmlMotions ?? []).isEmpty }
     private var hasCallouts: Bool { !(displayProject.callouts ?? []).isEmpty }
     private var hasAudioClips: Bool { !(displayProject.audioClips ?? []).isEmpty }
     private let rulerHeight: CGFloat = 24
+    private let htmlMotionTrackHeight: CGFloat = 26
     private let calloutTrackHeight: CGFloat = 26
     private var insertTrackHeight: CGFloat { hasInserts || insertTrackTargeted ? 28 : 20 }
     private let subtitleTrackHeight: CGFloat = 30
@@ -126,6 +128,7 @@ struct AssemblyTimeline: View {
 
     private var totalTracksHeight: CGFloat {
         var h = rulerHeight + insertTrackHeight + subtitleTrackHeight + videoTrackHeight + trackSpacing * 3 + 20
+        if hasHTMLMotions { h += htmlMotionTrackHeight + trackSpacing }
         if hasCallouts { h += calloutTrackHeight + trackSpacing }
         if hasAudioClips { h += audioTrackHeight + trackSpacing }
         return h
@@ -143,6 +146,9 @@ struct AssemblyTimeline: View {
                 HStack(alignment: .top, spacing: 0) {
                     VStack(spacing: trackSpacing) {
                         Color.clear.frame(height: rulerHeight)
+                        if hasHTMLMotions {
+                            trackLabel("动效", symbol: "wand.and.stars").frame(height: htmlMotionTrackHeight)
+                        }
                         if hasCallouts {
                             trackLabel("花字", symbol: "textformat.size").frame(height: calloutTrackHeight)
                         }
@@ -165,6 +171,9 @@ struct AssemblyTimeline: View {
                             grid(width: width, height: canvasHeight - 12, scale: scale)
                             VStack(alignment: .leading, spacing: trackSpacing) {
                                 ruler(width: width, scale: scale)
+                                if hasHTMLMotions {
+                                    htmlMotionTrack(width: width, scale: scale)
+                                }
                                 if hasCallouts {
                                     calloutTrack(width: width, scale: scale)
                                 }
@@ -318,6 +327,39 @@ struct AssemblyTimeline: View {
         .gesture(DragGesture(minimumDistance: 0).onChanged { onSeek(layout.time(at: $0.location.x, scale: scale)) })
         .accessibilityLabel("时间标尺，点击或拖动定位")
         .accessibilityIdentifier("assembly.timeline.ruler")
+    }
+
+    private func htmlMotionTrack(width: CGFloat, scale: Double) -> some View {
+        ZStack(alignment: .leading) {
+            palette.surface1.opacity(0.25)
+            ForEach(displayProject.htmlMotions ?? []) { item in
+                let blockWidth = CGFloat(max(24, (item.end - item.start) * scale - 2))
+                let shape = RoundedRectangle(cornerRadius: Metrics.radiusXS)
+                HStack(spacing: Metrics.space1) {
+                    Image(systemName: "wand.and.stars")
+                        .font(.studio(.micro)).foregroundStyle(palette.ai)
+                    Text(item.name).font(.studio(.caption)).lineLimit(1)
+                    Text(item.mode.label)
+                        .font(.studio(.micro)).foregroundStyle(palette.textSecondary)
+                }
+                .padding(.horizontal, Metrics.space1_5)
+                .frame(width: blockWidth, height: htmlMotionTrackHeight - 2, alignment: .leading)
+                .foregroundStyle(palette.textPrimary)
+                .background(palette.ai.opacity(0.26))
+                .clipShape(shape)
+                .overlay(shape.strokeBorder(palette.ai.opacity(0.65), lineWidth: 1))
+                .contentShape(Rectangle())
+                .onTapGesture { onSeek(item.start) }
+                .contextMenu {
+                    Button("定位到动效开头") { onSeek(item.start) }
+                    Divider()
+                    Button("删除动效", role: .destructive) { _ = state.removeHTMLMotion(project.id, id: item.id) }
+                }
+                .offset(x: item.start * scale)
+            }
+        }
+        .frame(width: width, height: htmlMotionTrackHeight)
+        .clipped()
     }
 
     private func calloutTrack(width: CGFloat, scale: Double) -> some View {

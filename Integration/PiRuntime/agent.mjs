@@ -222,6 +222,26 @@ const buildTools = () => [
     minDuration: Type.Optional(Type.Number({description: '最短静音秒数，默认 0.6'})),
     threshold: Type.Optional(Type.Number({description: '静音振幅阈值 0.005–0.2，默认 0.02'})),
   })),
+  tool('motion_html_add', '添加即时 HTML 动效', '创建一段单文件 HTML/CSS/SVG 动效并立即叠加或覆盖在成片任意时间点（可跨任意片段，秒级生效，实时预览并逐帧导出）。overlay 模式须使用 html,body{background:transparent;margin:0;overflow:hidden}；fullscreen 模式可绘制满屏背景做片头/转场/全屏图解。用 CSS @keyframes、Web Animations 或 window.renderAt(t, duration) 驱动动画，用 vw/vh/% 适配横竖屏。', Type.Object({
+    name: Type.String({description: '动效名称，例如「科技感片头」「步骤进度条」「按钮高亮框」'}),
+    start: Type.Number({description: '开始时间（成片秒数）'}),
+    end: Type.Optional(Type.Number({description: '结束时间（成片秒数，默认持续 3 秒）'})),
+    mode: Type.Optional(Type.String({description: 'overlay（透明叠加在画面之上，默认）或 fullscreen（满屏遮罩覆盖）'})),
+    html: Type.String({description: '完整可运行的单文件 HTML/CSS/SVG 源码'}),
+  })),
+  tool('motion_html_update', '修改即时 HTML 动效', '更新已有即时动效的名称、起止时间、模式或 HTML 源码。', Type.Object({
+    index: Type.Optional(Type.Number({description: '动效序号，1 开始'})),
+    id: Type.Optional(Type.String({description: '动效 id'})),
+    name: Type.Optional(Type.String({description: '新的名称'})),
+    start: Type.Optional(Type.Number({description: '新的开始时间（成片秒数）'})),
+    end: Type.Optional(Type.Number({description: '新的结束时间（成片秒数）'})),
+    mode: Type.Optional(Type.String({description: 'overlay 或 fullscreen'})),
+    html: Type.Optional(Type.String({description: '更新后的完整单文件 HTML 源码'})),
+  })),
+  tool('motion_html_remove', '移除即时 HTML 动效', '从时间线上移除一条即时动效。', Type.Object({
+    index: Type.Optional(Type.Number({description: '动效序号，1 开始'})),
+    id: Type.Optional(Type.String({description: '动效 id'})),
+  })),
   tool('motion_regenerate', '重做动效', '为整个片段重新生成 Remotion 动效。instruction 写清哪里不好看、想要什么效果，会并入该片段的剪辑说明。渲染在后台进行，需要几分钟到几十分钟。', Type.Object({
     clip: clipArgument(),
     instruction: Type.Optional(Type.String({description: '对动效的具体要求，例如「12–18 秒这一段不遮挡字幕，改成侧边卡片」'})),

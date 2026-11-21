@@ -126,6 +126,29 @@ struct CalloutOverlay: Identifiable, Codable, Equatable, Sendable {
     var accentHex: String?
 }
 
+struct HTMLMotionOverlay: Identifiable, Codable, Equatable, Sendable {
+    enum Mode: String, Codable, Sendable {
+        case overlay
+        case fullscreen
+
+        var label: String {
+            switch self {
+            case .overlay: return "叠加"
+            case .fullscreen: return "满屏"
+            }
+        }
+    }
+    var id = UUID()
+    var name: String
+    /// Program timeline start/end in seconds (can span across any clip).
+    var start: Double
+    var end: Double
+    var mode: Mode = .overlay
+    var fileName: String
+    /// Incremented whenever the HTML file is rewritten so preview & export invalidate caches.
+    var revision: Int = 1
+}
+
 struct VideoProject: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var name: String
@@ -136,6 +159,7 @@ struct VideoProject: Identifiable, Codable, Equatable, Sendable {
     var referenceMedia: [ReferenceMedia] = []
     var audioClips: [AudioClip]?
     var callouts: [CalloutOverlay]?
+    var htmlMotions: [HTMLMotionOverlay]?
     var exportWithAIEditing: Bool?
     var exportSRT: Bool?
     var lastExportSRTName: String?
@@ -149,7 +173,7 @@ struct VideoProject: Identifiable, Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case id, name, createdAt, updatedAt, materials, includeSubtitles, canvasWidth, canvasHeight,
              lastExportName, exportSRT, lastExportSRTName, referenceMedia, audioClips, callouts,
-             exportWithAIEditing, frozenAt
+             htmlMotions, exportWithAIEditing, frozenAt
     }
     init(name: String) { self.name = name }
     init(from decoder: Decoder) throws {
@@ -162,6 +186,7 @@ struct VideoProject: Identifiable, Codable, Equatable, Sendable {
         referenceMedia = try c.decodeIfPresent([ReferenceMedia].self, forKey: .referenceMedia) ?? []
         audioClips = try c.decodeIfPresent([AudioClip].self, forKey: .audioClips)
         callouts = try c.decodeIfPresent([CalloutOverlay].self, forKey: .callouts)
+        htmlMotions = try c.decodeIfPresent([HTMLMotionOverlay].self, forKey: .htmlMotions)
         exportWithAIEditing = try c.decodeIfPresent(Bool.self, forKey: .exportWithAIEditing)
         includeSubtitles = try c.decodeIfPresent(Bool.self, forKey: .includeSubtitles) ?? true
         canvasWidth = try c.decodeIfPresent(Double.self, forKey: .canvasWidth)
@@ -204,6 +229,12 @@ enum ProjectLayout {
         let file = url("library", for: project).appendingPathComponent(media.id.uuidString)
         let ext = URL(fileURLWithPath: media.name).pathExtension
         return ext.isEmpty ? file : file.appendingPathExtension(ext)
+    }
+    static func htmlMotionDirectory(in project: VideoProject) -> URL {
+        directory(for: project).appendingPathComponent("motions", isDirectory: true)
+    }
+    static func htmlMotion(_ item: HTMLMotionOverlay, in project: VideoProject) -> URL {
+        htmlMotionDirectory(in: project).appendingPathComponent(item.fileName)
     }
     static func materialDirectory(_ material: Material, in project: VideoProject) -> URL {
         directory(for: project).appendingPathComponent("materials/\(material.mediaID.uuidString)", isDirectory: true)

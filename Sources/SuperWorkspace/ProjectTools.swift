@@ -63,6 +63,12 @@ enum ProjectTools {
             return removeCallout(call.args, project: project, state: state)
         case "silence_analyze":
             return analyzeSilence(call.args, project: project)
+        case "motion_html_add":
+            return addHTMLMotion(call.args, project: project, state: state)
+        case "motion_html_update":
+            return updateHTMLMotion(call.args, project: project, state: state)
+        case "motion_html_remove":
+            return removeHTMLMotion(call.args, project: project, state: state)
         case "motion_regenerate":
             return regenerateMotion(call.args, project: project, state: state)
         case "job_status":
@@ -160,6 +166,17 @@ enum ProjectTools {
                 ("y", .number(rounded(item.y))),
             ])
         }
+        let htmlMotions = (project.htmlMotions ?? []).enumerated().map { index, item -> JSONValue in
+            .object([
+                ("index", .number(Double(index + 1))),
+                ("id", .string(item.id.uuidString)),
+                ("name", .string(item.name)),
+                ("mode", .string(item.mode.rawValue)),
+                ("start", .number(rounded(item.start))),
+                ("end", .number(rounded(item.end))),
+                ("file", .string(item.fileName)),
+            ])
+        }
         return .object([
             ("project", .object([
                 ("id", .string(project.id.uuidString)),
@@ -170,6 +187,7 @@ enum ProjectTools {
                 ("canvasHeight", project.canvasHeight.map { .number(rounded($0)) } ?? .null),
             ])),
             ("clips", .array(clips)),
+            ("htmlMotions", .array(htmlMotions)),
             ("audioClips", .array(audioClips)),
             ("callouts", .array(callouts)),
             ("library", .array(library)),
@@ -579,6 +597,59 @@ enum ProjectTools {
 
     private static func resolveCallout(_ args: [String: JSONValue], in project: VideoProject) -> CalloutOverlay? {
         let items = project.callouts ?? []
+        if let id = args["id"]?.stringValue.flatMap(UUID.init(uuidString:)) {
+            return items.first { $0.id == id }
+        }
+        if let index = args["index"]?.intValue, index >= 1, index <= items.count {
+            return items[index - 1]
+        }
+        return nil
+    }
+
+    private static func addHTMLMotion(_ args: [String: JSONValue], project: VideoProject, state: AppState) -> ProjectToolOutcome {
+        guard !project.isFrozen else { return .failure("项目已冻结，先取消冻结再修改。") }
+        guard let html = args["html"]?.stringValue, !html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .failure("请提供完整的单文件 HTML/CSS/SVG 源码 html。")
+        }
+        guard let start = args["start"]?.numberValue else { return .failure("请提供动效开始时间 start（成片秒数）。") }
+        let end = args["end"]?.numberValue ?? (start + 3.0)
+        let name = args["name"]?.stringValue ?? "即时动效"
+        let mode: HTMLMotionOverlay.Mode = args["mode"]?.stringValue == "fullscreen" ? .fullscreen : .overlay
+        guard let item = state.addHTMLMotion(project.id, name: name, start: max(0, start), end: max(start + 0.2, end), mode: mode, html: html) else {
+            return .failure("添加即时动效失败，请检查时间范围。")
+        }
+        return .success(.object([
+            ("result", .string("html_motion_added")),
+            ("id", .string(item.id.uuidString)),
+            ("name", .string(item.name)),
+            ("mode", .string(item.mode.rawValue)),
+            ("start", .number(rounded(item.start))),
+            ("end", .number(rounded(item.end))),
+        ]))
+    }
+
+    private static func updateHTMLMotion(_ args: [String: JSONValue], project: VideoProject, state: AppState) -> ProjectToolOutcome {
+        guard !project.isFrozen else { return .failure("项目已冻结，先取消冻结再修改。") }
+        guard let target = resolveHTMLMotion(args, in: project) else { return .failure("未找到即时动效，请传入序号或 id。") }
+        let ok = state.updateHTMLMotion(project.id, id: target.id, html: args["html"]?.stringValue) { item in
+            if let name = args["name"]?.stringValue, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { item.name = name }
+            if let start = args["start"]?.numberValue { item.start = max(0, start) }
+            if let end = args["end"]?.numberValue { item.end = max(item.start + 0.1, end) }
+            if let mode = args["mode"]?.stringValue.flatMap(HTMLMotionOverlay.Mode.init(rawValue:)) { item.mode = mode }
+        }
+        guard ok else { return .failure("更新即时动效失败。") }
+        return .success(.object([("result", .string("html_motion_updated")), ("id", .string(target.id.uuidString))]))
+    }
+
+    private static func removeHTMLMotion(_ args: [String: JSONValue], project: VideoProject, state: AppState) -> ProjectToolOutcome {
+        guard !project.isFrozen else { return .failure("项目已冻结，先取消冻结再修改。") }
+        guard let target = resolveHTMLMotion(args, in: project) else { return .failure("未找到即时动效，请传入序号或 id。") }
+        guard state.removeHTMLMotion(project.id, id: target.id) else { return .failure("删除即时动效失败。") }
+        return .success(.object([("result", .string("html_motion_removed")), ("id", .string(target.id.uuidString))]))
+    }
+
+    private static func resolveHTMLMotion(_ args: [String: JSONValue], in project: VideoProject) -> HTMLMotionOverlay? {
+        let items = project.htmlMotions ?? []
         if let id = args["id"]?.stringValue.flatMap(UUID.init(uuidString:)) {
             return items.first { $0.id == id }
         }

@@ -161,6 +161,15 @@ struct AssemblyView: View {
                 .onTapGesture {
                     if player.currentItem != nil { togglePlayback() }
                 }
+            ForEach(activeHTMLMotions) { item in
+                HTMLMotionPreviewLayer(
+                    url: ProjectLayout.htmlMotion(item, in: project),
+                    revision: item.revision,
+                    localTime: max(0, playhead - item.start),
+                    duration: max(0.05, item.end - item.start)
+                )
+                .allowsHitTesting(false)
+            }
             if showsSubtitlesPreview, let caption = activeSubtitleText {
                 VStack {
                     Spacer()
@@ -201,6 +210,10 @@ struct AssemblyView: View {
         }
         .background(palette.mediaGround)
         .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusL))
+    }
+
+    private var activeHTMLMotions: [HTMLMotionOverlay] {
+        (project.htmlMotions ?? []).filter { playhead >= $0.start && playhead < $0.end }
     }
 
     private var activeSubtitleText: String? {

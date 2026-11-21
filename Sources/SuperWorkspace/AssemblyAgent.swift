@@ -349,7 +349,10 @@ final class AssemblyAgent: ObservableObject {
         case "callout_update": label = "调整花字标注"
         case "callout_remove": label = "移除花字标注"
         case "silence_analyze": label = "分析静音停顿"
-        case "motion_regenerate": label = "重做动效"
+        case "motion_html_add": label = "生成即时动效"
+        case "motion_html_update": label = "更新即时动效"
+        case "motion_html_remove": label = "移除即时动效"
+        case "motion_regenerate": label = "重做 Remotion 动效"
         case "job_status": label = "查询任务"
         default: label = name.isEmpty ? "处理中" : name
         }
@@ -367,7 +370,10 @@ final class AssemblyAgent: ObservableObject {
 
         你能直接做的事：
         - 结构与节奏：裁剪片段（clip_trim）、切分片段（clip_split）、排序（clip_move）、调速（clip_speed，局部加速先切分再调速）、重命名（clip_rename）、扫描静音停顿（silence_analyze）并自动剪掉多余空白。
-        - 视觉包装：叠加花字/大标题/角标/下三分之一信息条（callout_add/update/remove）、从素材库插入补充画面（insert_add/update/remove）、切换成片画幅（canvas_set）、后台重做 Remotion 动效（motion_regenerate）。
+        - 视觉包装：
+          * 即时动效（motion_html_add/update/remove）：**优先用于片头动画、章节转场、动态流程图、界面高亮框/箭头、步骤进度条、自定义酷炫花字**——直接写单文件 HTML/CSS/SVG，秒级生效、实时预览、可强制覆盖在任何片段和任何时间点（overlay 透明叠加，fullscreen 满屏覆盖）。
+          * 快捷花字（callout_add/update/remove）：4 种内置 Studio 风格静态标注（大标题/角标/重点气泡/下三分之一信息条）。
+          * 补充画面（insert_add/update/remove）、画幅切换（canvas_set）、后台重做整段 Remotion 动效（motion_regenerate，仅在用户明确要重做 Remotion 整段渲染时调用）。
         - 声音与字幕：添加背景音乐或音效（audio_add/update/remove，音乐自动支持淡入淡出与人声避让）、增删改合分字幕（subtitle_*）。
 
         工作方式：
