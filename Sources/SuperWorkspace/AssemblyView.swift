@@ -6,6 +6,7 @@ struct AssemblyView: View {
     @EnvironmentObject private var state: AppState
     @Environment(\.palette) private var palette
     let project: VideoProject
+    @Binding var showsAIPanel: Bool
     var onOpenLibrary: () -> Void = {}
     @State private var player = AVPlayer()
     @State private var previewError: String?
@@ -44,28 +45,35 @@ struct AssemblyView: View {
                         .buttonStyle(StudioButtonStyle(kind: .primary))
                 }
             } else {
-                HStack(spacing: 0) {
-                    // Left: Big Preview + Minimalist Timeline
+                HStack(spacing: Metrics.space3) {
+                    // Left: Stage Preview + Floating Transport Pill + Floating Timeline Island
                     GeometryReader { geometry in
                         let minTimeline: CGFloat = 236
-                        let previewHeight = min(max(220, geometry.size.height * previewFraction),
-                                                max(220, geometry.size.height - minTimeline - 6))
+                        let previewHeight = min(max(240, geometry.size.height * previewFraction),
+                                                max(240, geometry.size.height - minTimeline - 12))
                         VStack(spacing: 0) {
-                            previewStage
-                                .padding(Metrics.space3)
-                                .frame(height: previewHeight)
+                            VStack(spacing: Metrics.space2_5) {
+                                previewStage
+                                floatingTransportPill
+                            }
+                            .padding(.top, Metrics.space1)
+                            .frame(height: previewHeight)
 
-                            Rectangle().fill(palette.surface2).frame(height: 6)
-                                .overlay { Capsule().fill(palette.surface3).frame(width: 32, height: 2) }
+                            Rectangle().fill(Color.clear).frame(height: 12)
+                                .overlay {
+                                    Capsule()
+                                        .fill(palette.surface3)
+                                        .frame(width: 36, height: 3)
+                                }
                                 .contentShape(Rectangle())
                                 .onHover { ($0 ? NSCursor.resizeUpDown : NSCursor.arrow).set() }
                                 .gesture(DragGesture().onChanged { value in
                                     if dragOrigin == nil { dragOrigin = previewHeight }
-                                    previewFraction = min(0.80, max(0.28, ((dragOrigin ?? previewHeight) + value.translation.height) / max(1, geometry.size.height)))
+                                    previewFraction = min(0.80, max(0.32, ((dragOrigin ?? previewHeight) + value.translation.height) / max(1, geometry.size.height)))
                                 }.onEnded { _ in dragOrigin = nil; remember(flush: true) })
                                 .accessibilityLabel("预览区域高度")
                                 .accessibilityAdjustableAction { direction in
-                                    previewFraction = min(0.80, max(0.28, previewFraction + (direction == .increment ? 0.05 : -0.05)))
+                                    previewFraction = min(0.80, max(0.32, previewFraction + (direction == .increment ? 0.05 : -0.05)))
                                 }
 
                             AssemblyTimeline(
@@ -87,27 +95,37 @@ struct AssemblyView: View {
                                 zoom: $zoom
                             )
                             .frame(maxHeight: .infinity)
+                            .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusIsland, style: .continuous))
+                            .studioIsland(cornerRadius: Metrics.radiusIsland)
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                    Rectangle().fill(palette.surface2).frame(width: 1)
-
-                    // Right: Full-height Always-on AI Editor
-                    AssemblyChatPanel(
-                        project: project,
-                        agent: chatAgent,
-                        focusContext: editorFocusContext,
-                        onPlayPreview: { focusTime in playFrom(focusTime) },
-                        onImportMedia: { importingMedia = true },
-                        onOpenLibrary: onOpenLibrary
-                    )
-                    .frame(width: Metrics.chatPanel)
-                    .frame(maxHeight: .infinity)
+                    // Right: Collapsible Floating AI Director Island
+                    if showsAIPanel {
+                        AssemblyChatPanel(
+                            project: project,
+                            agent: chatAgent,
+                            focusContext: editorFocusContext,
+                            onPlayPreview: { focusTime in playFrom(focusTime) },
+                            onImportMedia: { importingMedia = true },
+                            onOpenLibrary: onOpenLibrary,
+                            onClose: {
+                                withAnimation(StudioMotion.settle) {
+                                    showsAIPanel = false
+                                }
+                            }
+                        )
+                        .frame(width: Metrics.chatPanel)
+                        .frame(maxHeight: .infinity)
+                        .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusIsland, style: .continuous))
+                        .studioIsland(cornerRadius: Metrics.radiusIsland)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                    }
                 }
             }
         }
-        .background(palette.bgBase)
+        .background(palette.stage)
         .sheet(isPresented: $showsSubtitlesSheet) {
             subtitlesSheet
         }
@@ -163,7 +181,12 @@ struct AssemblyView: View {
 
     private var previewStage: some View {
         ZStack {
-            palette.bgDeep
+            RadialGradient(
+                colors: [palette.stageLight, .clear],
+                center: .center,
+                startRadius: 20,
+                endRadius: 420
+            )
             ZStack {
                 VideoSurface(player: player, controlsStyle: .none)
                 ForEach(activeHTMLMotions) { item in
@@ -184,7 +207,7 @@ struct AssemblyView: View {
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, Metrics.space3)
                             .padding(.vertical, Metrics.space1_5)
-                            .background(Color.black.opacity(0.68), in: RoundedRectangle(cornerRadius: Metrics.radiusS))
+                            .background(Color.black.opacity(0.76), in: RoundedRectangle(cornerRadius: Metrics.radiusS, style: .continuous))
                             .padding(.horizontal, Metrics.space4)
                             .padding(.bottom, Metrics.space4)
                     }
@@ -199,14 +222,14 @@ struct AssemblyView: View {
             }
             .background(palette.mediaGround)
             .aspectRatio(canvasAspect, contentMode: .fit)
-            .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusM))
+            .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusL, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: Metrics.radiusM)
-                    .strokeBorder(palette.surface3.opacity(0.65), lineWidth: 1)
+                RoundedRectangle(cornerRadius: Metrics.radiusL, style: .continuous)
+                    .strokeBorder(palette.islandOutline, lineWidth: 1)
                     .allowsHitTesting(false)
             }
-            .shadow(color: .black.opacity(0.28), radius: 12, y: 4)
-            .padding(Metrics.space2)
+            .shadow(color: palette.shadowSoft, radius: 22, y: 10)
+            .padding(.horizontal, Metrics.space3)
 
             if loading {
                 VStack {
@@ -231,7 +254,103 @@ struct AssemblyView: View {
                 .padding(Metrics.space6)
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusL))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var canvasRatioLabel: String {
+        guard let w = project.canvasWidth, let h = project.canvasHeight else { return "跟随" }
+        if Int(w) == 1920 && Int(h) == 1080 { return "16:9" }
+        if Int(w) == 1080 && Int(h) == 1920 { return "9:16" }
+        if Int(w) == 1080 && Int(h) == 1080 { return "1:1" }
+        return "\(Int(w))×\(Int(h))"
+    }
+
+    private var totalTimelineDuration: Double {
+        AssemblyTimelineLayout(materials: project.materials).duration
+    }
+
+    /// DogSC-style floating transport capsule beneath the video monitor.
+    private var floatingTransportPill: some View {
+        HStack(spacing: Metrics.space2) {
+            Menu {
+                Button("横屏 16:9（1920 × 1080）") { state.setCanvas(project.id, width: 1920, height: 1080) }
+                Button("竖屏 9:16（1080 × 1920）") { state.setCanvas(project.id, width: 1080, height: 1920) }
+                Button("方形 1:1（1080 × 1080）") { state.setCanvas(project.id, width: 1080, height: 1080) }
+                Divider()
+                Button("跟随素材") { state.setCanvas(project.id, width: nil, height: nil) }
+            } label: {
+                Text(canvasRatioLabel)
+                    .font(.studio(.caption, weight: .medium))
+                    .foregroundStyle(palette.textSecondary)
+                    .padding(.horizontal, Metrics.space2)
+                    .frame(height: 24)
+                    .background(palette.controlWell, in: Capsule())
+            }
+            .menuStyle(StudioMenuStyle())
+            .fixedSize()
+            .disabled(project.isFrozen)
+            .help("切换成片画幅")
+
+            Button {
+                showsSubtitlesPreview.toggle()
+            } label: {
+                Text(showsSubtitlesPreview ? "字幕 开" : "字幕 关")
+                    .font(.studio(.caption, weight: .medium))
+                    .foregroundStyle(showsSubtitlesPreview ? palette.textPrimary : palette.textMuted)
+                    .padding(.horizontal, Metrics.space2)
+                    .frame(height: 24)
+                    .background(showsSubtitlesPreview ? palette.selectionWash : palette.controlWell, in: Capsule())
+            }
+            .buttonStyle(StudioContentButtonStyle())
+            .help("切换预览字幕显示")
+
+            Menu {
+                ForEach([0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { rate in
+                    Button(String(format: "%.2g×", rate)) { previewRate = rate }
+                }
+            } label: {
+                Text(String(format: "%.2g×", previewRate))
+                    .font(.studio(.caption, weight: .medium))
+                    .monospacedDigit()
+                    .foregroundStyle(palette.textSecondary)
+                    .padding(.horizontal, Metrics.space2)
+                    .frame(height: 24)
+                    .background(palette.controlWell, in: Capsule())
+            }
+            .menuStyle(StudioMenuStyle())
+            .fixedSize()
+            .help("预览播放倍速")
+
+            Rectangle()
+                .fill(palette.hairline)
+                .frame(width: 1, height: 14)
+
+            Button(action: togglePlayback) {
+                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(palette.onAccent)
+                    .frame(width: 26, height: 26)
+                    .background(palette.accent, in: Circle())
+            }
+            .buttonStyle(StudioContentButtonStyle())
+            .disabled(player.currentItem == nil)
+            .accessibilityLabel(isPlaying ? "暂停预览" : "播放预览")
+
+            HStack(spacing: Metrics.space1) {
+                Text(AssemblyTimelineLayout.timecode(playhead))
+                    .foregroundStyle(palette.textPrimary)
+                Text("/")
+                    .foregroundStyle(palette.textMuted)
+                Text(AssemblyTimelineLayout.timecode(totalTimelineDuration))
+                    .foregroundStyle(palette.textMuted)
+            }
+            .font(.studio(.timecode, weight: .medium))
+            .monospacedDigit()
+            .padding(.horizontal, Metrics.space1)
+        }
+        .padding(.horizontal, Metrics.space3)
+        .frame(height: 38)
+        .studioIsland(cornerRadius: 999)
     }
 
     private var activeHTMLMotions: [HTMLMotionOverlay] {

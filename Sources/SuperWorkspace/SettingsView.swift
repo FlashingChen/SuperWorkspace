@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @Environment(\.palette) private var palette
-    @AppStorage("appearanceMode") private var appearanceMode = "system"
+    @AppStorage("appearanceMode") private var appearanceMode = "dark"
     @AppStorage("reduceMotion") private var reduceMotion = false
     @ObservedObject private var settings = SettingsStore.shared
     @State private var choosingModel = false
@@ -20,20 +20,24 @@ struct SettingsView: View {
     @State private var apiFailed = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Metrics.space6) {
-            Text("设置").font(.studio(.title))
-            StudioChoice(title: "设置分类", selection: $selectedTab,
-                options: [("appearance", "外观"), ("motion", "AI 动效"), ("subtitles", "字幕")])
+        VStack(alignment: .leading, spacing: Metrics.space5) {
+            HStack {
+                Text("设置").font(.studio(.heading))
+                Spacer()
+                StudioChoice(title: "设置分类", selection: $selectedTab,
+                    options: [("appearance", "外观"), ("motion", "AI 动效"), ("subtitles", "字幕")])
+                    .frame(width: 280)
+            }
             ScrollView {
-                VStack(alignment: .leading, spacing: Metrics.space6) {
-                    if selectedTab == "appearance" { appearanceSettings }
-                    else if selectedTab == "motion" { motionSettings }
-                    else { subtitleSettings }
+                VStack(alignment: .leading, spacing: Metrics.space4) {
+                    if selectedTab == "appearance" { appearanceSettings.studioTile() }
+                    else if selectedTab == "motion" { motionSettings.studioTile() }
+                    else { subtitleSettings.studioTile() }
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(Metrics.space0_5)
             }
         }
-        .padding(Metrics.space7).frame(width: 660, height: 620)
-        .foregroundStyle(palette.textPrimary).background(palette.bgBase)
+        .padding(Metrics.space6).frame(width: 660, height: 620)
+        .foregroundStyle(palette.textPrimary).background(palette.island)
         .buttonStyle(StudioButtonStyle())
         .toggleStyle(StudioToggleStyle())
         .textFieldStyle(StudioTextFieldStyle())

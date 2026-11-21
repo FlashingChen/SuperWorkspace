@@ -4,39 +4,71 @@ import SwiftUI
 struct StudioButtonStyle: ButtonStyle {
     enum Kind { case primary, secondary, quiet, destructive }
     enum Size { case regular, compact }
+    enum Shape { case capsule, rounded }
     var kind: Kind = .secondary
     var size: Size = .regular
+    var shape: Shape = .capsule
     @Environment(\.palette) private var palette
     @Environment(\.isEnabled) private var isEnabled
     @State private var hovering = false
 
     func makeBody(configuration: Configuration) -> some View {
+        let radius: CGFloat = shape == .capsule
+            ? 999
+            : (size == .compact ? Metrics.radiusS : Metrics.radiusM)
         configuration.label
-            .font(.studio(size == .compact ? .small : .bodyMedium, weight: .medium))
-            .foregroundStyle((kind == .primary || kind == .destructive) ? palette.bgBase : palette.textPrimary)
-            .padding(.horizontal, size == .compact || kind == .quiet ? Metrics.space2 : Metrics.space4)
+            .font(.studio(size == .compact ? .small : .bodyMedium, weight: kind == .primary ? .semibold : .medium))
+            .foregroundStyle(foreground)
+            .padding(.horizontal, horizontalPadding)
             .frame(minWidth: size == .compact ? Metrics.controlCompact : 0,
                    minHeight: size == .compact ? Metrics.controlCompact : Metrics.control)
-            .background(background(pressed: configuration.isPressed), in: RoundedRectangle(cornerRadius: Metrics.radiusM))
+            .background(background(pressed: configuration.isPressed),
+                        in: RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay {
                 if kind == .secondary {
-                    RoundedRectangle(cornerRadius: Metrics.radiusM).strokeBorder(palette.borderStrong, lineWidth: 1)
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .strokeBorder(palette.islandOutline, lineWidth: 1)
                 }
             }
             .opacity(isEnabled ? 1 : Metrics.opacityDisabled)
+            .animation(StudioMotion.hover, value: hovering)
             .onHover { hovering = $0 }
     }
 
-    private func background(pressed: Bool) -> Color {
-        if kind == .primary || kind == .destructive {
-            return (kind == .destructive ? palette.danger : palette.textPrimary)
-                .opacity(pressed ? Metrics.opacityPressed : (hovering ? 0.88 : 1))
+    private var horizontalPadding: CGFloat {
+        switch (size, kind) {
+        case (.compact, .quiet): Metrics.space2
+        case (.compact, _): Metrics.space3
+        case (.regular, .quiet): Metrics.space2_5
+        case (.regular, _): Metrics.space4
         }
-        return (hovering || pressed) ? palette.surface1 : .clear
+    }
+
+    private var foreground: Color {
+        switch kind {
+        case .primary: palette.onAccent
+        case .destructive: Color.white
+        case .secondary, .quiet: palette.textPrimary
+        }
+    }
+
+    private func background(pressed: Bool) -> Color {
+        switch kind {
+        case .primary:
+            return palette.accent.opacity(pressed ? Metrics.opacityPressed : (hovering ? 0.88 : 1))
+        case .destructive:
+            return palette.danger.opacity(pressed ? Metrics.opacityPressed : (hovering ? 0.88 : 1))
+        case .secondary:
+            if pressed { return palette.selectionWash }
+            return hovering ? palette.selectionWash.opacity(0.75) : palette.controlWell
+        case .quiet:
+            if pressed { return palette.selectionWash }
+            return hovering ? palette.hoverWash : .clear
+        }
     }
 }
 
-/// Selectable settings share the workspace's surfaces and focus color.
+/// Selectable choices use neutral elevation washes instead of heavy wireframes.
 struct StudioSelectionStyle: ButtonStyle {
     @Environment(\.palette) private var palette
     @Environment(\.isEnabled) private var isEnabled
@@ -45,15 +77,18 @@ struct StudioSelectionStyle: ButtonStyle {
     var cornerRadius: CGFloat = Metrics.radiusM
 
     func makeBody(configuration: Configuration) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         configuration.label
-            .foregroundStyle(palette.textPrimary)
-            .background(selected ? palette.accent.opacity(Metrics.opacitySelected) : (hovering || configuration.isPressed ? palette.surface1 : palette.bgBase), in: RoundedRectangle(cornerRadius: cornerRadius))
-            .overlay {
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .strokeBorder(selected ? palette.accent : palette.borderStrong, lineWidth: 1)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-            .opacity(isEnabled ? (configuration.isPressed ? Metrics.opacityPressed : 1) : Metrics.opacityDisabled)
+            .foregroundStyle(selected ? palette.onAccent : (hovering ? palette.textPrimary : palette.textSecondary))
+            .background(
+                selected
+                    ? palette.accent
+                    : (configuration.isPressed ? palette.selectionWash : (hovering ? palette.hoverWash : palette.controlWell)),
+                in: shape
+            )
+            .clipShape(shape)
+            .opacity(isEnabled ? (configuration.isPressed && selected ? Metrics.opacityPressed : 1) : Metrics.opacityDisabled)
+            .animation(StudioMotion.hover, value: hovering)
             .onHover { hovering = $0 }
     }
 }
@@ -64,26 +99,35 @@ struct StudioToggleStyle: ToggleStyle {
     @State private var hovering = false
 
     func makeBody(configuration: Configuration) -> some View {
-        Button { configuration.isOn.toggle() } label: {
+        Button {
+            withAnimation(StudioMotion.interactive) {
+                configuration.isOn.toggle()
+            }
+        } label: {
             HStack(spacing: Metrics.space4) {
-                configuration.label.font(.studio(.bodyMedium))
+                configuration.label.font(.studio(.body))
                 Spacer()
                 Capsule()
                     .fill(configuration.isOn ? palette.accent : palette.surface3)
-                    .frame(width: 32, height: 20)
+                    .frame(width: 34, height: 20)
                     .overlay(alignment: configuration.isOn ? .trailing : .leading) {
-                        Circle().fill(palette.bgBase).frame(width: 14, height: 14).padding(3)
+                        Circle()
+                            .fill(configuration.isOn ? palette.onAccent : palette.textPrimary)
+                            .frame(width: 14, height: 14)
+                            .padding(3)
                     }
                     .accessibilityHidden(true)
             }
             .frame(minHeight: Metrics.toggleRow)
             .padding(.horizontal, Metrics.space2)
-            .background(hovering ? palette.surface1 : .clear, in: RoundedRectangle(cornerRadius: Metrics.radiusS))
+            .background(hovering ? palette.hoverWash : .clear,
+                        in: RoundedRectangle(cornerRadius: Metrics.radiusS, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .foregroundStyle(palette.textPrimary)
         .opacity(isEnabled ? 1 : Metrics.opacityDisabled)
+        .animation(StudioMotion.hover, value: hovering)
         .onHover { hovering = $0 }
         .accessibilityRepresentation {
             Toggle(isOn: configuration.$isOn) { configuration.label }.toggleStyle(.switch)
@@ -104,19 +148,23 @@ struct StudioPreview: View {
             if let player {
                 StudioPlayer(player: player)
             } else {
-                VStack(spacing: Metrics.space4) {
+                VStack(spacing: Metrics.space3) {
                     Image(systemName: symbol)
-                        .font(.system(size: 38, weight: .ultraLight))
-                        .foregroundStyle(Color.white.opacity(0.48))
+                        .font(.system(size: 32, weight: .light))
+                        .foregroundStyle(Color.white.opacity(0.42))
                         .accessibilityHidden(true)
                     Text(title)
                         .font(.studio(.small))
-                        .foregroundStyle(Color.white.opacity(0.65))
+                        .foregroundStyle(Color.white.opacity(0.62))
                 }
             }
         }
         .aspectRatio(16.0 / 9.0, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusL))
+        .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusL, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: Metrics.radiusL, style: .continuous)
+                .strokeBorder(palette.islandOutline, lineWidth: 1)
+        }
         .task(id: url) {
             player?.pause()
             player = url.map { AVPlayer(url: $0) }
@@ -139,7 +187,7 @@ struct StudioNotice: View {
     }
 }
 
-/// Media and action columns share the same composition throughout the workflow.
+/// Centered stage empty-state / onboarding surface inside a floating studio island.
 struct StudioWorkspace<Media: View, Controls: View>: View {
     @Environment(\.palette) private var palette
     let title: String
@@ -148,25 +196,28 @@ struct StudioWorkspace<Media: View, Controls: View>: View {
     @ViewBuilder var controls: () -> Controls
 
     var body: some View {
-        GeometryReader { geometry in
-            ScrollView {
-                VStack(alignment: .leading, spacing: geometry.size.height < 640 ? Metrics.space7 : Metrics.space10) {
-                    WorkspaceHeading(title: title, detail: detail)
-                    HStack(alignment: .top, spacing: Metrics.space9) {
-                        media().frame(maxWidth: .infinity)
-                        VStack(alignment: .leading, spacing: Metrics.space6, content: controls)
-                            .frame(width: geometry.size.width < 1000 ? 200 : 224, alignment: .leading)
-                            .padding(.top, Metrics.space1)
+        ScrollView {
+            VStack(spacing: Metrics.space5) {
+                VStack(alignment: .leading, spacing: Metrics.space5) {
+                    HStack(alignment: .top, spacing: Metrics.space6) {
+                        media()
+                            .frame(maxWidth: .infinity)
+                        VStack(alignment: .leading, spacing: Metrics.space4) {
+                            WorkspaceHeading(title: title, detail: detail)
+                            controls()
+                        }
+                        .frame(width: 248, alignment: .leading)
                     }
                 }
-                .frame(maxWidth: Metrics.content, alignment: .leading)
-                .padding(.horizontal, Metrics.space11)
-                .padding(.top, geometry.size.height < 640 ? Metrics.space6 : Metrics.space13)
-                .padding(.bottom, geometry.size.height < 640 ? Metrics.space6 : Metrics.space11)
-                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(Metrics.space5)
+                .studioIsland(cornerRadius: Metrics.radiusFloating)
+                .frame(maxWidth: 880)
             }
+            .padding(.horizontal, Metrics.space7)
+            .padding(.vertical, Metrics.space8)
+            .frame(maxWidth: .infinity, minHeight: 520, alignment: .center)
         }
-        .background(palette.bgBase)
+        .background(palette.stage)
     }
 }
 
@@ -178,18 +229,23 @@ struct NewProjectSheet: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Metrics.space6) {
-            Text("新建项目")
-                .font(.studio(.title))
+        VStack(alignment: .leading, spacing: Metrics.space5) {
+            VStack(alignment: .leading, spacing: Metrics.space1) {
+                Text("新建项目")
+                    .font(.studio(.heading))
+                Text("每个项目独立管理录制素材、字幕、动效与成片。")
+                    .font(.studio(.small))
+                    .foregroundStyle(palette.textSecondary)
+            }
             TextField("项目名称", text: $name)
                 .textFieldStyle(StudioTextFieldStyle())
-                .font(.studio(.bodyLarge))
+                .font(.studio(.body))
                 .focused($focused)
                 .onSubmit(create)
-            HStack {
+            HStack(spacing: Metrics.space2) {
                 Spacer()
                 Button("取消") { dismiss() }
-                    .buttonStyle(StudioButtonStyle(kind: .quiet))
+                    .buttonStyle(StudioButtonStyle(kind: .secondary))
                     .keyboardShortcut(.cancelAction)
                 Button("创建项目", action: create)
                     .buttonStyle(StudioButtonStyle(kind: .primary))
@@ -197,9 +253,9 @@ struct NewProjectSheet: View {
             }
         }
         .foregroundStyle(palette.textPrimary)
-        .padding(Metrics.space8)
+        .padding(Metrics.space6)
         .frame(width: 420)
-        .background(palette.bgBase)
+        .background(palette.island)
         .onAppear { focused = true }
     }
 

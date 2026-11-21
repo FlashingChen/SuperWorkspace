@@ -31,7 +31,7 @@ struct StudioPlayer: View {
                 Text(durationLabel(duration)).monospacedDigit().foregroundStyle(palette.textSecondary)
             }
             .font(.studio(.timecode)).buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
-            .padding(.horizontal, Metrics.space2_5).frame(height: Metrics.control).background(palette.bgBase)
+            .padding(.horizontal, Metrics.space3).frame(height: Metrics.control + 4).background(palette.island)
         }
         .onAppear {
             guard observer == nil else { return }
@@ -60,7 +60,7 @@ struct StudioSheetSurface<Content: View>: View {
             .buttonStyle(StudioButtonStyle())
             .toggleStyle(StudioToggleStyle())
             .foregroundStyle(palette.textPrimary)
-            .background(palette.bgBase)
+            .background(palette.island)
     }
 }
 
@@ -75,14 +75,14 @@ struct StudioMessageSheet: View {
     let action: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Metrics.space6) {
+        VStack(alignment: .leading, spacing: Metrics.space5) {
             Text(title).font(.studio(.heading))
             Text(message).font(.studio(.body)).foregroundStyle(palette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-            HStack {
+            HStack(spacing: Metrics.space2) {
                 if let cancelTitle {
                     Button(cancelTitle) { dismiss() }
-                        .buttonStyle(StudioButtonStyle()).keyboardShortcut(.cancelAction)
+                        .buttonStyle(StudioButtonStyle(kind: .secondary)).keyboardShortcut(.cancelAction)
                 }
                 Spacer()
                 if destructive {
@@ -95,8 +95,8 @@ struct StudioMessageSheet: View {
                 }
             }
         }
-        .padding(Metrics.space7).frame(width: 440)
-        .foregroundStyle(palette.textPrimary).background(palette.bgBase)
+        .padding(Metrics.space6).frame(width: 440)
+        .foregroundStyle(palette.textPrimary).background(palette.island)
     }
 }
 
@@ -108,8 +108,12 @@ struct StudioContentButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .background(hovering ? palette.surface1 : .clear, in: RoundedRectangle(cornerRadius: Metrics.radiusM))
+            .background(
+                hovering ? palette.hoverWash : .clear,
+                in: RoundedRectangle(cornerRadius: Metrics.radiusM, style: .continuous)
+            )
             .opacity(isEnabled ? (configuration.isPressed ? Metrics.opacityPressed : 1) : Metrics.opacityDisabled)
+            .animation(StudioMotion.hover, value: hovering)
             .onHover { hovering = $0 }
     }
 }
@@ -120,15 +124,16 @@ struct StudioChoice<Value: Hashable>: View {
     let options: [(Value, String)]
 
     var body: some View {
-        HStack(spacing: Metrics.space2) {
+        HStack(spacing: Metrics.space1_5) {
             ForEach(options.indices, id: \.self) { index in
                 let option = options[index]
                 Button { selection = option.0 } label: {
                     Text(option.1)
-                        .font(.studio(.small, weight: .medium))
-                        .padding(.horizontal, Metrics.space2_5).frame(maxWidth: .infinity, minHeight: Metrics.choice)
+                        .font(.studio(.small, weight: selection == option.0 ? .semibold : .medium))
+                        .padding(.horizontal, Metrics.space2_5)
+                        .frame(maxWidth: .infinity, minHeight: Metrics.choice)
                 }
-                .buttonStyle(StudioSelectionStyle(selected: selection == option.0))
+                .buttonStyle(StudioSelectionStyle(selected: selection == option.0, cornerRadius: Metrics.radiusM))
                 .accessibilityAddTraits(selection == option.0 ? .isSelected : [])
             }
         }
@@ -143,17 +148,18 @@ struct StudioTextFieldStyle: TextFieldStyle {
     @FocusState private var focused: Bool
 
     func _body(configuration: TextField<Self._Label>) -> some View {
+        let shape = RoundedRectangle(cornerRadius: Metrics.radiusM, style: .continuous)
         configuration
             .textFieldStyle(.plain)
             .focused($focused)
             .font(.studio(.body))
-            .padding(Metrics.space2_5)
+            .padding(.horizontal, Metrics.space3)
+            .padding(.vertical, Metrics.space2)
             .foregroundStyle(palette.textPrimary)
             .tint(palette.accent)
-            .background(palette.surface1, in: RoundedRectangle(cornerRadius: Metrics.radiusM))
+            .background(palette.controlWell, in: shape)
             .overlay {
-                RoundedRectangle(cornerRadius: Metrics.radiusM)
-                    .strokeBorder(focused ? palette.accent : palette.borderStrong, lineWidth: 1)
+                shape.strokeBorder(focused ? palette.borderStrong : palette.islandOutline, lineWidth: 1)
             }
             .opacity(isEnabled ? 1 : Metrics.opacityDisabled)
     }
@@ -162,7 +168,11 @@ struct StudioTextFieldStyle: TextFieldStyle {
 struct StudioDisclosureStyle: DisclosureGroupStyle {
     func makeBody(configuration: Configuration) -> some View {
         VStack(alignment: .leading, spacing: Metrics.space3) {
-            Button { configuration.isExpanded.toggle() } label: {
+            Button {
+                withAnimation(StudioMotion.interactive) {
+                    configuration.isExpanded.toggle()
+                }
+            } label: {
                 HStack {
                     configuration.label
                     Spacer()
@@ -170,7 +180,7 @@ struct StudioDisclosureStyle: DisclosureGroupStyle {
                         .font(.studio(.micro, weight: .semibold)).accessibilityHidden(true)
                 }.frame(maxWidth: .infinity)
             }
-            .buttonStyle(StudioButtonStyle(kind: .quiet))
+            .buttonStyle(StudioButtonStyle(kind: .quiet, shape: .rounded))
             .accessibilityValue(configuration.isExpanded ? "已展开" : "已收起")
             if configuration.isExpanded { configuration.content }
         }
@@ -185,9 +195,10 @@ struct StudioMenuStyle: MenuStyle {
         Menu(configuration)
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
-            .padding(Metrics.space1_5)
+            .padding(.horizontal, Metrics.space1_5)
             .frame(minWidth: Metrics.controlCompact, minHeight: Metrics.controlCompact)
-            .background(hovering ? palette.surface1 : .clear, in: RoundedRectangle(cornerRadius: Metrics.radiusM))
+            .background(hovering ? palette.hoverWash : .clear, in: Capsule())
+            .animation(StudioMotion.hover, value: hovering)
             .onHover { hovering = $0 }
     }
 }
@@ -217,7 +228,7 @@ struct StudioSlider: NSViewRepresentable {
         if let cell = slider.cell as? StudioSliderCell {
             cell.trackColor = NSColor(palette.surface3)
             cell.fillColor = NSColor(palette.accent)
-            cell.knobColor = NSColor(palette.textPrimary)
+            cell.knobColor = NSColor(palette.accent)
         }
         slider.needsDisplay = true
     }
