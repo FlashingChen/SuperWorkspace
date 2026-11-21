@@ -179,7 +179,7 @@ struct AssemblyView: View {
                     VStack {
                         Spacer()
                         Text(caption)
-                            .font(.system(size: 15, weight: .medium))
+                            .font(.studio(.bodyLargeMedium))
                             .foregroundStyle(.white)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, Metrics.space3)

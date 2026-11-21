@@ -10,7 +10,7 @@ enum ProjectTools {
         guard let project = state.projects.first(where: { $0.id == projectID }) else {
             return .failure("项目不存在或已被删除。")
         }
-        let readOnly = call.tool == "project_read" || call.tool == "job_status"
+        let readOnly = call.tool == "project_read" || call.tool == "job_status" || call.tool == "silence_analyze"
         guard readOnly || state.exportingProjects.contains(projectID) == false else {
             return .failure("项目正在导出成片，等导出结束再修改。")
         }
@@ -376,6 +376,7 @@ enum ProjectTools {
 
     private static func rename(_ args: [String: JSONValue], project: VideoProject, state: AppState) -> ProjectToolOutcome {
         guard let material = resolveClip(args, in: project) else { return .failure("未找到片段。") }
+        guard !project.isFrozen else { return .failure("项目已冻结，先取消冻结再修改。") }
         guard let title = args["title"]?.stringValue else { return .failure("请提供新的片段名称。") }
         guard state.renameMaterial(project.id, material.id, title: title) else { return .failure("无法重命名片段。") }
         let index = project.materials.firstIndex { $0.id == material.id } ?? 0
@@ -437,7 +438,7 @@ enum ProjectTools {
         let clip = AudioClip(
             assetID: asset.id, kind: kind, start: start, end: end,
             assetStart: max(0, args["assetStart"]?.numberValue ?? 0),
-            volume: min(1.5, max(0, volume)),
+            volume: min(1.0, max(0, volume)),
             fadeIn: max(0, fadeIn), fadeOut: max(0, fadeOut), duckUnderSpeech: duck
         )
         guard state.addAudioClip(project.id, clip) else { return .failure("无法添加音频，请检查时间范围。") }
@@ -457,7 +458,7 @@ enum ProjectTools {
         let ok = state.updateAudioClip(project.id, id: target.id) { clip in
             if let s = args["start"]?.numberValue { clip.start = max(0, s) }
             if let e = args["end"]?.numberValue { clip.end = max(clip.start + 0.05, e) }
-            if let v = args["volume"]?.numberValue { clip.volume = min(1.5, max(0, v)) }
+            if let v = args["volume"]?.numberValue { clip.volume = min(1.0, max(0, v)) }
             if let fi = args["fadeIn"]?.numberValue { clip.fadeIn = max(0, fi) }
             if let fo = args["fadeOut"]?.numberValue { clip.fadeOut = max(0, fo) }
             if let duck = args["duckUnderSpeech"]?.boolValue { clip.duckUnderSpeech = duck }
@@ -546,6 +547,12 @@ enum ProjectTools {
         let totalSamples = (data.count - 44) / 2
         let startWindow = max(0, Int(material.inPoint * 20))
         let endWindow = min(totalSamples / windowSamples, Int(ceil(material.outPoint * 20)))
+        guard startWindow < endWindow else {
+            return .success(.object([
+                ("clip", .string(material.id.uuidString)),
+                ("silences", .array([])),
+            ]))
+        }
         var silences: [(Double, Double)] = []
         var quietStart: Double?
         data.withUnsafeBytes { raw in

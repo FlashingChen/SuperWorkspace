@@ -90,7 +90,7 @@ struct AudioClip: Identifiable, Codable, Equatable, Sendable {
     var start: Double
     var end: Double
     var assetStart: Double = 0
-    /// Linear gain `0.0...1.5`.
+    /// Linear gain `0.0...1.0`.
     var volume: Double = 0.25
     var fadeIn: Double = 0.8
     var fadeOut: Double = 1.0

@@ -87,7 +87,7 @@ private struct ReferenceMediaThumbnail: View {
                 Image(decorative: image, scale: 1).resizable().scaledToFit()
             } else {
                 Image(systemName: media.kind == .image ? "photo" : (media.kind == .audio ? "music.note" : "film"))
-                    .font(media.kind == .audio ? .title2 : .body)
+                    .font(.studio(media.kind == .audio ? .heading : .body))
                     .foregroundStyle(media.kind == .audio ? palette.success : palette.textSecondary)
             }
         }

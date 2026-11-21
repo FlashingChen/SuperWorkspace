@@ -189,7 +189,7 @@ struct RootView: View {
                 ForEach(Array([WorkStage.record, .assemble].enumerated()), id: \.element) { index, stage in
                     if index > 0 {
                         Image(systemName: "arrow.right")
-                            .font(.system(size: 12, weight: .light))
+                            .font(.studio(.small, weight: .light))
                             .foregroundStyle(palette.textMuted).accessibilityHidden(true)
                     }
                     Button { state.stage = stage } label: {

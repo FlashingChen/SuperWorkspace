@@ -13,7 +13,7 @@ final class AssemblyAgent: ObservableObject {
         var edits: [String]? = nil
         var editSteps: Int? = nil
         var focusTime: Double? = nil
-        var postTurnFingerprint: String? = nil
+        var postTurnUndoRevision: Int? = nil
         var isUndone: Bool? = nil
         var createdAt = Date()
     }
@@ -28,7 +28,8 @@ final class AssemblyAgent: ObservableObject {
 
     private var turnEdits: [String] = []
     private var turnFocusTime: Double?
-    private var lastTurnProjectFingerprint: String?
+    private var turnStartUndoPushCount = 0
+    private var lastTurnUndoRevision: Int?
     private var needsStateRefresh = false
 
     private let projectID: UUID
@@ -194,20 +195,20 @@ final class AssemblyAgent: ObservableObject {
               let latest = messages.last(where: { $0.role == .assistant && !($0.edits ?? []).isEmpty }),
               latest.id == messageID,
               latest.isUndone != true,
-              let expected = latest.postTurnFingerprint,
-              let current = currentProjectFingerprint() else { return false }
-        return expected == current
+              let steps = latest.editSteps, steps > 0,
+              let expectedRev = latest.postTurnUndoRevision else { return false }
+        return state.undoRevision == expectedRev
     }
 
     func undoTurn(messageID: UUID) {
         guard canUndoTurn(messageID: messageID),
               let state,
-              let idx = messages.firstIndex(where: { $0.id == messageID }) else { return }
-        let steps = max(1, messages[idx].editSteps ?? messages[idx].edits?.count ?? 1)
+              let idx = messages.firstIndex(where: { $0.id == messageID }),
+              let steps = messages[idx].editSteps, steps > 0 else { return }
         for _ in 0..<steps { state.undo() }
         messages[idx].isUndone = true
         needsStateRefresh = true
-        lastTurnProjectFingerprint = currentProjectFingerprint()
+        lastTurnUndoRevision = state.undoRevision
         persist()
     }
 
@@ -218,28 +219,20 @@ final class AssemblyAgent: ObservableObject {
         turnStartedAt = Date()
         turnEdits = []
         turnFocusTime = nil
+        turnStartUndoPushCount = state?.undoPushCount(for: projectID) ?? 0
         streaming = ""
         activity = nil
         failure = nil
         var prefixParts: [String] = []
         if let contextNote, !contextNote.isEmpty { prefixParts.append(contextNote) }
-        let currentFP = currentProjectFingerprint()
-        if needsStateRefresh || (lastTurnProjectFingerprint != nil && currentFP != lastTurnProjectFingerprint) {
+        let currentRev = state?.undoRevision
+        if needsStateRefresh || (lastTurnUndoRevision != nil && currentRev != lastTurnUndoRevision) {
             prefixParts.append("重要：项目在上一轮之后发生了手动修改或撤销，先前对话中记住的时长、倍速、花字、动效或字幕状态已过期；请先调用 project_read 获取最新状态再回答或操作。")
             needsStateRefresh = false
         }
         let payload = prefixParts.isEmpty ? text : "[\(prefixParts.joined(separator: " | "))]\n\(text)"
         sendLine(["type": "prompt", "id": nextPromptID, "text": payload])
         nextPromptID += 1
-    }
-
-    private func currentProjectFingerprint() -> String? {
-        guard let project = state?.projects.first(where: { $0.id == projectID }) else { return nil }
-        let clipSig = project.materials.map { "\($0.id.uuidString):\($0.inPoint):\($0.outPoint):\($0.playbackSpeed):\($0.inserts?.count ?? 0):\($0.subtitles.count)" }.joined(separator: ",")
-        let motionSig = (project.htmlMotions ?? []).map { "\($0.id.uuidString):\($0.revision):\($0.start):\($0.end)" }.joined(separator: ",")
-        let calloutSig = (project.callouts ?? []).map { "\($0.id.uuidString):\($0.start):\($0.end)" }.joined(separator: ",")
-        let audioSig = (project.audioClips ?? []).map { "\($0.id.uuidString):\($0.start):\($0.end)" }.joined(separator: ",")
-        return "\(clipSig)|\(motionSig)|\(calloutSig)|\(audioSig)|\(project.canvasWidth ?? 0)x\(project.canvasHeight ?? 0)"
     }
 
     private func recordToolFocus(call: ProjectToolCall, outcome: ProjectToolOutcome, projectID: UUID, state: AppState) {
@@ -320,11 +313,12 @@ final class AssemblyAgent: ObservableObject {
             let text = (event["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             let final = (text?.isEmpty == false ? text : nil) ?? streaming.trimmingCharacters(in: .whitespacesAndNewlines)
             let edits = turnEdits.isEmpty ? nil : turnEdits
-            let steps = turnEdits.isEmpty ? nil : turnEdits.count
+            let actualSteps = max(0, (state?.undoPushCount(for: projectID) ?? turnStartUndoPushCount) - turnStartUndoPushCount)
+            let steps = actualSteps > 0 ? actualSteps : nil
             let focus = turnFocusTime
-            let postFP = edits != nil ? currentProjectFingerprint() : nil
+            let postRev = actualSteps > 0 ? state?.undoRevision : nil
             if !final.isEmpty || edits != nil {
-                append(.init(role: .assistant, text: final, edits: edits, editSteps: steps, focusTime: focus, postTurnFingerprint: postFP))
+                append(.init(role: .assistant, text: final, edits: edits, editSteps: steps, focusTime: focus, postTurnUndoRevision: postRev))
             }
             finishTurn()
         case "error":
@@ -341,7 +335,7 @@ final class AssemblyAgent: ObservableObject {
         turnStartedAt = nil
         turnEdits = []
         turnFocusTime = nil
-        lastTurnProjectFingerprint = currentProjectFingerprint()
+        lastTurnUndoRevision = state?.undoRevision
         streaming = ""
         activity = nil
         persist()

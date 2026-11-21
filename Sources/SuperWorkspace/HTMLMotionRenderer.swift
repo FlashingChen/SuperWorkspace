@@ -79,8 +79,21 @@ enum HTMLMotionRenderer {
         for i in 0..<frameCount {
             if Task.isCancelled { return [] }
             let localTime = min(duration, Double(i) * frameStep)
-            _ = try? await webView.evaluateJavaScript("window.__swSeek(\(localTime), \(duration));")
-            _ = try? await webView.evaluateJavaScript("new Promise(r => requestAnimationFrame(() => r(true)));")
+            _ = try? await webView.callAsyncJavaScript(
+                """
+                window.__swSeek(t, dur);
+                if (document.body) { void document.body.offsetHeight; }
+                return await new Promise(resolve => {
+                  let done = false;
+                  const finish = () => { if (!done) { done = true; resolve(true); } };
+                  requestAnimationFrame(() => finish());
+                  setTimeout(finish, 18);
+                });
+                """,
+                arguments: ["t": localTime, "dur": duration],
+                in: nil,
+                contentWorld: .page
+            )
             if let nsImage = try? await webView.takeSnapshot(configuration: snapConfig),
                let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) {
                 let t0 = item.start + Double(i) * frameStep
@@ -102,9 +115,10 @@ enum HTMLMotionRenderer {
 private final class NavigationWaiter: NSObject, WKNavigationDelegate {
     private var continuation: CheckedContinuation<Bool, Never>?
     private var finished = false
+    private var succeeded = false
 
     func wait() async -> Bool {
-        if finished { return true }
+        if finished { return succeeded }
         return await withCheckedContinuation { cont in
             self.continuation = cont
             Task { @MainActor [weak self] in
@@ -117,6 +131,7 @@ private final class NavigationWaiter: NSObject, WKNavigationDelegate {
     private func finish(_ ok: Bool) {
         guard !finished else { return }
         finished = true
+        succeeded = ok
         continuation?.resume(returning: ok)
         continuation = nil
     }

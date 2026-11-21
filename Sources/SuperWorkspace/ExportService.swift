@@ -186,38 +186,95 @@ enum ExportService {
             }
 
             let params = AVMutableAudioMixInputParameters(track: track)
-            let baseVol = Float(min(1.5, max(0, clip.volume)))
-            params.setVolume(baseVol, at: CMTime(seconds: clampedStart, preferredTimescale: 600))
+            let baseVol = Float(min(1.0, max(0.0, clip.volume)))
+            let duckVol = baseVol * 0.35
+            let ramp = 0.25
+            let fadeIn = min(max(0, clip.fadeIn), targetDuration / 2)
+            let fadeOut = min(max(0, clip.fadeOut), targetDuration / 2)
 
-            if clip.duckUnderSpeech && clip.kind == .music && !speechRanges.isEmpty {
-                let duckVol = baseVol * 0.35
-                let ramp = 0.25
-                for speech in speechRanges where speech.end > clampedStart && speech.start < clampedEnd {
-                    let s = max(clampedStart, speech.start)
-                    let e = min(clampedEnd, speech.end)
-                    guard e > s else { continue }
-                    let downStart = max(clampedStart, s - ramp)
-                    params.setVolumeRamp(fromStartVolume: baseVol, toEndVolume: duckVol,
-                                         timeRange: CMTimeRange(start: CMTime(seconds: downStart, preferredTimescale: 600),
-                                                                duration: CMTime(seconds: max(0.05, s - downStart), preferredTimescale: 600)))
-                    let upEnd = min(clampedEnd, e + ramp)
-                    params.setVolumeRamp(fromStartVolume: duckVol, toEndVolume: baseVol,
-                                         timeRange: CMTimeRange(start: CMTime(seconds: e, preferredTimescale: 600),
-                                                                duration: CMTime(seconds: max(0.05, upEnd - e), preferredTimescale: 600)))
+            // Merge speech ranges closer than 2 * ramp so ducking transitions never overlap.
+            var mergedSpeech: [(Double, Double)] = []
+            if clip.duckUnderSpeech && clip.kind == .music {
+                let clipped = speechRanges
+                    .filter { $0.end > clampedStart && $0.start < clampedEnd }
+                    .map { (max(clampedStart, $0.start), min(clampedEnd, $0.end)) }
+                    .sorted { $0.0 < $1.0 }
+                for interval in clipped {
+                    if let last = mergedSpeech.last, interval.0 <= last.1 + ramp * 2 {
+                        mergedSpeech[mergedSpeech.count - 1].1 = max(last.1, interval.1)
+                    } else {
+                        mergedSpeech.append(interval)
+                    }
                 }
             }
 
-            let fadeIn = min(max(0, clip.fadeIn), targetDuration / 2)
-            if fadeIn > 0.02 {
-                params.setVolumeRamp(fromStartVolume: 0, toEndVolume: baseVol,
-                                     timeRange: CMTimeRange(start: CMTime(seconds: clampedStart, preferredTimescale: 600),
-                                                            duration: CMTime(seconds: fadeIn, preferredTimescale: 600)))
+            // Collect sorted unique breakpoints to form a strictly non-overlapping piecewise-linear envelope.
+            var times: [Double] = [clampedStart, clampedEnd]
+            if fadeIn > 0.01 { times.append(clampedStart + fadeIn) }
+            if fadeOut > 0.01 { times.append(clampedEnd - fadeOut) }
+            for (s, e) in mergedSpeech {
+                times.append(max(clampedStart, s - ramp))
+                times.append(s)
+                times.append(e)
+                times.append(min(clampedEnd, e + ramp))
             }
-            let fadeOut = min(max(0, clip.fadeOut), targetDuration / 2)
-            if fadeOut > 0.02 {
-                params.setVolumeRamp(fromStartVolume: baseVol, toEndVolume: 0,
-                                     timeRange: CMTimeRange(start: CMTime(seconds: clampedEnd - fadeOut, preferredTimescale: 600),
-                                                            duration: CMTime(seconds: fadeOut, preferredTimescale: 600)))
+            let sorted = times.sorted()
+            var points: [Double] = []
+            for t in sorted {
+                if let last = points.last, t - last < 0.005 { continue }
+                points.append(t)
+            }
+            if points.last.map({ clampedEnd - $0 >= 0.005 }) ?? false {
+                points.append(clampedEnd)
+            }
+
+            func envelopeGain(at t: Double) -> Float {
+                var gain = baseVol
+                if !mergedSpeech.isEmpty {
+                    var duckFactor: Float = 1.0
+                    for (s, e) in mergedSpeech {
+                        if t >= s && t <= e {
+                            duckFactor = 0.35
+                            break
+                        } else if t >= s - ramp && t < s {
+                            let p = Float((t - (s - ramp)) / max(0.001, ramp))
+                            duckFactor = min(duckFactor, 1.0 - 0.65 * p)
+                        } else if t > e && t <= e + ramp {
+                            let p = Float((t - e) / max(0.001, ramp))
+                            duckFactor = min(duckFactor, 0.35 + 0.65 * p)
+                        }
+                    }
+                    gain = max(duckVol, baseVol * duckFactor)
+                }
+                if fadeIn > 0.01 && t < clampedStart + fadeIn {
+                    let p = Float(max(0, (t - clampedStart) / fadeIn))
+                    gain *= p
+                }
+                if fadeOut > 0.01 && t > clampedEnd - fadeOut {
+                    let p = Float(max(0, (clampedEnd - t) / fadeOut))
+                    gain *= p
+                }
+                return min(1.0, max(0.0, gain))
+            }
+
+            if points.count >= 2 {
+                for i in 0..<(points.count - 1) {
+                    let t0 = points[i], t1 = points[i + 1]
+                    guard t1 - t0 >= 0.002 else { continue }
+                    let v0 = envelopeGain(at: t0)
+                    let v1 = envelopeGain(at: t1)
+                    let range = CMTimeRange(
+                        start: CMTime(seconds: t0, preferredTimescale: 600),
+                        duration: CMTime(seconds: t1 - t0, preferredTimescale: 600)
+                    )
+                    if abs(v0 - v1) < 0.001 {
+                        params.setVolume(v0, at: range.start)
+                    } else {
+                        params.setVolumeRamp(fromStartVolume: v0, toEndVolume: v1, timeRange: range)
+                    }
+                }
+            } else {
+                params.setVolume(baseVol, at: CMTime(seconds: clampedStart, preferredTimescale: 600))
             }
             parameters.append(params)
         }

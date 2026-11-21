@@ -55,8 +55,9 @@ final class AppState: ObservableObject {
     @Published var subtitleReviews: [UUID: SubtitleReview] = [:]
     @Published var reviewingProjects: Set<UUID> = []
     @Published var reviewPhases: [UUID: String] = [:]
-    @Published private var undoRevision = 0
+    @Published private(set) var undoRevision = 0
     private var undoManagers: [UUID: UndoManager] = [:]
+    private var undoPushCounts: [UUID: Int] = [:]
     private var chatAgents: [UUID: AssemblyAgent] = [:]
     private var workspaceSession = WorkspaceSession.load()
     private var lastSessionSave = Date.distantPast
@@ -170,9 +171,13 @@ final class AppState: ObservableObject {
         if grouping { manager.beginUndoGrouping() }
         manager.registerUndo(withTarget: self) { state in MainActor.assumeIsolated { action(state) } }
         manager.setActionName(name)
-        if grouping { manager.endUndoGrouping() }
+        if grouping {
+            manager.endUndoGrouping()
+            undoPushCounts[id, default: 0] += 1
+        }
         undoRevision += 1
     }
+    func undoPushCount(for id: UUID) -> Int { undoPushCounts[id] ?? 0 }
     var canUndo: Bool { guard let id = selectedProjectID else { return false }; return history(id).canUndo }
     var canRedo: Bool { guard let id = selectedProjectID else { return false }; return history(id).canRedo }
     func undo() { guard let id = selectedProjectID else { return }; history(id).undo(); undoRevision += 1 }
@@ -1413,7 +1418,7 @@ final class AppState: ObservableObject {
         var updated = clips[idx]
         mutate(&updated)
         guard updated.start.isFinite, updated.end.isFinite, updated.start >= 0, updated.end - updated.start >= 1.0 / 30 else { return false }
-        updated.volume = min(1.5, max(0, updated.volume.isFinite ? updated.volume : 0.25))
+        updated.volume = min(1.0, max(0, updated.volume.isFinite ? updated.volume : 0.25))
         updated.fadeIn = max(0, updated.fadeIn.isFinite ? updated.fadeIn : 0)
         updated.fadeOut = max(0, updated.fadeOut.isFinite ? updated.fadeOut : 0)
         clips[idx] = updated
