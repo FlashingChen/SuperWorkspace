@@ -12,6 +12,8 @@ final class AssemblyAgent: ObservableObject {
         var text: String
         var edits: [String]? = nil
         var editSteps: Int? = nil
+        var focusTime: Double? = nil
+        var isUndone: Bool? = nil
         var createdAt = Date()
     }
 
@@ -24,6 +26,9 @@ final class AssemblyAgent: ObservableObject {
     @Published private(set) var failure: String?
 
     private var turnEdits: [String] = []
+    private var turnFocusTime: Double?
+    private var lastTurnProjectFingerprint: String?
+    private var needsStateRefresh = false
 
     private let projectID: UUID
     private weak var state: AppState?
@@ -77,9 +82,11 @@ final class AssemblyAgent: ObservableObject {
         let bridge = ProjectToolBridge()
         let targetProject = projectID
         do {
-            try bridge.start { [weak state] call in
+            try bridge.start { [weak self, weak state] call in
                 guard let state else { return .failure("应用状态已释放。") }
-                return ProjectTools.execute(call, projectID: targetProject, state: state)
+                let outcome = ProjectTools.execute(call, projectID: targetProject, state: state)
+                self?.recordToolFocus(call: call, outcome: outcome, projectID: targetProject, state: state)
+                return outcome
             }
         } catch {
             failure = error.localizedDescription
@@ -181,22 +188,76 @@ final class AssemblyAgent: ObservableObject {
         deliver(trimmed, contextNote: contextNote)
     }
 
+    func undoTurn(messageID: UUID) {
+        guard let state, let idx = messages.firstIndex(where: { $0.id == messageID }),
+              messages[idx].isUndone != true else { return }
+        let steps = max(1, messages[idx].editSteps ?? messages[idx].edits?.count ?? 1)
+        for _ in 0..<steps { state.undo() }
+        messages[idx].isUndone = true
+        needsStateRefresh = true
+        persist()
+    }
+
     private func deliver(_ text: String, contextNote: String? = nil) {
         messages.append(.init(role: .user, text: text))
         persist()
         isBusy = true
         turnStartedAt = Date()
         turnEdits = []
+        turnFocusTime = nil
         streaming = ""
         activity = nil
         failure = nil
-        let payload = if let contextNote, !contextNote.isEmpty {
-            "[\(contextNote)]\n\(text)"
-        } else {
-            text
+        var prefixParts: [String] = []
+        if let contextNote, !contextNote.isEmpty { prefixParts.append(contextNote) }
+        let currentFP = currentProjectFingerprint()
+        if needsStateRefresh || (lastTurnProjectFingerprint != nil && currentFP != lastTurnProjectFingerprint) {
+            prefixParts.append("重要：项目在上一轮之后发生了手动修改或撤销，先前对话中记住的时长、倍速、花字、动效或字幕状态已过期；请先调用 project_read 获取最新状态再回答或操作。")
+            needsStateRefresh = false
         }
+        let payload = prefixParts.isEmpty ? text : "[\(prefixParts.joined(separator: " | "))]\n\(text)"
         sendLine(["type": "prompt", "id": nextPromptID, "text": payload])
         nextPromptID += 1
+    }
+
+    private func currentProjectFingerprint() -> String? {
+        guard let project = state?.projects.first(where: { $0.id == projectID }) else { return nil }
+        let clipSig = project.materials.map { "\($0.id.uuidString):\($0.inPoint):\($0.outPoint):\($0.playbackSpeed):\($0.inserts?.count ?? 0):\($0.subtitles.count)" }.joined(separator: ",")
+        let motionSig = (project.htmlMotions ?? []).map { "\($0.id.uuidString):\($0.revision):\($0.start):\($0.end)" }.joined(separator: ",")
+        let calloutSig = (project.callouts ?? []).map { "\($0.id.uuidString):\($0.start):\($0.end)" }.joined(separator: ",")
+        let audioSig = (project.audioClips ?? []).map { "\($0.id.uuidString):\($0.start):\($0.end)" }.joined(separator: ",")
+        return "\(clipSig)|\(motionSig)|\(calloutSig)|\(audioSig)|\(project.canvasWidth ?? 0)x\(project.canvasHeight ?? 0)"
+    }
+
+    private func recordToolFocus(call: ProjectToolCall, outcome: ProjectToolOutcome, projectID: UUID, state: AppState) {
+        guard Self.isMutatingTool(call.tool), case .success(let value) = outcome else { return }
+        var candidate: Double?
+        if case .object(let dict) = value {
+            if let t = dict["timelineStart"]?.numberValue {
+                candidate = t
+            } else if ["motion_html_add", "motion_html_update", "callout_add", "callout_update", "audio_add", "audio_update"].contains(call.tool),
+                      let s = dict["start"]?.numberValue {
+                candidate = s
+            } else if let clipIDString = dict["clip"]?.stringValue, let clipUUID = UUID(uuidString: clipIDString),
+                      let project = state.projects.first(where: { $0.id == projectID }) {
+                let layout = AssemblyTimelineLayout(materials: project.materials)
+                if let clip = layout.clips.first(where: { $0.id == clipUUID }) {
+                    if let sourceStart = dict["start"]?.numberValue {
+                        let mat = project.materials[clip.index]
+                        candidate = clip.start + max(0, sourceStart - mat.inPoint) / mat.playbackSpeed
+                    } else {
+                        candidate = clip.start
+                    }
+                }
+            }
+        }
+        if let candidate, candidate.isFinite {
+            if let existing = turnFocusTime {
+                turnFocusTime = min(existing, candidate)
+            } else {
+                turnFocusTime = candidate
+            }
+        }
     }
 
     // MARK: - Events
@@ -247,8 +308,9 @@ final class AssemblyAgent: ObservableObject {
             let final = (text?.isEmpty == false ? text : nil) ?? streaming.trimmingCharacters(in: .whitespacesAndNewlines)
             let edits = turnEdits.isEmpty ? nil : turnEdits
             let steps = turnEdits.isEmpty ? nil : turnEdits.count
+            let focus = turnFocusTime
             if !final.isEmpty || edits != nil {
-                append(.init(role: .assistant, text: final, edits: edits, editSteps: steps))
+                append(.init(role: .assistant, text: final, edits: edits, editSteps: steps, focusTime: focus))
             }
             finishTurn()
         case "error":
@@ -264,6 +326,8 @@ final class AssemblyAgent: ObservableObject {
         isBusy = false
         turnStartedAt = nil
         turnEdits = []
+        turnFocusTime = nil
+        lastTurnProjectFingerprint = currentProjectFingerprint()
         streaming = ""
         activity = nil
         persist()

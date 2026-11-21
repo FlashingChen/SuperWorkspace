@@ -98,7 +98,7 @@ struct AssemblyView: View {
                         project: project,
                         agent: chatAgent,
                         focusContext: editorFocusContext,
-                        onPlayPreview: { if !isPlaying && player.currentItem != nil { togglePlayback() } },
+                        onPlayPreview: { focusTime in playFrom(focusTime) },
                         onImportMedia: { importingMedia = true },
                         onOpenLibrary: onOpenLibrary
                     )
@@ -154,37 +154,60 @@ struct AssemblyView: View {
 
     // MARK: - Preview Stage
 
+    private var canvasAspect: CGFloat {
+        if let w = project.canvasWidth, let h = project.canvasHeight, w > 0, h > 0 {
+            return CGFloat(w / h)
+        }
+        return 16.0 / 9.0
+    }
+
     private var previewStage: some View {
         ZStack {
-            VideoSurface(player: player, controlsStyle: .none)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    if player.currentItem != nil { togglePlayback() }
+            palette.bgDeep
+            ZStack {
+                VideoSurface(player: player, controlsStyle: .none)
+                ForEach(activeHTMLMotions) { item in
+                    HTMLMotionPreviewLayer(
+                        url: ProjectLayout.htmlMotion(item, in: project),
+                        revision: item.revision,
+                        localTime: max(0, playhead - item.start),
+                        duration: max(0.05, item.end - item.start)
+                    )
+                    .allowsHitTesting(false)
                 }
-            ForEach(activeHTMLMotions) { item in
-                HTMLMotionPreviewLayer(
-                    url: ProjectLayout.htmlMotion(item, in: project),
-                    revision: item.revision,
-                    localTime: max(0, playhead - item.start),
-                    duration: max(0.05, item.end - item.start)
-                )
-                .allowsHitTesting(false)
-            }
-            if showsSubtitlesPreview, let caption = activeSubtitleText {
-                VStack {
-                    Spacer()
-                    Text(caption)
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(.white)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, Metrics.space3)
-                        .padding(.vertical, Metrics.space1_5)
-                        .background(Color.black.opacity(0.68), in: RoundedRectangle(cornerRadius: Metrics.radiusS))
-                        .padding(.horizontal, Metrics.space6)
-                        .padding(.bottom, Metrics.space5)
+                if showsSubtitlesPreview, let caption = activeSubtitleText {
+                    VStack {
+                        Spacer()
+                        Text(caption)
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(.white)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, Metrics.space3)
+                            .padding(.vertical, Metrics.space1_5)
+                            .background(Color.black.opacity(0.68), in: RoundedRectangle(cornerRadius: Metrics.radiusS))
+                            .padding(.horizontal, Metrics.space4)
+                            .padding(.bottom, Metrics.space4)
+                    }
+                    .allowsHitTesting(false)
                 }
-                .allowsHitTesting(false)
+                // Explicit top tap-capture layer so AVPlayerView never swallows clicks.
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        if player.currentItem != nil { togglePlayback() }
+                    }
             }
+            .background(palette.mediaGround)
+            .aspectRatio(canvasAspect, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusM))
+            .overlay {
+                RoundedRectangle(cornerRadius: Metrics.radiusM)
+                    .strokeBorder(palette.surface3.opacity(0.65), lineWidth: 1)
+                    .allowsHitTesting(false)
+            }
+            .shadow(color: .black.opacity(0.28), radius: 12, y: 4)
+            .padding(Metrics.space2)
+
             if loading {
                 VStack {
                     HStack {
@@ -208,7 +231,6 @@ struct AssemblyView: View {
                 .padding(Metrics.space6)
             }
         }
-        .background(palette.mediaGround)
         .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusL))
     }
 
@@ -286,7 +308,7 @@ struct AssemblyView: View {
                 }
                 .menuStyle(StudioMenuStyle())
                 .fixedSize()
-                Button("完成") { showsSubtitlesSheet = false }
+                Button { showsSubtitlesSheet = false } label: { Text(verbatim: "完成") }
                     .buttonStyle(StudioButtonStyle(kind: .primary, size: .compact))
                     .keyboardShortcut(.cancelAction)
             }
@@ -449,7 +471,10 @@ struct AssemblyView: View {
         selectedMaterial = materialID
         selectedSubtitle = SubtitleKey.make(materialID, index)
         selectedInsert = nil
-        seek(globalStart(material, material.subtitles[index].start))
+        let sub = material.subtitles[index]
+        let start = globalStart(material, sub.start)
+        let span = max(0, (sub.end - sub.start) / material.playbackSpeed)
+        seek(start + min(0.02, span * 0.25))
     }
 
     private func materialAtPlayhead() -> (material: Material, sourceTime: Double)? {
@@ -517,6 +542,23 @@ struct AssemblyView: View {
         let target = min(duration, max(0, time.isFinite ? time : 0))
         player.pause(); isPlaying = false; playhead = target
         player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+    }
+
+    private func playFrom(_ time: Double?) {
+        guard player.currentItem != nil else { return }
+        if let time, time.isFinite {
+            let duration = AssemblyTimelineLayout(materials: project.materials).duration
+            let target = min(max(0, duration - 0.05), max(0, time))
+            playhead = target
+            player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { _ in
+                Task { @MainActor in
+                    player.rate = Float(previewRate)
+                    isPlaying = true
+                }
+            }
+        } else if !isPlaying {
+            togglePlayback()
+        }
     }
 
     private func togglePlayback() {

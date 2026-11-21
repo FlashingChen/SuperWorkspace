@@ -274,8 +274,18 @@ final class ProjectToolsTests: XCTestCase {
                 "html": .string("<html><body style='background:transparent'><h1>Updated</h1></body></html>"),
             ], project: saved, state: state))
             saved = try XCTUnwrap(ProjectLayout.loadAll().first)
-            XCTAssertEqual(saved.htmlMotions?.first?.end ?? 0, 4.5, accuracy: 0.001)
-            XCTAssertEqual(saved.htmlMotions?.first?.revision, 2)
+            let updatedMotion = try XCTUnwrap(saved.htmlMotions?.first)
+            XCTAssertEqual(updatedMotion.end, 4.5, accuracy: 0.001)
+            XCTAssertEqual(updatedMotion.revision, 2)
+            XCTAssertTrue((try String(contentsOf: ProjectLayout.htmlMotion(updatedMotion, in: saved), encoding: .utf8)).contains("Updated"))
+
+            // P0 regression: undoing an HTML motion update must restore the original HTML content on disk.
+            state.undo()
+            saved = try XCTUnwrap(ProjectLayout.loadAll().first)
+            let restoredMotion = try XCTUnwrap(saved.htmlMotions?.first)
+            XCTAssertEqual(restoredMotion.revision, 1)
+            XCTAssertEqual(restoredMotion.end, 3.0, accuracy: 0.001)
+            XCTAssertTrue((try String(contentsOf: ProjectLayout.htmlMotion(restoredMotion, in: saved), encoding: .utf8)).contains("Hello"))
 
             _ = try success(run("motion_html_remove", ["index": .number(1)], project: saved, state: state))
             saved = try XCTUnwrap(ProjectLayout.loadAll().first)

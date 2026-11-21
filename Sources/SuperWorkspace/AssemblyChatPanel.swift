@@ -8,7 +8,7 @@ struct AssemblyChatPanel: View {
     let project: VideoProject
     @ObservedObject var agent: AssemblyAgent
     var focusContext: String? = nil
-    var onPlayPreview: (() -> Void)? = nil
+    var onPlayPreview: ((Double?) -> Void)? = nil
     var onImportMedia: (() -> Void)? = nil
     var onOpenLibrary: (() -> Void)? = nil
     var onClose: (() -> Void)? = nil
@@ -91,7 +91,7 @@ struct AssemblyChatPanel: View {
                         messageRow(message).id(message.id)
                     }
                     if !agent.streaming.isEmpty {
-                        assistantProse(agent.streaming, edits: nil, editSteps: nil).id("streaming")
+                        assistantProse(agent.streaming, message: nil).id("streaming")
                     }
                     if agent.isBusy {
                         liveActivityRow.id("activity")
@@ -192,7 +192,7 @@ struct AssemblyChatPanel: View {
                     .textSelection(.enabled)
             }
         case .assistant:
-            assistantProse(message.text, edits: message.edits, editSteps: message.editSteps)
+            assistantProse(message.text, message: message)
         case .notice:
             Text(message.text)
                 .font(.studio(.small))
@@ -202,7 +202,7 @@ struct AssemblyChatPanel: View {
         }
     }
 
-    private func assistantProse(_ text: String, edits: [String]?, editSteps: Int?) -> some View {
+    private func assistantProse(_ text: String, message: AssemblyAgent.Message?) -> some View {
         VStack(alignment: .leading, spacing: Metrics.space2_5) {
             if !text.isEmpty {
                 Text(text)
@@ -212,44 +212,48 @@ struct AssemblyChatPanel: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
             }
-            if let edits, !edits.isEmpty {
-                resultCard(edits: edits, steps: editSteps ?? edits.count)
+            if let message, let edits = message.edits, !edits.isEmpty {
+                resultCard(message: message, edits: edits, steps: message.editSteps ?? edits.count)
             }
         }
     }
 
-    private func resultCard(edits: [String], steps: Int) -> some View {
+    private func resultCard(message: AssemblyAgent.Message, edits: [String], steps: Int) -> some View {
         let summary = summarizedEdits(edits)
+        let undone = message.isUndone == true
         return VStack(alignment: .leading, spacing: Metrics.space2) {
             HStack(spacing: Metrics.space1_5) {
-                Image(systemName: "checkmark.circle.fill")
+                Image(systemName: undone ? "arrow.uturn.backward.circle" : "checkmark.circle.fill")
                     .font(.studio(.small))
-                    .foregroundStyle(palette.success)
-                Text("已应用 \(steps) 项修改")
+                    .foregroundStyle(undone ? palette.textMuted : palette.success)
+                Text(undone ? "已撤销本轮 \(steps) 项修改" : "已应用 \(steps) 项修改")
                     .font(.studio(.caption, weight: .semibold))
-                    .foregroundStyle(palette.textPrimary)
+                    .foregroundStyle(undone ? palette.textSecondary : palette.textPrimary)
                 Spacer(minLength: 0)
             }
             Text(summary)
                 .font(.studio(.caption))
                 .foregroundStyle(palette.textSecondary)
+                .strikethrough(undone)
                 .lineLimit(3)
-            HStack(spacing: Metrics.space2) {
-                if let onPlayPreview {
-                    Button {
-                        onPlayPreview()
-                    } label: {
-                        Label("播放看看", systemImage: "play.fill")
+            if !undone {
+                HStack(spacing: Metrics.space2) {
+                    if let onPlayPreview {
+                        Button {
+                            onPlayPreview(message.focusTime)
+                        } label: {
+                            Label("播放看看", systemImage: "play.fill")
+                        }
+                        .buttonStyle(StudioButtonStyle(kind: .secondary, size: .compact))
                     }
-                    .buttonStyle(StudioButtonStyle(kind: .secondary, size: .compact))
+                    Button {
+                        agent.undoTurn(messageID: message.id)
+                    } label: {
+                        Label("撤销本轮", systemImage: "arrow.uturn.backward")
+                    }
+                    .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
+                    .disabled(!state.canUndo)
                 }
-                Button {
-                    for _ in 0..<steps { state.undo() }
-                } label: {
-                    Label("撤销本轮", systemImage: "arrow.uturn.backward")
-                }
-                .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
-                .disabled(!state.canUndo)
             }
         }
         .padding(Metrics.space2_5)

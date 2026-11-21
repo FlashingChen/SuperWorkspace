@@ -184,12 +184,12 @@ private struct MaterialCard: View {
                             }
                         HStack {
                             Spacer()
-                            Button("取消") { renaming = false }
+                            Button { renaming = false } label: { Text(verbatim: "取消") }
                                 .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
-                            Button("保存") {
+                            Button {
                                 state.renameMaterial(projectID, material.id, title: draftTitle)
                                 renaming = false
-                            }
+                            } label: { Text(verbatim: "保存") }
                             .buttonStyle(StudioButtonStyle(kind: .primary, size: .compact))
                         }
                     }
@@ -316,11 +316,13 @@ struct VideoSurface: NSViewRepresentable {
         let view = AVPlayerView()
         view.player = player
         view.controlsStyle = controlsStyle
+        view.allowsVideoFrameAnalysis = controlsStyle != .none
         return view
     }
     func updateNSView(_ nsView: AVPlayerView, context: Context) {
         nsView.player = player
         nsView.controlsStyle = controlsStyle
+        nsView.allowsVideoFrameAnalysis = controlsStyle != .none
     }
 }
 func durationLabel(_ time: Double) -> String {

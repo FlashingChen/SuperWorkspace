@@ -638,7 +638,12 @@ enum ProjectTools {
             if let mode = args["mode"]?.stringValue.flatMap(HTMLMotionOverlay.Mode.init(rawValue:)) { item.mode = mode }
         }
         guard ok else { return .failure("更新即时动效失败。") }
-        return .success(.object([("result", .string("html_motion_updated")), ("id", .string(target.id.uuidString))]))
+        let updatedStart = state.projects.first { $0.id == project.id }?.htmlMotions?.first { $0.id == target.id }?.start ?? target.start
+        return .success(.object([
+            ("result", .string("html_motion_updated")),
+            ("id", .string(target.id.uuidString)),
+            ("start", .number(rounded(updatedStart))),
+        ]))
     }
 
     private static func removeHTMLMotion(_ args: [String: JSONValue], project: VideoProject, state: AppState) -> ProjectToolOutcome {

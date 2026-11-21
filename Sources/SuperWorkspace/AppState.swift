@@ -1525,10 +1525,12 @@ final class AppState: ObservableObject {
         guard updated.start.isFinite, updated.end.isFinite, updated.start >= 0, updated.end - updated.start >= 1.0 / 30 else { return false }
         if let html, !html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let dir = ProjectLayout.htmlMotionDirectory(in: project)
+            updated.revision += 1
+            // Write to a new immutable versioned file so Undo/Redo always restores the exact original HTML.
+            updated.fileName = "\(updated.id.uuidString)-v\(updated.revision).html"
             do {
                 try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
                 try html.write(to: ProjectLayout.htmlMotion(updated, in: project), atomically: true, encoding: .utf8)
-                updated.revision += 1
             } catch {
                 return false
             }

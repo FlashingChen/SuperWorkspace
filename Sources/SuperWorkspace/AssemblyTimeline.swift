@@ -584,20 +584,21 @@ struct AssemblyTimeline: View {
             }
             .onEnded { _ in commitRange() }
 
+        let seekInside = start + min(0.02, max(0, ((visibleEnd - visibleStart) / rate) * 0.25))
         return block
             .contentShape(Rectangle())
             .onTapGesture(count: 2) {
                 selectedMaterial = clip.id
                 selectedSubtitle = key
                 selectedInsert = nil
-                onSeek(start)
+                onSeek(seekInside)
                 if material.transcriptState != .running { editingSubtitleKey = key }
             }
             .onTapGesture {
                 selectedMaterial = clip.id
                 selectedSubtitle = key
                 selectedInsert = nil
-                onSeek(start)
+                onSeek(seekInside)
             }
             .popover(isPresented: Binding(
                 get: { editingSubtitleKey == key },

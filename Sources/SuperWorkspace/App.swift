@@ -98,7 +98,7 @@ struct RootView: View {
                     Divider()
                     HStack {
                         Spacer()
-                        Button("完成") { showLibrary = false }
+                        Button { showLibrary = false } label: { Text(verbatim: "完成") }
                             .buttonStyle(StudioButtonStyle(kind: .primary, size: .compact))
                             .keyboardShortcut(.cancelAction)
                     }
