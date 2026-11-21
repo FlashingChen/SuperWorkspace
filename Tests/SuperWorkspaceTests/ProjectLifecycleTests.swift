@@ -135,6 +135,31 @@ final class ProjectLifecycleTests: XCTestCase {
         }
     }
 
+    func testRenameAndDeleteProjectLifecycle() throws {
+        try withStorage { _ in
+            let state = AppState()
+            state.createProject(name: "初始项目")
+            let project = try XCTUnwrap(state.projects.first)
+            XCTAssertEqual(state.selectedProjectID, project.id)
+
+            XCTAssertFalse(state.renameProject(project.id, name: "   "))
+            XCTAssertTrue(state.renameProject(project.id, name: "  重命名后的项目  "))
+            XCTAssertEqual(state.projects.first?.name, "重命名后的项目")
+
+            let reloaded = ProjectLayout.loadAll()
+            XCTAssertEqual(reloaded.first(where: { $0.id == project.id })?.name, "重命名后的项目")
+
+            state.exportingProjects.insert(project.id)
+            XCTAssertFalse(state.deleteProject(project.id), "Busy project must not be deleted")
+            state.exportingProjects.remove(project.id)
+
+            XCTAssertTrue(state.deleteProject(project.id))
+            XCTAssertFalse(state.projects.contains(where: { $0.id == project.id }))
+            XCTAssertNil(state.selectedProjectID)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: ProjectLayout.directory(for: project).path))
+        }
+    }
+
     func testBundleZipsSourceMotionAndFilm() async throws {
         guard let ffmpeg = ToolPaths.ffmpeg else { throw XCTSkip("ffmpeg is required for synthetic media fixtures") }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)

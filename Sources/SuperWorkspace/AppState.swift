@@ -192,6 +192,61 @@ final class AppState: ObservableObject {
             select(project.id)
         } catch { self.error = error.localizedDescription }
     }
+
+    @discardableResult
+    func renameProject(_ id: UUID, name: String) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        let updated = updateProject(id) { $0.name = trimmed }
+        if updated { showToast("已重命名为「\(trimmed)」") }
+        return updated
+    }
+
+    @discardableResult
+    func deleteProject(_ id: UUID) -> Bool {
+        guard let index = projects.firstIndex(where: { $0.id == id }) else { return false }
+        let project = projects[index]
+        if hasActiveJobs(id) || exportingProjects.contains(id) || bundlingProjects.contains(id)
+            || freezingProjects.contains(id) || unfreezingProjects.contains(id) {
+            error = "项目正在处理后台任务，请等待完成或取消后再删除。"
+            return false
+        }
+        let directory = ProjectLayout.directory(for: project)
+        if FileManager.default.fileExists(atPath: directory.path) {
+            do {
+                try FileManager.default.trashItem(at: directory, resultingItemURL: nil)
+            } catch {
+                do {
+                    try FileManager.default.removeItem(at: directory)
+                } catch {
+                    self.error = "删除项目失败：\(error.localizedDescription)"
+                    return false
+                }
+            }
+        }
+        chatAgents[id]?.stop()
+        chatAgents[id] = nil
+        undoManagers[id] = nil
+        undoPushCounts[id] = nil
+        lastExports[id] = nil
+        exportProgress[id] = nil
+        subtitleReviews[id] = nil
+        workspaceSession.editors[id] = nil
+        projects.remove(at: index)
+        if selectedProjectID == id {
+            selectedProjectID = nil
+        } else {
+            saveSession()
+        }
+        showToast("已将「\(project.name)」移至废纸篓")
+        return true
+    }
+
+    func revealProjectInFinder(_ id: UUID) {
+        guard let project = projects.first(where: { $0.id == id }) else { return }
+        let directory = ProjectLayout.directory(for: project)
+        NSWorkspace.shared.activateFileViewerSelecting([directory])
+    }
     func select(_ id: UUID) {
         selectedProjectID = id
         stage = editorSession(id).stage

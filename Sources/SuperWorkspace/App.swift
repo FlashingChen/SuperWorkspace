@@ -23,7 +23,7 @@ struct SuperWorkspaceApp: App {
         }
         .defaultSize(width: 1280, height: 820)
         .defaultPosition(.center)
-        .windowToolbarStyle(.unified)
+        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(after: .help) {
                 Link("快速入门", destination: URL(string: "https://github.com/FlashingChen/SuperWorkspace/blob/main/docs/QUICKSTART.md")!)
@@ -44,41 +44,45 @@ struct RootView: View {
     @Environment(\.palette) private var palette
     @EnvironmentObject private var state: AppState
     @AppStorage("assemblyAIOpen") private var assemblyAIOpen = true
+    @State private var libraryQuery = ""
     @State private var showNew = false
     @State private var showExport = false
     @State private var showLibrary = false
 
     var body: some View {
-        VStack(spacing: Metrics.space3) {
+        VStack(spacing: 0) {
             workspaceHeader
-            if let project = state.currentProject, project.isFrozen {
-                frozenNotice(project)
-            }
-            Group {
-                if let project = state.currentProject {
-                    VStack(spacing: Metrics.space3) {
-                        Group {
-                            switch state.stage {
-                            case .record: RecordStepView(project: project)
-                            case .assemble:
-                                AssemblyView(
-                                    project: project,
-                                    showsAIPanel: $assemblyAIOpen,
-                                    onOpenLibrary: { showLibrary = true }
-                                )
-                            case .library: ProjectMediaLibrary(projectID: project.id)
-                            }
-                        }
-                        .id(project.id)
-                        ExportResultBar(project: project)
-                    }
-                } else {
-                    ProjectLibraryView(onCreate: { showNew = true })
+            VStack(spacing: Metrics.space3) {
+                if let project = state.currentProject, project.isFrozen {
+                    frozenNotice(project)
                 }
+                Group {
+                    if let project = state.currentProject {
+                        VStack(spacing: Metrics.space3) {
+                            Group {
+                                switch state.stage {
+                                case .record: RecordStepView(project: project)
+                                case .assemble:
+                                    AssemblyView(
+                                        project: project,
+                                        showsAIPanel: $assemblyAIOpen,
+                                        onOpenLibrary: { showLibrary = true }
+                                    )
+                                case .library: ProjectMediaLibrary(projectID: project.id)
+                                }
+                            }
+                            .id(project.id)
+                            ExportResultBar(project: project)
+                        }
+                    } else {
+                        ProjectLibraryView(searchQuery: $libraryQuery, onCreate: { showNew = true })
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(Metrics.space3)
         }
-        .padding(Metrics.space3)
+        .ignoresSafeArea(.container, edges: .top)
         .background {
             Button("新建项目") { showNew = true }
                 .keyboardShortcut("n", modifiers: .command)
@@ -128,7 +132,7 @@ struct RootView: View {
             }
         }
         .overlay(alignment: .top) {
-            budgetBanner.padding(.top, Metrics.header + Metrics.space5)
+            budgetBanner.padding(.top, Metrics.header + Metrics.space4)
         }
         .sheet(isPresented: Binding(get: { state.error != nil }, set: { if !$0 { state.error = nil } })) {
             StudioMessageSheet(title: "操作未完成", message: state.error ?? "", actionTitle: "确定") {
@@ -179,11 +183,11 @@ struct RootView: View {
         }
     }
 
-    /// Unified DogSC-style floating top chrome island.
+    /// Unified DogSC-style chrome bar integrated directly with the macOS titlebar traffic lights.
     private var workspaceHeader: some View {
         ZStack {
             HStack(spacing: Metrics.space2_5) {
-                // Left: Brand / Project Switcher
+                // Left: Brand / Project Switcher (cleared past traffic lights)
                 if let project = state.currentProject {
                     projectSwitcherMenu(current: project)
                     let activeCount = activeBackgroundJobCount(for: project)
@@ -214,8 +218,8 @@ struct RootView: View {
                     }
                 } else {
                     HStack(spacing: Metrics.space2) {
-                        Image(nsImage: WorkspaceBrand.image(size: 22))
-                            .resizable().frame(width: 22, height: 22).accessibilityHidden(true)
+                        Image(nsImage: WorkspaceBrand.image(size: 20))
+                            .resizable().frame(width: 20, height: 20).accessibilityHidden(true)
                         Text("SuperWorkspace")
                             .font(.studio(.bodyMedium, weight: .semibold))
                             .foregroundStyle(palette.textPrimary)
@@ -287,7 +291,7 @@ struct RootView: View {
                 }
             }
 
-            // Center: Capsule Stage Switcher
+            // Center: Capsule Stage Switcher (in project) or Search Pill (in library)
             if state.currentProject != nil {
                 HStack(spacing: Metrics.space0_5) {
                     stageSegment(stage: .record, title: "素材")
@@ -295,11 +299,18 @@ struct RootView: View {
                 }
                 .padding(3)
                 .background(palette.controlWell, in: Capsule())
+            } else if !state.projects.isEmpty {
+                StudioSearchField(placeholder: "搜索项目…", text: $libraryQuery)
+                    .frame(width: 280)
             }
         }
-        .padding(.horizontal, Metrics.space3)
+        .padding(.leading, 80)
+        .padding(.trailing, Metrics.space4)
         .frame(height: Metrics.header)
-        .studioIsland(cornerRadius: Metrics.radiusIsland)
+        .background(palette.island)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(palette.hairline).frame(height: 1)
+        }
     }
 
     private func stageSegment(stage: WorkStage, title: String) -> some View {
@@ -410,16 +421,36 @@ struct ProjectLibraryView: View {
         case frozen = "已冻结"
     }
 
+    enum SortOrder: String, CaseIterable {
+        case updated = "最近修改"
+        case created = "创建时间"
+        case name = "名称"
+    }
+
     @Environment(\.palette) private var palette
     @EnvironmentObject private var state: AppState
+    @Binding var searchQuery: String
     @State private var filter: Filter = .all
+    @State private var sortOrder: SortOrder = .updated
+    @State private var renamingProject: VideoProject?
+    @State private var deletingProject: VideoProject?
     let onCreate: () -> Void
 
     private var filteredProjects: [VideoProject] {
-        switch filter {
-        case .all: state.projects
-        case .active: state.projects.filter { !$0.isFrozen }
-        case .frozen: state.projects.filter { $0.isFrozen }
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        let matching = state.projects.filter { project in
+            let matchesFilter: Bool = switch filter {
+            case .all: true
+            case .active: !project.isFrozen
+            case .frozen: project.isFrozen
+            }
+            let matchesQuery = query.isEmpty || project.name.localizedCaseInsensitiveContains(query)
+            return matchesFilter && matchesQuery
+        }
+        switch sortOrder {
+        case .updated: return matching.sorted { $0.updatedAt > $1.updatedAt }
+        case .created: return matching.sorted { $0.createdAt > $1.createdAt }
+        case .name: return matching.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         }
     }
 
@@ -444,6 +475,32 @@ struct ProjectLibraryView: View {
                                     .monospacedDigit()
                             }
                             Spacer()
+                            Menu {
+                                ForEach(SortOrder.allCases, id: \.self) { order in
+                                    Button {
+                                        sortOrder = order
+                                    } label: {
+                                        if sortOrder == order {
+                                            Label(order.rawValue, systemImage: "checkmark")
+                                        } else {
+                                            Text(order.rawValue)
+                                        }
+                                    }
+                                }
+                            } label: {
+                                HStack(spacing: Metrics.space1) {
+                                    Image(systemName: "arrow.up.arrow.down")
+                                        .font(.studio(.micro))
+                                    Text(sortOrder.rawValue)
+                                        .font(.studio(.caption, weight: .medium))
+                                }
+                                .foregroundStyle(palette.textSecondary)
+                            }
+                            .menuStyle(StudioMenuStyle(surface: .pill, compact: true))
+                            .fixedSize()
+                            .help("排序方式")
+                            .accessibilityLabel("排序方式：\(sortOrder.rawValue)")
+
                             HStack(spacing: Metrics.space0_5) {
                                 ForEach(Filter.allCases, id: \.self) { item in
                                     Button {
@@ -462,15 +519,36 @@ struct ProjectLibraryView: View {
                             .background(palette.controlWell, in: Capsule())
                         }
 
-                        LazyVGrid(
-                            columns: [GridItem(.adaptive(minimum: 290, maximum: 420), spacing: Metrics.space4)],
-                            alignment: .leading,
-                            spacing: Metrics.space4
-                        ) {
-                            ForEach(filteredProjects) { project in
-                                projectCard(project)
+                        if filteredProjects.isEmpty {
+                            VStack(spacing: Metrics.space3) {
+                                Text("没有匹配的项目")
+                                    .font(.studio(.bodyMedium))
+                                    .foregroundStyle(palette.textPrimary)
+                                Text("试试更换搜索关键词或切换到「全部」视图。")
+                                    .font(.studio(.small))
+                                    .foregroundStyle(palette.textSecondary)
+                                Button("清除筛选") {
+                                    searchQuery = ""
+                                    filter = .all
+                                }
+                                .buttonStyle(StudioButtonStyle(kind: .secondary, size: .compact))
                             }
-                            newProjectCard
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, Metrics.space11)
+                            .studioIsland(cornerRadius: Metrics.radiusIsland)
+                        } else {
+                            LazyVGrid(
+                                columns: [GridItem(.adaptive(minimum: 290, maximum: 420), spacing: Metrics.space4)],
+                                alignment: .leading,
+                                spacing: Metrics.space4
+                            ) {
+                                ForEach(filteredProjects) { project in
+                                    projectCard(project)
+                                }
+                                if searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && filter != .frozen {
+                                    newProjectCard
+                                }
+                            }
                         }
                     }
                     .frame(maxWidth: Metrics.contentWide, alignment: .leading)
@@ -479,6 +557,20 @@ struct ProjectLibraryView: View {
                     .frame(maxWidth: .infinity)
                 }
                 .background(palette.stage)
+                .sheet(item: $renamingProject) { project in
+                    RenameProjectSheet(project: project).environmentObject(state)
+                }
+                .sheet(item: $deletingProject) { project in
+                    StudioMessageSheet(
+                        title: "删除「\(project.name)」？",
+                        message: "项目文件夹（包含录制素材、字幕、动效与成片）将移至废纸篓，可从废纸篓恢复。",
+                        actionTitle: "移至废纸篓",
+                        cancelTitle: "取消",
+                        destructive: true
+                    ) {
+                        state.deleteProject(project.id)
+                    }
+                }
             }
         }
     }
@@ -525,10 +617,16 @@ struct ProjectLibraryView: View {
                                 .font(.studio(.caption))
                                 .foregroundStyle(palette.textMuted)
                         }
-                        Text("\(project.materials.count) 段素材")
-                            .font(.studio(.caption))
-                            .foregroundStyle(palette.textSecondary)
-                            .monospacedDigit()
+                        HStack(spacing: Metrics.space1_5) {
+                            Text("\(project.materials.count) 段素材")
+                                .monospacedDigit()
+                            if project.lastExportName != nil {
+                                Text("· 已导出成片")
+                                    .foregroundStyle(palette.success)
+                            }
+                        }
+                        .font(.studio(.caption))
+                        .foregroundStyle(palette.textSecondary)
                     }
                     .padding(.horizontal, Metrics.space1)
                 }
@@ -541,6 +639,13 @@ struct ProjectLibraryView: View {
         }
         .padding(Metrics.space2_5)
         .studioIsland(cornerRadius: Metrics.radiusIsland)
+        .contextMenu {
+            ProjectActionItems(
+                project: project,
+                onRename: { renamingProject = project },
+                onDelete: { deletingProject = project }
+            )
+        }
     }
 
     private var newProjectCard: some View {
@@ -593,6 +698,10 @@ struct WindowConfigurator: NSViewRepresentable {
                 NSApplication.shared.applicationIconImage = WorkspaceBrand.image(size: 1024)
                 window.titleVisibility = .hidden
                 window.titlebarAppearsTransparent = true
+                window.titlebarSeparatorStyle = .none
+                if !window.styleMask.contains(.fullSizeContentView) {
+                    window.styleMask.insert(.fullSizeContentView)
+                }
                 if window.screen == nil || !NSScreen.screens.contains(where: { $0.frame.intersects(window.frame) }) {
                     window.center()
                 }
