@@ -160,7 +160,7 @@ enum Metrics {
     static let choice: CGFloat = 36
     static let bar: CGFloat = 42
     static let toggleRow: CGFloat = 46
-    static let header: CGFloat = 80
+    static let header: CGFloat = 52
     static let sidebar: CGFloat = 220
     static let sidebarRail: CGFloat = 56
     static let content: CGFloat = 1000

@@ -118,6 +118,8 @@ enum MediaDescription {
             generator.maximumSize = CGSize(width: 768, height: 768)
             let time = CMTime(seconds: (media.duration ?? 0) / 2, preferredTimescale: 600)
             frame = try? await generator.image(at: time).image
+        case .audio:
+            frame = nil
         }
         guard let frame,
               let jpeg = NSBitmapImageRep(cgImage: frame).representation(using: .jpeg, properties: [.compressionFactor: 0.75])

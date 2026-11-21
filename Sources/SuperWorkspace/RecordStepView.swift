@@ -50,13 +50,20 @@ struct RecordStepView: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: Metrics.space5) {
-                        HStack {
+                        HStack(spacing: Metrics.space3) {
                             Text("素材").font(.studio(.heading))
-                            Text("\(project.materials.count) 段 · \(durationLabel(project.materials.reduce(0) { $0 + $1.timelineDuration }))")
+                            Text(summaryLabel)
                                 .font(.studio(.small)).foregroundStyle(palette.textSecondary)
-                            Spacer(minLength: Metrics.space6)
-                            Button("录制新素材", systemImage: "plus") { state.record() }
-                                .buttonStyle(StudioButtonStyle(kind: .primary))
+                            Spacer(minLength: Metrics.space4)
+                            Button("录制新素材", systemImage: "record.circle") { state.record() }
+                                .buttonStyle(StudioButtonStyle(kind: .secondary))
+                                .disabled(project.isFrozen)
+                            Button {
+                                state.stage = .assemble
+                            } label: {
+                                Label("进入拼装", systemImage: "arrow.right")
+                            }
+                            .buttonStyle(StudioButtonStyle(kind: .primary))
                         }
                         CapabilityReadinessView()
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 300, maximum: 420), spacing: Metrics.space5)], alignment: .leading, spacing: Metrics.space6) {
@@ -84,6 +91,16 @@ struct RecordStepView: View {
         }
     }
 
+    private var summaryLabel: String {
+        let total = durationLabel(project.materials.reduce(0) { $0 + $1.timelineDuration })
+        let motionReady = project.materials.filter { $0.wantsMotion && $0.motionState == .complete }.count
+        let motionActive = project.materials.filter { $0.wantsMotion && [.queued, .running].contains($0.motionState) }.count
+        var parts = ["\(project.materials.count) 段", total]
+        if motionReady > 0 { parts.append("\(motionReady) 段动效就绪") }
+        if motionActive > 0 { parts.append("\(motionActive) 段动效处理中") }
+        return parts.joined(separator: " · ")
+    }
+
     private func openTimeline(for material: Material) {
         var session = state.editorSession(project.id)
         session.selectedMaterial = material.id
@@ -94,6 +111,7 @@ struct RecordStepView: View {
 }
 
 private struct MaterialCard: View {
+    @EnvironmentObject private var state: AppState
     @Environment(\.palette) private var palette
     let projectID: UUID
     let material: Material
@@ -101,6 +119,34 @@ private struct MaterialCard: View {
     let picture: URL
     let onPreview: () -> Void
     let onEdit: () -> Void
+    @State private var renaming = false
+    @State private var draftTitle = ""
+
+    private var statusSummary: (text: String, color: Color, spinning: Bool)? {
+        if material.exportState == .running { return ("正在导出素材…", palette.textSecondary, true) }
+        if material.exportState == .failed { return ("素材导出失败", palette.danger, false) }
+        if material.wantsMotion {
+            switch material.motionState {
+            case .running:
+                return (state.motionPhases[material.mediaID] ?? "动效渲染中…", palette.ai, true)
+            case .queued:
+                return ("动效排队中", palette.ai, false)
+            case .failed:
+                return ("动效失败", palette.danger, false)
+            case .complete:
+                if material.transcriptState == .running {
+                    return ("动效就绪 · \(state.taskPhases[material.mediaID] ?? "识别字幕中")", palette.ai, true)
+                }
+                return ("动效就绪", palette.ai, false)
+            case .idle: break
+            }
+        }
+        if material.transcriptState == .running {
+            return (state.taskPhases[material.mediaID] ?? "处理字幕中…", palette.textSecondary, true)
+        }
+        if material.transcriptState == .failed { return ("字幕失败", palette.danger, false) }
+        return nil
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Metrics.space2) {
@@ -114,17 +160,67 @@ private struct MaterialCard: View {
             }
             .buttonStyle(StudioContentButtonStyle())
             .disabled(material.exportState != .complete)
-            .accessibilityLabel("预览素材 \(number)")
+            .accessibilityLabel("预览 \(material.displayTitle(index: number - 1))")
 
             HStack(spacing: Metrics.space2) {
-                Text("素材 \(number)").font(.studio(.bodyLargeMedium)).lineLimit(1)
+                Button {
+                    draftTitle = material.title ?? ""
+                    renaming = true
+                } label: {
+                    Text(material.displayTitle(index: number - 1))
+                        .font(.studio(.bodyLargeMedium))
+                        .lineLimit(1)
+                }
+                .buttonStyle(StudioContentButtonStyle())
+                .help("点击重命名片段")
+                .popover(isPresented: $renaming, arrowEdge: .bottom) {
+                    VStack(alignment: .leading, spacing: Metrics.space3) {
+                        Text("重命名片段").font(.studio(.smallStrong))
+                        TextField("素材 \(number)", text: $draftTitle)
+                            .textFieldStyle(StudioTextFieldStyle())
+                            .onSubmit {
+                                state.renameMaterial(projectID, material.id, title: draftTitle)
+                                renaming = false
+                            }
+                        HStack {
+                            Spacer()
+                            Button { renaming = false } label: { Text(verbatim: "取消") }
+                                .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
+                            Button {
+                                state.renameMaterial(projectID, material.id, title: draftTitle)
+                                renaming = false
+                            } label: { Text(verbatim: "保存") }
+                            .buttonStyle(StudioButtonStyle(kind: .primary, size: .compact))
+                        }
+                    }
+                    .padding(Metrics.space4)
+                    .frame(width: 240)
+                    .background(palette.bgBase)
+                }
                 Spacer(minLength: Metrics.space2)
                 MaterialCardStatus(material: material)
-                Text(material.exportState == .complete ? durationLabel(material.duration) : "—")
+                Text(material.exportState == .complete ? durationLabel(material.timelineDuration) : "—")
                     .font(.studio(.timecode)).foregroundStyle(palette.textSecondary)
                 MaterialActionsMenu(projectID: projectID, material: material, onEdit: onEdit)
             }
             .frame(height: Metrics.row)
+
+            if let summary = statusSummary {
+                HStack(spacing: Metrics.space2) {
+                    if summary.spinning {
+                        ProgressView().controlSize(.mini)
+                    }
+                    Text(summary.text)
+                        .font(.studio(.caption))
+                        .foregroundStyle(summary.color)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    if material.wantsMotion && material.motionState == .failed {
+                        Button("重试动效") { state.enqueueMotion(projectID, material.id) }
+                            .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
+                    }
+                }
+            }
         }
     }
 }
@@ -220,11 +316,13 @@ struct VideoSurface: NSViewRepresentable {
         let view = AVPlayerView()
         view.player = player
         view.controlsStyle = controlsStyle
+        view.allowsVideoFrameAnalysis = controlsStyle != .none
         return view
     }
     func updateNSView(_ nsView: AVPlayerView, context: Context) {
         nsView.player = player
         nsView.controlsStyle = controlsStyle
+        nsView.allowsVideoFrameAnalysis = controlsStyle != .none
     }
 }
 func durationLabel(_ time: Double) -> String {

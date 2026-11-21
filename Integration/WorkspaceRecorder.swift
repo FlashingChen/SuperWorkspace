@@ -175,20 +175,20 @@ struct IntegratedExportSheet: View {
     }
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: 24) {
+        VStack(alignment: .leading, spacing: 20) {
             Text("完成录制").font(.title2.weight(.semibold))
             VStack(alignment: .leading, spacing: 12) {
                 Toggle("添加 AI 动效", isOn: $wantsMotion)
-                if wantsMotion || wantsAIEditing {
+                if wantsMotion {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Toggle("引用素材库素材", isOn: $wantsAIEditing)
+                            .help("允许动效任务使用项目素材库中的图片或视频。")
+                        Text("允许动效结合素材库里的真实画面，也可稍后在拼装台直接插入")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     WorkspaceRecorder.shared.exportPromptField($editingPrompt)
                 }
-            }
-            VStack(alignment: .leading, spacing: 6) {
-                Toggle("AI 剪辑", isOn: $wantsAIEditing)
-                    .help("从素材库选用补充画面，随本段素材保存，导出成片时使用。")
-                Text("按素材库内容插入画面")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
             if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
             HStack {
@@ -201,7 +201,7 @@ struct IntegratedExportSheet: View {
                 ))
             }
         }
-        .padding(28).frame(width: 360)
+        .padding(28).frame(width: 380)
     }
 
     private func submit() {
@@ -209,7 +209,7 @@ struct IntegratedExportSheet: View {
         guard let media = mediaSession.prepared else { return }
         do {
             let prompt = editingPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-            try WorkspaceRecorder.shared.submit(wantsMotion: wantsMotion, editingPrompt: prompt.isEmpty ? nil : prompt, wantsAIEditing: wantsAIEditing) { output in
+            try WorkspaceRecorder.shared.submit(wantsMotion: wantsMotion, editingPrompt: prompt.isEmpty ? nil : prompt, wantsAIEditing: wantsMotion && wantsAIEditing) { output in
                 let project = editorStore.project
                 return try EditorExportRequestBuilder.make(
                     editorSessionID: editorStore.sessionID, mediaGeneration: media.generation,

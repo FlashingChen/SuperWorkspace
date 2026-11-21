@@ -55,8 +55,9 @@ final class AppState: ObservableObject {
     @Published var subtitleReviews: [UUID: SubtitleReview] = [:]
     @Published var reviewingProjects: Set<UUID> = []
     @Published var reviewPhases: [UUID: String] = [:]
-    @Published private var undoRevision = 0
+    @Published private(set) var undoRevision = 0
     private var undoManagers: [UUID: UndoManager] = [:]
+    private var undoPushCounts: [UUID: Int] = [:]
     private var chatAgents: [UUID: AssemblyAgent] = [:]
     private var workspaceSession = WorkspaceSession.load()
     private var lastSessionSave = Date.distantPast
@@ -170,9 +171,13 @@ final class AppState: ObservableObject {
         if grouping { manager.beginUndoGrouping() }
         manager.registerUndo(withTarget: self) { state in MainActor.assumeIsolated { action(state) } }
         manager.setActionName(name)
-        if grouping { manager.endUndoGrouping() }
+        if grouping {
+            manager.endUndoGrouping()
+            undoPushCounts[id, default: 0] += 1
+        }
         undoRevision += 1
     }
+    func undoPushCount(for id: UUID) -> Int { undoPushCounts[id] ?? 0 }
     var canUndo: Bool { guard let id = selectedProjectID else { return false }; return history(id).canUndo }
     var canRedo: Bool { guard let id = selectedProjectID else { return false }; return history(id).canRedo }
     func undo() { guard let id = selectedProjectID else { return }; history(id).undo(); undoRevision += 1 }
@@ -318,15 +323,7 @@ final class AppState: ObservableObject {
                     await self.lockCanvas(projectID)
                     self.processMaterial(projectID, id)
                     self.startAIEditing(projectID, id)
-                    if self.selectedProjectID == projectID {
-                        var session = self.editorSession(projectID)
-                        session.stage = .assemble
-                        session.selectedMaterial = id
-                        session.playhead = self.projects.first(where: { $0.id == projectID })?.materials.prefix { $0.id != id }.reduce(0) { $0 + $1.timelineDuration } ?? 0
-                        self.rememberEditor(projectID, session, flush: true)
-                        self.stage = .assemble
-                    }
-                    self.showToast("素材已添加")
+                    self.showToast("素材已添加，后台处理中")
                 }
             case .failure(let error):
                 self.updateMaterial(projectID, id) { $0.exportState = .failed; $0.exportError = error.localizedDescription }
@@ -1315,7 +1312,7 @@ final class AppState: ObservableObject {
         setOrder(projectID, ids)
         return true
     }
-    /// Replaces the cutaways of one clip. Used by the in-app agent.
+    /// Replaces the cutaways of one clip. Used by the in-app agent and timeline.
     @discardableResult
     func setInserts(_ projectID: UUID, _ materialID: UUID, _ inserts: [AIEditing.Insert]) -> Bool {
         guard let (_, material) = pair(projectID, materialID) else { return false }
@@ -1324,6 +1321,238 @@ final class AppState: ObservableObject {
         guard updateMaterial(projectID, materialID, { $0.inserts = inserts.isEmpty ? nil : inserts }) else { return false }
         registerUndo(projectID, name: "调整补充画面") { $0.setInserts(projectID, materialID, old) }
         return true
+    }
+
+    @discardableResult
+    func renameMaterial(_ projectID: UUID, _ materialID: UUID, title: String) -> Bool {
+        guard let (_, material) = pair(projectID, materialID) else { return false }
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let next: String? = trimmed.isEmpty ? nil : trimmed
+        let old = material.title
+        guard old != next else { return true }
+        guard updateMaterial(projectID, materialID, { $0.title = next }) else { return false }
+        registerUndo(projectID, name: "重命名素材") { _ = $0.renameMaterial(projectID, materialID, title: old ?? "") }
+        return true
+    }
+
+    @discardableResult
+    func setMaterialSpeed(_ projectID: UUID, _ materialID: UUID, speed: Double) -> Bool {
+        guard let (_, material) = pair(projectID, materialID), material.sourceReady,
+              speed.isFinite, speed >= 0.5, speed <= 4.0 else { return false }
+        let normalized = (speed * 100).rounded() / 100
+        let next: Double? = abs(normalized - 1.0) < 0.005 ? nil : normalized
+        let old = material.playbackSpeed
+        guard abs(old - (next ?? 1.0)) >= 0.005 else { return true }
+        guard updateMaterial(projectID, materialID, { $0.speed = next }) else { return false }
+        registerUndo(projectID, name: "调整倍速") { _ = $0.setMaterialSpeed(projectID, materialID, speed: old) }
+        return true
+    }
+
+    @discardableResult
+    func addInsert(_ projectID: UUID, _ materialID: UUID, assetID: UUID, start: Double, end: Double, assetStart: Double = 0) -> Bool {
+        guard let (project, material) = pair(projectID, materialID), !project.isFrozen else { return false }
+        let library = Dictionary(uniqueKeysWithValues: project.referenceMedia.map { ($0.id, $0) })
+        guard let reference = library[assetID] else { return false }
+        let maxEnd = reference.kind == .video ? min(material.outPoint, start + max(1.0 / 30, (reference.duration ?? 0) - assetStart)) : material.outPoint
+        let clampedStart = min(max(material.inPoint, start), material.outPoint)
+        let clampedEnd = min(max(clampedStart, end), maxEnd)
+        let candidate = AIEditing.Insert(clipID: material.id, assetID: assetID, start: clampedStart, end: clampedEnd,
+                                         assetStart: reference.kind == .image ? 0 : max(0, assetStart))
+        let combined = (material.inserts ?? []) + [candidate]
+        let validated = AIEditing.validatedInserts(combined, clipID: material.id, clipStart: material.inPoint,
+                                                   clipEnd: material.outPoint, library: library)
+        guard validated.contains(candidate) else { return false }
+        return setInserts(projectID, materialID, validated)
+    }
+
+    @discardableResult
+    func updateInsert(_ projectID: UUID, _ materialID: UUID, index: Int, start: Double, end: Double) -> Bool {
+        guard let (project, material) = pair(projectID, materialID), !project.isFrozen else { return false }
+        var inserts = material.inserts ?? []
+        guard inserts.indices.contains(index) else { return false }
+        let existing = inserts[index]
+        let updated = AIEditing.Insert(clipID: material.id, assetID: existing.assetID, start: start, end: end, assetStart: existing.assetStart)
+        inserts[index] = updated
+        let library = Dictionary(uniqueKeysWithValues: project.referenceMedia.map { ($0.id, $0) })
+        let validated = AIEditing.validatedInserts(inserts, clipID: material.id, clipStart: material.inPoint,
+                                                   clipEnd: material.outPoint, library: library)
+        guard validated.contains(updated) else { return false }
+        return setInserts(projectID, materialID, validated)
+    }
+
+    @discardableResult
+    func removeInsert(_ projectID: UUID, _ materialID: UUID, index: Int) -> Bool {
+        guard let (project, material) = pair(projectID, materialID), !project.isFrozen else { return false }
+        var inserts = material.inserts ?? []
+        guard inserts.indices.contains(index) else { return false }
+        inserts.remove(at: index)
+        return setInserts(projectID, materialID, inserts)
+    }
+
+    @discardableResult
+    func setAudioClips(_ projectID: UUID, _ clips: [AudioClip], undoName: String = "调整音频轨") -> Bool {
+        guard let project = projects.first(where: { $0.id == projectID }), !project.isFrozen else { return false }
+        let old = project.audioClips ?? []
+        guard old != clips else { return true }
+        guard updateProject(projectID, { $0.audioClips = clips.isEmpty ? nil : clips }) else { return false }
+        registerUndo(projectID, name: undoName) { _ = $0.setAudioClips(projectID, old, undoName: undoName) }
+        return true
+    }
+
+    @discardableResult
+    func addAudioClip(_ projectID: UUID, _ clip: AudioClip) -> Bool {
+        guard let project = projects.first(where: { $0.id == projectID }), !project.isFrozen,
+              clip.start.isFinite, clip.end.isFinite, clip.start >= 0, clip.end - clip.start >= 1.0 / 30,
+              project.referenceMedia.contains(where: { $0.id == clip.assetID && $0.kind == .audio }) else { return false }
+        var clips = project.audioClips ?? []
+        clips.append(clip)
+        clips.sort { $0.start < $1.start }
+        return setAudioClips(projectID, clips, undoName: "添加音频")
+    }
+
+    @discardableResult
+    func updateAudioClip(_ projectID: UUID, id: UUID, mutate: (inout AudioClip) -> Void) -> Bool {
+        guard let project = projects.first(where: { $0.id == projectID }), !project.isFrozen else { return false }
+        var clips = project.audioClips ?? []
+        guard let idx = clips.firstIndex(where: { $0.id == id }) else { return false }
+        var updated = clips[idx]
+        mutate(&updated)
+        guard updated.start.isFinite, updated.end.isFinite, updated.start >= 0, updated.end - updated.start >= 1.0 / 30 else { return false }
+        updated.volume = min(1.0, max(0, updated.volume.isFinite ? updated.volume : 0.25))
+        updated.fadeIn = max(0, updated.fadeIn.isFinite ? updated.fadeIn : 0)
+        updated.fadeOut = max(0, updated.fadeOut.isFinite ? updated.fadeOut : 0)
+        clips[idx] = updated
+        clips.sort { $0.start < $1.start }
+        return setAudioClips(projectID, clips, undoName: "调整音频")
+    }
+
+    @discardableResult
+    func removeAudioClip(_ projectID: UUID, id: UUID) -> Bool {
+        guard let project = projects.first(where: { $0.id == projectID }), !project.isFrozen else { return false }
+        var clips = project.audioClips ?? []
+        let before = clips.count
+        clips.removeAll { $0.id == id }
+        guard clips.count != before else { return false }
+        return setAudioClips(projectID, clips, undoName: "删除音频")
+    }
+
+    @discardableResult
+    func setCallouts(_ projectID: UUID, _ callouts: [CalloutOverlay], undoName: String = "调整花字") -> Bool {
+        guard let project = projects.first(where: { $0.id == projectID }), !project.isFrozen else { return false }
+        let old = project.callouts ?? []
+        guard old != callouts else { return true }
+        guard updateProject(projectID, { $0.callouts = callouts.isEmpty ? nil : callouts }) else { return false }
+        registerUndo(projectID, name: undoName) { _ = $0.setCallouts(projectID, old, undoName: undoName) }
+        return true
+    }
+
+    @discardableResult
+    func addCallout(_ projectID: UUID, _ callout: CalloutOverlay) -> Bool {
+        guard let project = projects.first(where: { $0.id == projectID }), !project.isFrozen,
+              callout.start.isFinite, callout.end.isFinite, callout.start >= 0, callout.end - callout.start >= 1.0 / 30,
+              !callout.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        var callouts = project.callouts ?? []
+        callouts.append(callout)
+        callouts.sort { $0.start < $1.start }
+        return setCallouts(projectID, callouts, undoName: "添加花字")
+    }
+
+    @discardableResult
+    func updateCallout(_ projectID: UUID, id: UUID, mutate: (inout CalloutOverlay) -> Void) -> Bool {
+        guard let project = projects.first(where: { $0.id == projectID }), !project.isFrozen else { return false }
+        var callouts = project.callouts ?? []
+        guard let idx = callouts.firstIndex(where: { $0.id == id }) else { return false }
+        var updated = callouts[idx]
+        mutate(&updated)
+        guard updated.start.isFinite, updated.end.isFinite, updated.start >= 0, updated.end - updated.start >= 1.0 / 30,
+              !updated.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        callouts[idx] = updated
+        callouts.sort { $0.start < $1.start }
+        return setCallouts(projectID, callouts, undoName: "调整花字")
+    }
+
+    @discardableResult
+    func removeCallout(_ projectID: UUID, id: UUID) -> Bool {
+        guard let project = projects.first(where: { $0.id == projectID }), !project.isFrozen else { return false }
+        var callouts = project.callouts ?? []
+        let before = callouts.count
+        callouts.removeAll { $0.id == id }
+        guard callouts.count != before else { return false }
+        return setCallouts(projectID, callouts, undoName: "删除花字")
+    }
+
+    @discardableResult
+    func setHTMLMotions(_ projectID: UUID, _ motions: [HTMLMotionOverlay], undoName: String = "调整即时动效") -> Bool {
+        guard let project = projects.first(where: { $0.id == projectID }), !project.isFrozen else { return false }
+        let old = project.htmlMotions ?? []
+        guard old != motions else { return true }
+        guard updateProject(projectID, { $0.htmlMotions = motions.isEmpty ? nil : motions }) else { return false }
+        registerUndo(projectID, name: undoName) { _ = $0.setHTMLMotions(projectID, old, undoName: undoName) }
+        return true
+    }
+
+    @discardableResult
+    func addHTMLMotion(_ projectID: UUID, name: String, start: Double, end: Double, mode: HTMLMotionOverlay.Mode, html: String) -> HTMLMotionOverlay? {
+        guard let project = projects.first(where: { $0.id == projectID }), !project.isFrozen,
+              start.isFinite, end.isFinite, start >= 0, end - start >= 1.0 / 30,
+              !html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let id = UUID()
+        let item = HTMLMotionOverlay(
+            id: id,
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "即时动效" : name.trimmingCharacters(in: .whitespacesAndNewlines),
+            start: start,
+            end: end,
+            mode: mode,
+            fileName: "\(id.uuidString).html",
+            revision: 1
+        )
+        let dir = ProjectLayout.htmlMotionDirectory(in: project)
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try html.write(to: ProjectLayout.htmlMotion(item, in: project), atomically: true, encoding: .utf8)
+        } catch {
+            return nil
+        }
+        var motions = project.htmlMotions ?? []
+        motions.append(item)
+        motions.sort { $0.start < $1.start }
+        guard setHTMLMotions(projectID, motions, undoName: "添加即时动效") else { return nil }
+        return item
+    }
+
+    @discardableResult
+    func updateHTMLMotion(_ projectID: UUID, id: UUID, html: String? = nil, mutate: (inout HTMLMotionOverlay) -> Void) -> Bool {
+        guard let project = projects.first(where: { $0.id == projectID }), !project.isFrozen else { return false }
+        var motions = project.htmlMotions ?? []
+        guard let idx = motions.firstIndex(where: { $0.id == id }) else { return false }
+        var updated = motions[idx]
+        mutate(&updated)
+        guard updated.start.isFinite, updated.end.isFinite, updated.start >= 0, updated.end - updated.start >= 1.0 / 30 else { return false }
+        if let html, !html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let dir = ProjectLayout.htmlMotionDirectory(in: project)
+            updated.revision += 1
+            // Write to a new immutable versioned file so Undo/Redo always restores the exact original HTML.
+            updated.fileName = "\(updated.id.uuidString)-v\(updated.revision).html"
+            do {
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                try html.write(to: ProjectLayout.htmlMotion(updated, in: project), atomically: true, encoding: .utf8)
+            } catch {
+                return false
+            }
+        }
+        motions[idx] = updated
+        motions.sort { $0.start < $1.start }
+        return setHTMLMotions(projectID, motions, undoName: "调整即时动效")
+    }
+
+    @discardableResult
+    func removeHTMLMotion(_ projectID: UUID, id: UUID) -> Bool {
+        guard let project = projects.first(where: { $0.id == projectID }), !project.isFrozen else { return false }
+        var motions = project.htmlMotions ?? []
+        let before = motions.count
+        motions.removeAll { $0.id == id }
+        guard motions.count != before else { return false }
+        return setHTMLMotions(projectID, motions, undoName: "删除即时动效")
     }
     /// Applies a new instruction and queues a motion re-render. Rendering itself is
     /// not undoable, but the prompt change and every other edit are.
