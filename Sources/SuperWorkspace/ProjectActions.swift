@@ -8,11 +8,7 @@ struct ProjectActionItems: View {
     var onDelete: (() -> Void)? = nil
 
     private var busy: Bool {
-        state.exportingProjects.contains(project.id)
-            || state.bundlingProjects.contains(project.id)
-            || state.freezingProjects.contains(project.id)
-            || state.unfreezingProjects.contains(project.id)
-            || state.hasActiveJobs(project.id)
+        state.hasActiveJobs(project.id)
     }
 
     var body: some View {
@@ -88,6 +84,7 @@ struct ProjectActionsMenu: View {
 /// Inline footer row for library cards: quick archive/freeze plus full management menu.
 struct ProjectActionsRow: View {
     @EnvironmentObject private var state: AppState
+    @Environment(\.palette) private var palette
     let project: VideoProject
     @State private var showRename = false
     @State private var showDelete = false
@@ -130,6 +127,7 @@ struct ProjectActionsRow: View {
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.studio(.small, weight: .semibold))
+                    .foregroundStyle(palette.textSecondary)
             }
             .menuStyle(StudioMenuStyle())
             .fixedSize()
@@ -178,7 +176,8 @@ struct RenameProjectSheet: View {
                 Button("保存", action: save)
                     .buttonStyle(StudioButtonStyle(kind: .primary))
                     .keyboardShortcut(.defaultAction)
-                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                              || draft.trimmingCharacters(in: .whitespacesAndNewlines) == project.name)
             }
         }
         .foregroundStyle(palette.textPrimary)

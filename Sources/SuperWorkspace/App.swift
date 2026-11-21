@@ -186,6 +186,8 @@ struct RootView: View {
     /// Unified DogSC-style chrome bar integrated directly with the macOS titlebar traffic lights.
     private var workspaceHeader: some View {
         ZStack {
+            WindowDragSurface()
+
             HStack(spacing: Metrics.space2_5) {
                 // Left: Brand / Project Switcher (cleared past traffic lights)
                 if let project = state.currentProject {
@@ -290,6 +292,8 @@ struct RootView: View {
                     }
                 }
             }
+            .padding(.leading, 80)
+            .padding(.trailing, Metrics.space4)
 
             // Center: Capsule Stage Switcher (in project) or Search Pill (in library)
             if state.currentProject != nil {
@@ -304,8 +308,6 @@ struct RootView: View {
                     .frame(width: 280)
             }
         }
-        .padding(.leading, 80)
-        .padding(.trailing, Metrics.space4)
         .frame(height: Metrics.header)
         .background(palette.island)
         .overlay(alignment: .bottom) {
@@ -699,12 +701,35 @@ struct WindowConfigurator: NSViewRepresentable {
                 window.titleVisibility = .hidden
                 window.titlebarAppearsTransparent = true
                 window.titlebarSeparatorStyle = .none
+                if window.toolbar == nil {
+                    let toolbar = NSToolbar(identifier: "SuperWorkspaceChrome")
+                    toolbar.showsBaselineSeparator = false
+                    window.toolbar = toolbar
+                    window.toolbarStyle = .unified
+                }
                 if !window.styleMask.contains(.fullSizeContentView) {
                     window.styleMask.insert(.fullSizeContentView)
                 }
                 if window.screen == nil || !NSScreen.screens.contains(where: { $0.frame.intersects(window.frame) }) {
                     window.center()
                 }
+            }
+        }
+    }
+}
+
+private struct WindowDragSurface: NSViewRepresentable {
+    func makeNSView(context: Context) -> DragView { DragView() }
+    func updateNSView(_ nsView: DragView, context: Context) {}
+
+    final class DragView: NSView {
+        override var mouseDownCanMoveWindow: Bool { true }
+
+        override func mouseDown(with event: NSEvent) {
+            if event.clickCount == 2 {
+                window?.performZoom(nil)
+            } else {
+                window?.performDrag(with: event)
             }
         }
     }

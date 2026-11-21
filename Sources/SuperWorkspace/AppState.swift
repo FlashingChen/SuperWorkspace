@@ -196,7 +196,9 @@ final class AppState: ObservableObject {
     @discardableResult
     func renameProject(_ id: UUID, name: String) -> Bool {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
+        guard !trimmed.isEmpty,
+              let existing = projects.first(where: { $0.id == id }) else { return false }
+        if trimmed == existing.name { return true }
         let updated = updateProject(id) { $0.name = trimmed }
         if updated { showToast("已重命名为「\(trimmed)」") }
         return updated
@@ -206,8 +208,7 @@ final class AppState: ObservableObject {
     func deleteProject(_ id: UUID) -> Bool {
         guard let index = projects.firstIndex(where: { $0.id == id }) else { return false }
         let project = projects[index]
-        if hasActiveJobs(id) || exportingProjects.contains(id) || bundlingProjects.contains(id)
-            || freezingProjects.contains(id) || unfreezingProjects.contains(id) {
+        if hasActiveJobs(id) {
             error = "项目正在处理后台任务，请等待完成或取消后再删除。"
             return false
         }
@@ -216,12 +217,8 @@ final class AppState: ObservableObject {
             do {
                 try FileManager.default.trashItem(at: directory, resultingItemURL: nil)
             } catch {
-                do {
-                    try FileManager.default.removeItem(at: directory)
-                } catch {
-                    self.error = "删除项目失败：\(error.localizedDescription)"
-                    return false
-                }
+                self.error = "无法将项目移至废纸篓：\(error.localizedDescription)"
+                return false
             }
         }
         chatAgents[id]?.stop()

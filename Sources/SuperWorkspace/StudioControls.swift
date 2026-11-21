@@ -190,6 +190,8 @@ struct StudioSearchField: View {
                     Image(systemName: "xmark.circle.fill")
                         .font(.studio(.caption))
                         .foregroundStyle(palette.textMuted)
+                        .frame(width: 20, height: 20)
+                        .contentShape(Circle())
                 }
                 .buttonStyle(StudioContentButtonStyle(cornerRadius: 999))
                 .accessibilityLabel("清除搜索")
