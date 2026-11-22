@@ -96,6 +96,17 @@ struct SettingsView: View {
     private var apiSettings: some View {
         VStack(alignment: .leading, spacing: Metrics.space4) {
             Group {
+                HStack(spacing: Metrics.space3) {
+                    settingLabel("服务商预设")
+                    Menu(matchedPresetName) {
+                        ForEach(AIProviderPreset.all) { preset in
+                            Button(preset.name) { applyPreset(preset) }
+                        }
+                    }
+                    .menuStyle(StudioMenuStyle())
+                    .fixedSize()
+                    Spacer()
+                }
                 field("API 地址", text: $apiURL, prompt: "OpenAI 兼容接口的基础地址")
                 field("模型", text: $apiModel, prompt: "服务提供的模型 ID")
                 VStack(alignment: .leading, spacing: Metrics.space2) {
@@ -122,7 +133,7 @@ struct SettingsView: View {
                     .fixedSize()
                     Spacer()
                 }
-                Text("超过上限会中止该条动效，已完成的镜头不会被采用。")
+                Text("到达上限后可选择延长继续或停止；工具调用次数到点直接中止。")
                     .font(.studio(.small)).foregroundStyle(palette.textSecondary)
                 HStack(spacing: Metrics.space3) {
                     settingLabel("同时处理条数")
@@ -191,6 +202,20 @@ struct SettingsView: View {
         }
         .onChange(of: apiURL) { _, _ in refreshAPIKey() }
         .onDisappear { apiKey = ""; apiStatus = nil }
+    }
+
+    private var matchedPresetName: String {
+        guard let current = try? AIEndpoint(apiURL) else { return "选择预设…" }
+        return AIProviderPreset.all.first { (try? AIEndpoint($0.baseURL))?.url == current.url }?.name ?? "自定义"
+    }
+
+    private func applyPreset(_ preset: AIProviderPreset) {
+        apiURL = preset.baseURL
+        apiModel = preset.defaultModel
+        settings.aiAPIImages = preset.supportsImages
+        apiStatus = nil
+        apiFailed = false
+        refreshAPIKey()
     }
 
     private func refreshAPIKey() {

@@ -60,6 +60,52 @@ enum AIConnectionError: LocalizedError {
     }
 }
 
+struct AIProviderPreset: Identifiable, Equatable, Sendable {
+    let id: String
+    let name: String
+    let baseURL: String
+    let defaultModel: String
+    let supportsImages: Bool
+
+    static let all: [AIProviderPreset] = [
+        AIProviderPreset(
+            id: "openai",
+            name: "OpenAI",
+            baseURL: "https://api.openai.com/v1",
+            defaultModel: "gpt-4.1",
+            supportsImages: true
+        ),
+        AIProviderPreset(
+            id: "openrouter",
+            name: "OpenRouter",
+            baseURL: "https://openrouter.ai/api/v1",
+            defaultModel: "anthropic/claude-sonnet-4",
+            supportsImages: true
+        ),
+        AIProviderPreset(
+            id: "gemini",
+            name: "Google Gemini",
+            baseURL: "https://generativelanguage.googleapis.com/v1beta/openai",
+            defaultModel: "gemini-2.5-pro",
+            supportsImages: true
+        ),
+        AIProviderPreset(
+            id: "deepseek",
+            name: "DeepSeek",
+            baseURL: "https://api.deepseek.com/v1",
+            defaultModel: "deepseek-chat",
+            supportsImages: false
+        ),
+        AIProviderPreset(
+            id: "ollama",
+            name: "本地 Ollama",
+            baseURL: "http://localhost:11434/v1",
+            defaultModel: "qwen2.5:14b",
+            supportsImages: false
+        ),
+    ]
+}
+
 enum AIKeychain {
     private static func query(_ endpoint: AIEndpoint) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword,
