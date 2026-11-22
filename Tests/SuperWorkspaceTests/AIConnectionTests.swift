@@ -22,4 +22,20 @@ final class AIConnectionTests: XCTestCase {
         XCTAssertThrowsError(try AIConnection(endpoint: remote, model: "fixture", key: ""))
         XCTAssertThrowsError(try AIConnection(endpoint: remote, model: "fixture", key: "line\nbreak"))
     }
+
+    func testProviderPresetsProduceValidEndpoints() throws {
+        XCTAssertFalse(AIProviderPreset.all.isEmpty)
+        for preset in AIProviderPreset.all {
+            let endpoint = try AIEndpoint(preset.baseURL)
+            XCTAssertTrue(endpoint.url.path.hasSuffix("/chat/completions"), "Preset \(preset.id) should normalize to /chat/completions")
+            XCTAssertFalse(preset.defaultModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            if preset.id == "ollama" {
+                XCTAssertTrue(endpoint.isLoopback)
+                XCTAssertNoThrow(try AIConnection(endpoint: endpoint, model: preset.defaultModel, key: ""))
+            } else {
+                XCTAssertFalse(endpoint.isLoopback)
+                XCTAssertEqual(endpoint.url.scheme, "https")
+            }
+        }
+    }
 }

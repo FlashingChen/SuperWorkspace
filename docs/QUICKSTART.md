@@ -3,18 +3,22 @@
 ## 安装
 
 1. 从 [GitHub Releases](https://github.com/FlashingChen/SuperWorkspace/releases) 下载 macOS ARM64 磁盘映像（DMG），打开后把 **SuperWorkspace.app** 拖进「应用程序」，再推出磁盘映像。发布包仅支持 macOS 14 及以上的 Apple Silicon Mac；ZIP 下载包内容相同。
-2. 发布包使用临时签名，未经过 Apple 公证。若系统阻止打开，请参考 [Apple 关于打开受信任应用的建议](https://support.apple.com/en-us/102445) 处理。
-3. 首次录制时按系统提示授予屏幕录制与辅助功能权限；使用麦克风或摄像头时再分别授权。部分权限变更后需要重新打开应用。
+2. 发布包使用临时签名，未经过 Apple 公证。首次打开若被 macOS 拦截：
+   - 点「完成」关闭提示，打开「系统设置 → 隐私与安全性」，在底部找到 **SuperWorkspace** 并点「仍要打开」；
+   - 若系统提示应用已损坏而未出现「仍要打开」，在终端执行 `xattr -dr com.apple.quarantine /Applications/SuperWorkspace.app` 后再打开；
+   - 更多说明见 [Apple 关于打开受信任应用的建议](https://support.apple.com/en-us/102445)。
+3. 首次录制时按系统提示授予屏幕录制与辅助功能权限；使用麦克风或摄像头时再分别授权。部分权限变更后需要重新打开应用。升级临时签名版本后若提示无权限，在「系统设置 → 隐私与安全性」里移除旧条目后重新勾选即可。
 
 应用已内置 Pi、Node.js、FFmpeg、whisper.cpp 与默认语音模型。不连接 AI 账户也能录制、识别字幕、拼装和导出。
 
 ## 连接模型（可选）
 
-打开「设置 → AI 动效 → 内置 Pi」，填写服务商提供的基础地址、模型和 API 密钥，点「测试连接」，再点「保存」。密钥保存在 macOS 钥匙串，保存后不再显示。
+打开「设置 → AI 动效 → 内置 Pi」，可以从「服务商预设」一键填入 OpenAI、OpenRouter、Google Gemini、DeepSeek 或本地 Ollama 的基础地址与示例模型，也可以手动填写任意兼容 OpenAI Chat Completions 的地址与模型；填入 API 密钥后点「测试连接」，再点「保存」。密钥保存在 macOS 钥匙串，保存后不再显示。
 
 - 模型支持图片时，打开「模型支持图片」：动效任务会附带源帧，素材描述与 AI 剪辑会发送截图做判断。
 - AI 动效需要支持工具调用的模型；首次动效任务会在本机准备 Remotion 与渲染浏览器，请保持联网。
 - 也可以改用本机已安装并认证的 Claude CLI，但该路径不接收图片。
+- **耗时与调用成本提示**：本地字幕、拼装页的即时 HTML 动效、花字标注与背景音乐几乎无需等待且 Token 消耗极低；完整 Remotion AI 动效会在本机多轮迭代并视觉检查，单条通常需要数分钟至数十分钟并伴随较多工具调用，建议仅对需要动态图解的重点片段开启。
 
 ## 做第一条视频
 
