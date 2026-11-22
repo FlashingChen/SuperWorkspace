@@ -5,9 +5,9 @@ let package = Package(
     name: "SuperWorkspace",
     platforms: [.macOS(.v14)],
     targets: [
-        .target(name: "RecorderCore", path: "dogsc-source/Sources/RecorderCore"),
+        .target(name: "RecorderCore", path: "Sources/RecorderCore"),
         .target(name: "AudioWriterBridge", path: "Sources/AudioWriterBridge"),
-        .target(name: "RecorderKit", dependencies: ["RecorderCore", "AudioWriterBridge"], path: ".build/IntegratedRecorder"),
+        .target(name: "RecorderKit", dependencies: ["RecorderCore", "AudioWriterBridge"], path: "Sources/RecorderKit"),
         .executableTarget(
             name: "SuperWorkspace",
             dependencies: ["RecorderKit"],

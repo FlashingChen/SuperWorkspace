@@ -22,7 +22,6 @@ if [[ -z "${DEVELOPER_DIR:-}" && -d /Applications/Xcode.app/Contents/Developer ]
   export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 fi
 
-python3 scripts/prepare-recorder.py
 python3 scripts/prepare-pi.py
 python3 scripts/prepare-media.py
 swift build -c "$config" --product SuperWorkspace
@@ -49,13 +48,12 @@ cp Integration/PiRuntime/run.mjs "$app/Contents/Resources/PiRuntime/run.mjs"
 cp Integration/PiRuntime/agent.mjs "$app/Contents/Resources/PiRuntime/agent.mjs"
 ditto .build/MediaRuntime "$app/Contents/Resources/MediaRuntime"
 ditto Integration/RemotionRuntime "$app/Contents/Resources/RemotionRuntime"
-for resource in Fonts Onboarding en.lproj zh-Hans.lproj; do
-  ditto "dogsc-source/Resources/$resource" "$app/Contents/Resources/$resource"
+for resource in en.lproj zh-Hans.lproj; do
+  ditto "Resources/$resource" "$app/Contents/Resources/$resource"
 done
-cat Resources/en.lproj/Recorder.strings >> "$app/Contents/Resources/en.lproj/Localizable.strings"
 # Host privacy descriptions and application identity take precedence.
 rm -f "$app/Contents/Resources/"*.lproj/InfoPlist.strings
-cp dogsc-source/LICENSE "$app/Contents/Resources/Recorder-LICENSE"
+cp Resources/Recorder-LICENSE "$app/Contents/Resources/Recorder-LICENSE"
 cp LICENSE "$app/Contents/Resources/SuperWorkspace-LICENSE"
 cp THIRD_PARTY_NOTICES.md "$app/Contents/Resources/THIRD_PARTY_NOTICES.md"
 cp Resources/SuperWorkspace.entitlements "$app/Contents/Resources/" 2>/dev/null || true
