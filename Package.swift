@@ -15,7 +15,7 @@ let package = Package(
             path: "Sources/SuperWorkspace",
             resources: [.copy("AgentSkills")]
         ),
-        .testTarget(name: "SuperWorkspaceTests", dependencies: ["SuperWorkspace", "StudioTheme", "RecorderKit", "AudioWriterBridge"], path: "Tests/SuperWorkspaceTests"),
+        .testTarget(name: "SuperWorkspaceTests", dependencies: ["SuperWorkspace", "StudioTheme", "RecorderCore", "RecorderKit", "AudioWriterBridge"], path: "Tests/SuperWorkspaceTests"),
     ],
     swiftLanguageModes: [.v6]
 )

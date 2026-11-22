@@ -165,6 +165,7 @@ struct EditorView: View {
     @Environment(\.undoManager) private var undoManager
     @State private var showsExportSheet = false
     @State private var exportScope: EditorExportScope = .fullProject
+    @State private var isCuttingSilence = false
     /// A short "Undo: Adjust Zoom" chip, so ⌘Z is never a silent jump.
     @State private var undoToast: EditorUndoToast?
     @State private var spaceKeyMonitor: Any?
@@ -716,6 +717,13 @@ struct EditorView: View {
                 .help("添加马赛克或区域柔化/突出")
                 .accessibilityLabel("添加马赛克或区域柔化/突出")
                 .disabled(mediaSession.outputDuration <= 0)
+                Button { runAutoSilenceCut() } label: {
+                    EditorToolbarIconSurface(systemName: "waveform.slash")
+                }
+                .buttonStyle(EditorToolbarPressButtonStyle())
+                .help("自动检测静音停顿并一键剪气口（⌘Z 可撤销）")
+                .accessibilityLabel("自动剪气口")
+                .disabled(isCuttingSilence || mediaSession.outputDuration <= 0 || mediaSession.prepared == nil)
                 EditorActionMenu(title: "预览选项", items: [
                     .action(EditorPreviewResolutionMode.full.label, detail: EditorPreviewResolutionMode.full.detail,
                             isOn: previewResolutionMode == .full) { previewResolutionMode = .full },
@@ -894,6 +902,43 @@ struct EditorView: View {
             _ = hostActions.renameProject(to: trimmed)
         } catch {
             hostActions.reportError(error.localizedDescription)
+        }
+    }
+
+    private func runAutoSilenceCut() {
+        guard !isCuttingSilence, let prepared = mediaSession.prepared else { return }
+        guard let audioURL = prepared.request.microphone?.url ?? prepared.request.source?.url else {
+            hostActions.reportError(appLocalized("当前录制没有可分析的音轨。"))
+            return
+        }
+        let fullDuration = prepared.inventories.source.duration
+        guard fullDuration > 0 else { return }
+        let timeline = editorStore.project.timeline
+        isCuttingSilence = true
+        Task {
+            defer { isCuttingSilence = false }
+            do {
+                let silentRanges = try await SilenceDetector.analyze(
+                    audioURL: audioURL,
+                    totalDuration: fullDuration
+                )
+                guard let plan = SilenceCutPlanner.plan(
+                    removing: silentRanges,
+                    from: timeline,
+                    fullSourceDuration: fullDuration
+                ) else {
+                    hostActions.reportError(appLocalized("未检测到可剪除的明显静音停顿。"))
+                    return
+                }
+                try editorStore.applySilenceCuts(retainedSegments: plan.retainedSegments)
+                let saved = String(format: "%.1f", plan.removedDuration)
+                presentUndoToast(
+                    redo: false,
+                    actionName: appLocalized("已剪除 \(plan.removedRanges.count) 处静音（共 \(saved) 秒）")
+                )
+            } catch {
+                hostActions.reportError(error.localizedDescription)
+            }
         }
     }
 

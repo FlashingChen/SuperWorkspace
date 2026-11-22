@@ -53,7 +53,7 @@ cd SuperWorkspace
 ./install-app.sh
 ```
 
-首次构建会获取固定版本的 DogSC 源码，适配为同进程录制库，再准备 Pi、FFmpeg、whisper.cpp 与语音模型，最后编译、签名并启动应用。依赖目录留在本地，不纳入本仓库。
+首次构建会准备 Pi、FFmpeg、whisper.cpp 与语音模型，最后编译、签名并启动应用。运行时依赖目录留在本地，不纳入本仓库。
 
 ```bash
 ./build-app.sh release                 # 只构建 .app
@@ -129,21 +129,22 @@ AI 连接同时服务字幕校正与复核、素材描述、AI 剪辑与 Remotio
 ## 开发
 
 ```bash
-python3 scripts/prepare-recorder.py
 swift test
 python3 scripts/audit-public.py
 ```
 
-`prepare-recorder.py` 自动获取并核验固定依赖版本，再生成忽略目录内的 `RecorderKit`。已有依赖版本不符或存在本地修改时会停止，不自动替换。发布前运行公开内容检查，并人工检查全部待发布文件与可达历史；自动扫描不能代替内容审阅。
+发布前运行公开内容检查，并人工检查全部待发布文件与可达历史；自动扫描不能代替内容审阅。
 
 | 目录 | 内容 |
 | --- | --- |
 | `Sources/SuperWorkspace` | 原生界面、项目状态、字幕、AI 任务、拼装与导出 |
+| `Sources/StudioTheme` | 共享 Graphite / Soft Silver 色板权威定义 |
+| `Sources/RecorderCore` / `Sources/RecorderKit` | 同进程录制与单段粗剪引擎（自动缩放、3D 透视、壁纸、摄像头画中画、马赛克、自动剪气口） |
 | `Sources/AudioWriterBridge` | 录音写入桥接 |
-| `Integration` | 录制组件宿主适配、Pi 运行时与 Remotion 依赖清单 |
-| `Resources` | 应用元数据与权限声明 |
-| `scripts` | 依赖获取与适配、图标生成、签名、打包与公开内容检查 |
-| `Tests` | 录制集成、任务状态、字幕编辑与重建校验、素材库、AI 规划与视频合成测试 |
+| `Integration` | Pi 运行时与 Remotion 依赖清单 |
+| `Resources` | 应用元数据、多语言字符串、权限声明与第三方许可 |
+| `scripts` | 运行时依赖准备、图标生成、签名、打包与公开内容检查 |
+| `Tests` | 录制集成、静音剪气口、任务状态、字幕编辑与重建校验、素材库、AI 规划与视频合成测试 |
 
 构建脚本把 Pi、Node.js、FFmpeg、whisper.cpp、语音模型与 Remotion 依赖清单放入应用包；测试包含无界面端到端验收路径。应用图标与侧栏标识共用 `WorkspaceBrand` 矢量源，打包时生成多尺寸 ICNS。
 
@@ -151,4 +152,4 @@ python3 scripts/audit-public.py
 
 ## 许可证与致谢
 
-本仓库代码采用 [MIT License](LICENSE)。录制与粗剪基于 [DogSC](https://github.com/laogou717/dogsc)，其源码以固定版本在构建时获取；打包时保留原始 MIT 许可证与字体许可。完整依赖说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+本仓库代码采用 [MIT License](LICENSE)。同进程录制与单段粗剪引擎基于 MIT 许可的 [DogSC](https://github.com/laogou717/dogsc) 核心收编并精简，保留原始 MIT 许可证于 [Resources/Recorder-LICENSE](Resources/Recorder-LICENSE)。完整依赖说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

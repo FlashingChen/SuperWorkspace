@@ -1,6 +1,23 @@
 import AppKit
 import Combine
+import ScreenCaptureKit
 import SwiftUI
+
+public struct RecordableWindowInfo: Identifiable, Equatable, Sendable {
+    public let id: UInt32
+    public let title: String
+    public let applicationName: String
+    public let width: Int
+    public let height: Int
+
+    public init(id: UInt32, title: String, applicationName: String, width: Int, height: Int) {
+        self.id = id
+        self.title = title
+        self.applicationName = applicationName
+        self.width = width
+        self.height = height
+    }
+}
 
 @MainActor
 public final class WorkspaceRecorder {
@@ -70,6 +87,24 @@ public final class WorkspaceRecorder {
 
     public func bringToFront() {
         WindowCoordinator.bringCurrentWindowFront()
+    }
+
+    /// Headless window enumeration shared by GUI and future CLI / Agent automation.
+    public func listRecordableWindows() async throws -> [RecordableWindowInfo] {
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        return content.windows.compactMap { window in
+            guard window.isOnScreen, window.frame.width >= 80, window.frame.height >= 80 else { return nil }
+            let appName = window.owningApplication?.applicationName ?? ""
+            let title = window.title ?? ""
+            guard !appName.isEmpty || !title.isEmpty else { return nil }
+            return RecordableWindowInfo(
+                id: window.windowID,
+                title: title,
+                applicationName: appName,
+                width: Int(window.frame.width),
+                height: Int(window.frame.height)
+            )
+        }
     }
 
     func requestWorkspaceReturn() {

@@ -1288,6 +1288,15 @@ final class EditorStore: ObservableObject {
         try perform(command, actionName: actionName)
     }
 
+    func applySilenceCuts(
+        retainedSegments: [RecordingSegment],
+        actionName: String = "自动剪气口"
+    ) throws {
+        var nextTimeline = project.timeline
+        nextTimeline.sourceSequence = .edited(retainedSegments)
+        try replaceTimeline(with: nextTimeline, actionName: actionName)
+    }
+
     func replaceTimeline(
         with timeline: ProjectTimeline,
         actionName: String? = nil
