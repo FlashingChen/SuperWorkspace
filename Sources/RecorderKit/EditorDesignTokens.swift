@@ -1,65 +1,51 @@
 import AppKit
+import StudioTheme
 import SwiftUI
 
-// MARK: - Design Tokens (Soft Silver / Graphite)
+// MARK: - Design Tokens (Soft Silver / Graphite — backed by StudioTokens)
 
 public enum EditorTheme {
     // The media remains colour-accurate while workspace chrome follows the
     // selected Aqua appearance. Dynamic NSColor providers also update panels
     // already on screen when the user changes appearance in Settings.
-    public static let backgroundDeep = adaptive(
-        light: NSColor(calibratedRed: 0.925, green: 0.929, blue: 0.937, alpha: 1),
-        dark: NSColor(calibratedRed: 0.028, green: 0.029, blue: 0.033, alpha: 1)
+    public static let backgroundDeep = StudioTokens.adaptive(
+        light: StudioTokens.Light.stageNS,
+        dark: StudioTokens.Dark.stageNS
     )
-    public static let panelSurface = adaptive(
-        light: NSColor(calibratedRed: 0.992, green: 0.992, blue: 0.996, alpha: 1),
-        dark: NSColor(calibratedRed: 0.063, green: 0.065, blue: 0.072, alpha: 1)
+    public static let panelSurface = StudioTokens.adaptive(
+        light: StudioTokens.Light.islandNS,
+        dark: StudioTokens.Dark.islandNS
     )
     public static let sleepingMonitor = adaptive(
         light: NSColor(calibratedWhite: 0.79, alpha: 1),
         dark: NSColor(calibratedWhite: 0.24, alpha: 1)
     )
-    public static let panelRaised = adaptive(
-        light: NSColor(calibratedRed: 0.955, green: 0.957, blue: 0.963, alpha: 1),
-        dark: NSColor(calibratedRed: 0.098, green: 0.1, blue: 0.11, alpha: 1)
+    public static let panelRaised = StudioTokens.adaptive(
+        light: StudioTokens.Light.panelRaisedNS,
+        dark: StudioTokens.Dark.panelRaisedNS
     )
     /// The island: every floating tool surface shares the recorder's base.
-    public static let cardElevated = adaptive(
-        light: NSColor(calibratedRed: 0.992, green: 0.992, blue: 0.996, alpha: 1),
-        dark: NSColor(calibratedRed: 0.063, green: 0.065, blue: 0.072, alpha: 1)
-    )
+    public static let cardElevated = panelSurface
     /// Islands are lit from above: a touch brighter at the top edge and a
     /// touch deeper toward the workspace, so a flat slab reads as material.
-    static let cardTop = adaptive(
-        light: NSColor(calibratedRed: 0.992, green: 0.992, blue: 0.996, alpha: 1),
-        dark: NSColor(calibratedRed: 0.063, green: 0.065, blue: 0.072, alpha: 1)
-    )
-    static let cardBottom = adaptive(
-        light: NSColor(calibratedRed: 0.992, green: 0.992, blue: 0.996, alpha: 1),
-        dark: NSColor(calibratedRed: 0.063, green: 0.065, blue: 0.072, alpha: 1)
-    )
+    static let cardTop = panelSurface
+    static let cardBottom = panelSurface
     /// Docked chrome (title bar, track header column) sits a half step
     /// below the panels it frames.
-    static let chromeBar = adaptive(
-        light: NSColor(calibratedRed: 0.992, green: 0.992, blue: 0.996, alpha: 1),
-        dark: NSColor(calibratedRed: 0.063, green: 0.065, blue: 0.072, alpha: 1)
-    )
+    static let chromeBar = panelSurface
     /// The stage the canvas stands on.
-    static let stage = adaptive(
-        light: NSColor(calibratedRed: 0.925, green: 0.929, blue: 0.937, alpha: 1),
-        dark: NSColor(calibratedRed: 0.028, green: 0.029, blue: 0.033, alpha: 1)
-    )
+    static let stage = backgroundDeep
     static var cardGradient: LinearGradient {
         LinearGradient(colors: [cardTop, cardBottom], startPoint: .top, endPoint: .bottom)
     }
     /// The soft pool of light the monitor stands in.
-    static let stageLight = adaptive(
-        light: NSColor(calibratedWhite: 1.0, alpha: 0.72),
-        dark: NSColor(calibratedRed: 0.55, green: 0.58, blue: 0.68, alpha: 0.075)
+    static let stageLight = StudioTokens.adaptive(
+        light: StudioTokens.Light.stageLightNS,
+        dark: StudioTokens.Dark.stageLightNS
     )
-    static let stageVignette = adaptive(
-        light: NSColor(calibratedRed: 0.10, green: 0.12, blue: 0.18, alpha: 0.06),
-        dark: NSColor.black.withAlphaComponent(0.42)
+    static let stageVignette = StudioTokens.adaptive(
+        light: StudioTokens.Light.shadowContactNS,
+        dark: StudioTokens.Dark.shadowSoftNS
     )
     /// A soft halo for the current choice and the solid primary action.
     static let accentGlow = adaptive(
@@ -67,9 +53,9 @@ public enum EditorTheme {
         dark: NSColor(calibratedWhite: 1.0, alpha: 0.16)
     )
     /// Gentle top-to-bottom shading for the solid platinum fill.
-    static let platinumAccentDeep = adaptive(
-        light: NSColor(calibratedWhite: 0.12, alpha: 1),
-        dark: NSColor(calibratedWhite: 0.97, alpha: 1)
+    static let platinumAccentDeep = StudioTokens.adaptive(
+        light: StudioTokens.Light.accentNS,
+        dark: StudioTokens.Dark.accentNS
     )
     static var platinumGradient: LinearGradient {
         LinearGradient(colors: [platinumAccent, platinumAccentDeep], startPoint: .top, endPoint: .bottom)
@@ -91,33 +77,42 @@ public enum EditorTheme {
     public static let recorderSurface = panelSurface
     public static let mediaAccent = Color(red: 0.949, green: 0.941, blue: 0.918)
 
-    public static let platinumAccent = adaptive(
-        light: NSColor(calibratedWhite: 0.12, alpha: 1),
-        dark: NSColor(calibratedWhite: 0.97, alpha: 1)
+    public static let platinumAccent = StudioTokens.adaptive(
+        light: StudioTokens.Light.accentNS,
+        dark: StudioTokens.Dark.accentNS
     )
-    public static let platinumMuted = adaptive(
-        light: NSColor(calibratedWhite: 0.40, alpha: 1),
-        dark: NSColor(calibratedWhite: 0.56, alpha: 1)
+    public static let platinumMuted = StudioTokens.adaptive(
+        light: StudioTokens.Light.textSecondaryNS,
+        dark: StudioTokens.Dark.textSecondaryNS
     )
     /// Foreground paired with solid accent fills in both workspace themes.
-    public static let onAccent = adaptive(
-        light: NSColor(calibratedWhite: 1.0, alpha: 1),
-        dark: NSColor(calibratedWhite: 0.08, alpha: 1)
+    public static let onAccent = StudioTokens.adaptive(
+        light: StudioTokens.Light.onAccentNS,
+        dark: StudioTokens.Dark.onAccentNS
     )
-    public static let controlWell = adaptive(
-        light: NSColor(calibratedWhite: 0.0, alpha: 0.05),
-        dark: NSColor(calibratedWhite: 1.0, alpha: 0.06)
+    public static let controlWell = StudioTokens.adaptive(
+        light: StudioTokens.Light.controlWellNS,
+        dark: StudioTokens.Dark.controlWellNS
     )
-    public static let amberAccent = Color(red: 0.95, green: 0.68, blue: 0.28)
+    public static let amberAccent = StudioTokens.adaptive(
+        light: StudioTokens.Light.warningNS,
+        dark: StudioTokens.Dark.warningNS
+    )
     /// Warm botanical green aligned with the editor's lime family.
-    public static let success = Color(red: 0.52, green: 0.82, blue: 0.26)
-    public static let recording = Color(red: 1.0, green: 0.27, blue: 0.23)
+    public static let success = StudioTokens.adaptive(
+        light: StudioTokens.Light.successNS,
+        dark: StudioTokens.Dark.successNS
+    )
+    public static let recording = StudioTokens.adaptive(
+        light: StudioTokens.Light.brandNS,
+        dark: StudioTokens.Dark.brandNS
+    )
 
     public static let selectionTint = platinumAccent
     /// Current choice in a navigation group: the recorder's neutral 14% lift.
-    public static let railSelectionWash = adaptive(
-        light: NSColor(calibratedWhite: 0.0, alpha: 0.075),
-        dark: NSColor(calibratedWhite: 1.0, alpha: 0.14)
+    public static let railSelectionWash = StudioTokens.adaptive(
+        light: StudioTokens.Light.selectionWashNS,
+        dark: StudioTokens.Dark.selectionWashNS
     )
     public static let selectionWash = adaptive(
         light: NSColor(calibratedWhite: 0.0, alpha: 0.075),

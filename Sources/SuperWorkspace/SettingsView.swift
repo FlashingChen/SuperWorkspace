@@ -355,4 +355,17 @@ enum AppearanceResolver {
         default: nil
         }
     }
+
+    @MainActor
+    static func applyApplicationAppearance(for mode: String) {
+        let target: NSAppearance?
+        switch mode {
+        case "light": target = NSAppearance(named: .aqua)
+        case "dark": target = NSAppearance(named: .darkAqua)
+        default: target = nil
+        }
+        if NSApp?.appearance != target {
+            NSApp?.appearance = target
+        }
+    }
 }

@@ -20,6 +20,8 @@ struct SuperWorkspaceApp: App {
             }
             .frame(minWidth: 1100, minHeight: 700)
             .preferredColorScheme(AppearanceResolver.scheme(for: appearanceMode))
+            .onAppear { AppearanceResolver.applyApplicationAppearance(for: appearanceMode) }
+            .onChange(of: appearanceMode) { _, mode in AppearanceResolver.applyApplicationAppearance(for: mode) }
         }
         .defaultSize(width: 1280, height: 820)
         .defaultPosition(.center)

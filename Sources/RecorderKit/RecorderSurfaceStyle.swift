@@ -1,56 +1,44 @@
 import AppKit
 import QuartzCore
+import StudioTheme
 import SwiftUI
 
-/// Shared opaque surfaces for the recorder and settings. The same shapes and
-/// interactions use paper/graphite in Aqua and ink/silver in Dark Aqua.
-/// Native colours stay dynamic; layers resolve them in their view's appearance.
+/// Shared opaque surfaces for the recorder, backed by StudioTokens so the
+/// floating recording island matches the host Graphite / Soft Silver palette.
 enum RecorderStyle {
     static func adaptive(_ light: NSColor, _ dark: NSColor) -> NSColor {
-        NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
-        }
+        StudioTokens.adaptiveNS(light: light, dark: dark)
     }
     static let chromeNSColor = adaptive(.black, .white)
-    static let inkNSColor = adaptive(NSColor(white: 0.10, alpha: 1), NSColor(white: 1, alpha: 0.96))
-    static let baseNSColor = adaptive(
-        NSColor(calibratedRed: 0.992, green: 0.992, blue: 0.996, alpha: 1),
-        NSColor(calibratedRed: 0.063, green: 0.065, blue: 0.072, alpha: 1))
-    static let canvasNSColor = adaptive(
-        NSColor(calibratedRed: 0.925, green: 0.929, blue: 0.937, alpha: 1),
-        NSColor(calibratedRed: 0.028, green: 0.029, blue: 0.033, alpha: 1))
+    static let inkNSColor = adaptive(StudioTokens.Light.textPrimaryNS, StudioTokens.Dark.textPrimaryNS)
+    static let baseNSColor = adaptive(StudioTokens.Light.islandNS, StudioTokens.Dark.islandNS)
+    static let canvasNSColor = adaptive(StudioTokens.Light.stageNS, StudioTokens.Dark.stageNS)
     static let ink = Color(nsColor: inkNSColor)
     static let chrome = Color(nsColor: chromeNSColor)
-    static let muted = Color(nsColor: adaptive(NSColor(white: 0.36, alpha: 1), NSColor(white: 1, alpha: 0.56)))
-    static let faint = Color(nsColor: adaptive(NSColor(white: 0.50, alpha: 1), NSColor(white: 1, alpha: 0.32)))
+    static let muted = Color(nsColor: adaptive(StudioTokens.Light.textSecondaryNS, StudioTokens.Dark.textSecondaryNS))
+    static let faint = Color(nsColor: adaptive(StudioTokens.Light.textMutedNS, StudioTokens.Dark.textMutedNS))
     /// Live indicators retain green; text/icons use a darker green on paper.
-    static let mint = Color(red: 0.30, green: 0.85, blue: 0.55)
-    static let positiveInk = Color(nsColor: adaptive(
-        NSColor(calibratedRed: 0.10, green: 0.46, blue: 0.28, alpha: 1),
-        NSColor(calibratedRed: 0.30, green: 0.85, blue: 0.55, alpha: 1)))
+    static let mint = Color(nsColor: StudioTokens.Dark.successNS)
+    static let positiveInk = Color(nsColor: adaptive(StudioTokens.Light.successNS, StudioTokens.Dark.successNS))
     static let mintWash = mint.opacity(0.18)
     static let silver = chrome.opacity(0.06)
-    static let well = chrome.opacity(0.08)
-    static let selectionNSColor = adaptive(.black.withAlphaComponent(0.075), .white.withAlphaComponent(0.14))
+    static let well = Color(nsColor: adaptive(StudioTokens.Light.controlWellNS, StudioTokens.Dark.controlWellNS))
+    static let selectionNSColor = adaptive(StudioTokens.Light.selectionWashNS, StudioTokens.Dark.selectionWashNS)
     static let selection = Color(nsColor: selectionNSColor)
-    static let line = chrome.opacity(0.09)
-    static let lift = Color(nsColor: adaptive(.black.withAlphaComponent(0.14), .black.withAlphaComponent(0.4)))
-    static let recording = Color(red: 1.0, green: 0.27, blue: 0.23)
-    static let destructiveInk = Color(nsColor: adaptive(
-        NSColor(calibratedRed: 0.76, green: 0.16, blue: 0.13, alpha: 1),
-        NSColor(calibratedRed: 1.0, green: 0.27, blue: 0.23, alpha: 1)))
-    static let amberInk = Color(nsColor: adaptive(
-        NSColor(calibratedRed: 0.55, green: 0.34, blue: 0.08, alpha: 1),
-        NSColor(calibratedRed: 0.95, green: 0.68, blue: 0.28, alpha: 1)))
+    static let line = Color(nsColor: adaptive(StudioTokens.Light.islandOutlineNS, StudioTokens.Dark.islandOutlineNS))
+    static let lift = Color(nsColor: adaptive(StudioTokens.Light.shadowSoftNS, StudioTokens.Dark.shadowSoftNS))
+    static let recording = Color(nsColor: adaptive(StudioTokens.Light.brandNS, StudioTokens.Dark.brandNS))
+    static let destructiveInk = Color(nsColor: adaptive(StudioTokens.Light.dangerNS, StudioTokens.Dark.dangerNS))
+    static let amberInk = Color(nsColor: adaptive(StudioTokens.Light.warningNS, StudioTokens.Dark.warningNS))
     static let base = Color(nsColor: baseNSColor)
     // Small controls sit over arbitrary camera/recording pixels. Their own
     // contrasting backdrop adapts; the media itself is never recoloured.
     static let mediaOverlay = Color(nsColor: adaptive(NSColor(white: 0.99, alpha: 0.94), .black.withAlphaComponent(0.55)))
     static let mediaInk = Color(nsColor: adaptive(NSColor(white: 0.1, alpha: 1), .white))
-    static let primaryFill = Color(nsColor: adaptive(NSColor(white: 0.12, alpha: 1), .white))
-    static let onPrimary = Color(nsColor: adaptive(.white, NSColor(white: 0.08, alpha: 1)))
-    static let edgeTop = Color(nsColor: adaptive(.white, .white.withAlphaComponent(0.17)))
-    static let edgeBottom = Color(nsColor: adaptive(.black.withAlphaComponent(0.07), .white.withAlphaComponent(0.04)))
+    static let primaryFill = Color(nsColor: adaptive(StudioTokens.Light.accentNS, StudioTokens.Dark.accentNS))
+    static let onPrimary = Color(nsColor: adaptive(StudioTokens.Light.onAccentNS, StudioTokens.Dark.onAccentNS))
+    static let edgeTop = Color(nsColor: adaptive(StudioTokens.Light.topHighlightNS, StudioTokens.Dark.topHighlightNS))
+    static let edgeBottom = Color(nsColor: adaptive(StudioTokens.Light.hairlineNS, StudioTokens.Dark.hairlineNS))
 }
 
 /// Shared timing. Shapes travel on a soft spring; content follows a beat later

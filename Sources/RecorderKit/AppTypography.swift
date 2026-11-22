@@ -1,42 +1,14 @@
 import AppKit
-import CoreText
 import SwiftUI
 
-/// The bundled, unmodified font is registered once, only for this process.
-/// Missing resources fall back to the system face. Timeline timecodes retain
-/// system monospaced metrics; this never changes text authored into a movie.
+/// Uses the macOS system typography consistently with the host workspace.
 enum AppTypography {
-    private static let registered: Bool = {
-        guard let root = Bundle.main.resourceURL?.appendingPathComponent("Fonts") else { return false }
-        var success = true
-        for weight in ["55-Regular", "65-Medium", "75-SemiBold"] {
-            let url = root.appendingPathComponent("AlibabaPuHuiTi-3-\(weight).otf")
-            guard FileManager.default.fileExists(atPath: url.path) else { success = false; continue }
-            var error: Unmanaged<CFError>?
-            CTFontManagerRegisterFontsForURL(url as CFURL, .process, &error)
-            if NSFont(name: "AlibabaPuHuiTi_3_\(weight.replacingOccurrences(of: "-", with: "_"))", size: 13) == nil { success = false }
-        }
-        return success
-    }()
-
     static func font(size: CGFloat, weight: Font.Weight, design: Font.Design) -> Font {
-        guard design != .monospaced, registered else {
-            return .system(size: size, weight: weight, design: design)
-        }
-        let face: String
-        switch weight {
-        case .semibold, .bold, .heavy, .black: face = "75_SemiBold"
-        case .medium: face = "65_Medium"
-        default: face = "55_Regular"
-        }
-        return .custom("AlibabaPuHuiTi_3_\(face)", fixedSize: size)
+        .system(size: size, weight: weight, design: design)
     }
 
     static func regularTextWidth(_ text: String, size: CGFloat) -> CGFloat {
-        let systemFont = NSFont.systemFont(ofSize: size)
-        let font = registered
-            ? NSFont(name: "AlibabaPuHuiTi_3_55_Regular", size: size) ?? systemFont
-            : systemFont
+        let font = NSFont.systemFont(ofSize: size)
         return (text as NSString).size(withAttributes: [.font: font]).width
     }
 }
