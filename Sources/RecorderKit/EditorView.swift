@@ -165,23 +165,8 @@ struct EditorView: View {
     @Environment(\.undoManager) private var undoManager
     @State private var showsExportSheet = false
     @State private var exportScope: EditorExportScope = .fullProject
-    @State private var showsShortcutCheatsheet = false
     /// A short "Undo: Adjust Zoom" chip, so ⌘Z is never a silent jump.
     @State private var undoToast: EditorUndoToast?
-    @State var showsScenePresetPopover = false
-    @State var savedStylePresets: [EditorStylePreset] = []
-    @State var isNamingStylePreset = false
-    @State var stylePresetName = ""
-    @State var activeStylePresetID: UUID?
-    @State var activeStyleSnapshot: EditorStylePreset?
-    @State var activeStylePresetBackgroundSources: [BackgroundSource] = []
-    @State var updatingStylePresetID: UUID?
-    @State var defaultStylePresetID: UUID?
-    @State var stylePresetTask: Task<Void, Never>?
-    @State var isSavingStylePreset = false
-    @State var stylePresetError: String?
-    @State var stylePresetNotice: String?
-    @State var pendingStylePreset: EditorStylePreset?
     @State private var spaceKeyMonitor: Any?
     @State private var titleEditingMouseMonitor: Any?
     @State private var titleInputRegion = EditorTextInputRegion()
@@ -273,7 +258,7 @@ struct EditorView: View {
         .tint(editorAccent)
         .font(.appUI(size: 13))
         .focusEffectDisabled()
-        .firstUseTour(.editor, enabled: !showsExportSheet && !isCropping && !isNamingStylePreset && !showsShortcutCheatsheet)
+        .firstUseTour(.editor, enabled: !showsExportSheet && !isCropping)
         .environment(\.editorIsActive, isEditorActive)
         .onDisappear { workspaceReflowTask?.cancel() }
         .onChange(of: editorStore.selection) { _, selection in
@@ -334,59 +319,13 @@ struct EditorView: View {
                 playbackController: playbackController
             )
         }
-        .sheet(isPresented: $showsShortcutCheatsheet) {
-            EditorShortcutCheatsheet()
-        }
-        .sheet(isPresented: $isNamingStylePreset) {
-            EditorScenePresetSheet(
-                name: $stylePresetName,
-                project: editorStore.project,
-                sourceSize: mediaSession.sourceDisplaySize,
-                isUpdating: updatingStylePresetID != nil,
-                isSaving: isSavingStylePreset,
-                error: stylePresetError,
-                nameConflict: stylePresetNameConflict,
-                onCancel: { isNamingStylePreset = false },
-                onSave: saveCurrentStylePreset
-            )
-        }
-        .sheet(item: $pendingStylePreset) { preset in
-            EditorScenePresetPreview(
-                preset: preset,
-                mediaSession: mediaSession,
-                outputTime: playbackController.outputTime,
-                sourceSize: mediaSession.sourceDisplaySize,
-                onCancel: { pendingStylePreset = nil },
-                onApply: {
-                    pendingStylePreset = nil
-                    applyStylePreset(preset)
-                }
-            )
-        }
-        .appDialog(isPresented: Binding(
-            get: { stylePresetNotice != nil },
-            set: { if !$0 { stylePresetNotice = nil } }
-        )) {
-            AppDialog(title: "场景预设", message: stylePresetNotice ?? "", symbol: "rectangle.3.group",
-                      actions: [.init(id: "acknowledge", title: "知道了", role: .primary)])
-        }
         .onReceive(EditorMenuBridge.shared.exportRequest) { _ in
             // 菜单栏 ⌘E 与工具栏导出按钮同一条路径。
             presentExport(scope: .fullProject)
         }
-        .onReceive(EditorMenuBridge.shared.shortcutCheatsheetRequest) { _ in
-            guard !isCropping, !showsShortcutCheatsheet else { return }
-            showsShortcutCheatsheet = true
-        }
         .onReceive(EditorMenuBridge.shared.quitRequest) { _ in
             let needsPanelDismissal = showsExportSheet
-                || showsShortcutCheatsheet
-                || isNamingStylePreset
-                || pendingStylePreset != nil
             showsExportSheet = false
-            showsShortcutCheatsheet = false
-            isNamingStylePreset = false
-            pendingStylePreset = nil
             if needsPanelDismissal {
                 // Let AppKit detach the SwiftUI sheet/alert before it asks the
                 // editor window to close. The following terminate call still
@@ -453,13 +392,6 @@ struct EditorView: View {
             if let message { hostActions.reportError(message) }
         }
         .onAppear {
-            savedStylePresets = EditorStylePresetStore.load()
-            defaultStylePresetID = EditorStylePresetStore.defaultPresetID
-            if let matching = savedStylePresets.first(where: { $0.matchesConfiguration(of: editorStore.project, zoomCreationScale: AppPreferences.rememberedZoomCreationScale) }) {
-                activeStylePresetID = matching.id
-                activeStyleSnapshot = matching
-                activeStylePresetBackgroundSources = matching.backgroundAsset == nil ? [] : [editorStore.project.canvas.backgroundSource]
-            }
             editorStore.attachUndoManager(undoManager)
             if editorStore.selection == nil {
                 editorStore.selection = .canvas
@@ -482,7 +414,6 @@ struct EditorView: View {
             EditorMenuBridge.shared.attachEditor(undoManager: manager)
         }
         .onDisappear {
-            stylePresetTask?.cancel()
             resolveExternalAction(.windowClosing)
             playbackController.invalidate()
             mediaSession.invalidate()
@@ -752,25 +683,6 @@ struct EditorView: View {
                 .disabled(isCropping || undoManager?.canRedo != true)
                 .help("重做（⌘⇧Z）").accessibilityLabel("重做")
                 Spacer(minLength: 16)
-                stylePresetControl(compact: layout.isCompact)
-                    .disabled(isCropping || isSavingStylePreset)
-                    .help("保存或复用完整场景配置")
-                EditorAppearanceToggleButton()
-                Button { AppSettingsWindowController.shared.show() } label: {
-                    EditorToolbarIconSurface(systemName: "gearshape")
-                }
-                .buttonStyle(EditorToolbarPressButtonStyle())
-                .help("设置（⌘,）").accessibilityLabel("设置")
-                .accessibilityIdentifier("editor.app-settings")
-                Button { hostActions.deleteProject() } label: {
-                    EditorToolbarIconSurface(systemName: "trash")
-                }
-                .buttonStyle(EditorToolbarPressButtonStyle())
-                .disabled(isCropping || isEditingTitle)
-                .help("删除当前项目…")
-                .accessibilityLabel("删除当前项目")
-                .accessibilityIdentifier("editor.project.delete")
-                EditorToolbarDivider()
                 WorkspaceReturnButton().disabled(isCropping)
                 Button { presentExport(scope: .fullProject) } label: {
                     HStack(spacing: 6) {
@@ -797,11 +709,12 @@ struct EditorView: View {
         HStack(spacing: 2) {
             previewControls
             if !isCropping {
-                EditorActionMenu(title: "添加到画面", items: [
-                    .action("柔化或突出", systemImage: "viewfinder") { addMosaicAtPlayhead() },
-                    .action("导入贴图…", systemImage: "photo.badge.plus") { addStickerAtPlayhead() },
-                    .action("粘贴图片", systemImage: "doc.on.clipboard", isEnabled: canPasteOverlayImage) { addPastedSticker() }
-                ]) { EditorToolbarIconSurface(systemName: "plus") }
+                Button { addMosaicAtPlayhead() } label: {
+                    EditorToolbarIconSurface(systemName: "viewfinder")
+                }
+                .buttonStyle(EditorToolbarPressButtonStyle())
+                .help("添加马赛克或区域柔化/突出")
+                .accessibilityLabel("添加马赛克或区域柔化/突出")
                 .disabled(mediaSession.outputDuration <= 0)
                 EditorActionMenu(title: "预览选项", items: [
                     .action(EditorPreviewResolutionMode.full.label, detail: EditorPreviewResolutionMode.full.detail,

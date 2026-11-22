@@ -197,7 +197,6 @@ struct RecorderLevelWave: View {
 /// themselves; there are no captions.
 struct RecorderSavePopover: View {
     @ObservedObject var model: AppModel
-    @ObservedObject private var memo = RecorderMemoController.shared
     @State private var expandedQuality = false
     @Namespace private var codecSelection
     var body: some View {
@@ -271,23 +270,14 @@ struct RecorderSavePopover: View {
                     RecorderSaveToggleRow(title: "隐藏桌面文件", symbol: "menubar.dock.rectangle", isOn: Binding(get: { model.configuration.hidesDesktopFiles }, set: { model.setHidesDesktopFiles($0) }))
                     RecorderSaveToggleRow(title: "隐藏 Dock", symbol: "dock.rectangle", isOn: Binding(get: { model.configuration.hidesDock }, set: { model.setHidesDock($0) }))
                 }
-                rule
-                projectAction("打开项目…", symbol: "tray.full") { model.openProjectPicker() }
-                if !model.recentProjects.isEmpty {
-                    projectAction("继续上次项目", symbol: "clock.arrow.circlepath") { model.openMostRecentProject() }
-                }
-                if !model.recoverableProjects.isEmpty {
-                    projectAction("恢复中断录制", symbol: "arrow.counterclockwise") { model.recoverMostRecentProject() }
-                }
-                if !model.captureReadiness.hasScreenRecordingPermission {
-                    projectAction("打开录屏权限设置", symbol: "lock.shield") { model.openScreenRecordingSettings() }
-                }
-                RecorderSaveActionRow(title: memo.isVisible ? "收起备忘录" : "打开备忘录", symbol: "text.alignleft", showsChevron: false) {
-                    RecorderPopoverPresenter.shared.dismissAndPerform { WindowCoordinator.toggleRecorderMemo() }
-                }
-                rule
-                RecorderSaveActionRow(title: "退出DogSC", symbol: "power", showsChevron: false) {
-                    RecorderPopoverPresenter.shared.dismissAndPerform { NSApplication.shared.terminate(nil) }
+                if !model.recoverableProjects.isEmpty || !model.captureReadiness.hasScreenRecordingPermission {
+                    rule
+                    if !model.recoverableProjects.isEmpty {
+                        projectAction("恢复中断录制", symbol: "arrow.counterclockwise") { model.recoverMostRecentProject() }
+                    }
+                    if !model.captureReadiness.hasScreenRecordingPermission {
+                        projectAction("打开录屏权限设置", symbol: "lock.shield") { model.openScreenRecordingSettings() }
+                    }
                 }
                 if let warning = model.captureReadiness.frameRateWarningText {
                     Text(warning).font(.appUI(size: 11)).foregroundStyle(RecorderStyle.muted)

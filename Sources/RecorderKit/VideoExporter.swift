@@ -406,15 +406,7 @@ final class VideoExporter: ObservableObject {
                 stageHandler(.processing)
                 try await pipeline.run()
             case .audio:
-                let pipeline = try AudioOnlyExportPipeline(
-                    media: compositionBundle,
-                    outputURL: temporaryOutputURL,
-                    project: project,
-                    outputRange: request.outputRange,
-                    progressHandler: progressHandler
-                )
-                stageHandler(.processing)
-                try await pipeline.run()
+                throw VideoExporterError.exportFailed(appLocalized("当前不支持纯音频导出。"))
             }
         } catch {
             try? FileManager.default.removeItem(at: temporaryOutputURL)

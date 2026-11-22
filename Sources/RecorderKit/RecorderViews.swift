@@ -308,7 +308,6 @@ struct RecordingBar: View {
                 .help(appLocalized(model.recordingMarkerShortcutAvailable
                     ? "添加录制标记（⌃⌥M）；保存到项目，不会录入画面"
                     : "添加录制标记；全局快捷键不可用，请使用此按钮"))
-            RecorderMemoButton(size: 36)
             recordingActionButton(icon: model.isRecordingPaused ? "play.fill" : "pause.fill",
                 accessibilityLabel: model.isRecordingPaused ? "继续录制" : "暂停录制",
                 accessibilityIdentifier: RecorderAccessibilityID.recordingPauseResume,

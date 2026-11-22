@@ -254,11 +254,7 @@ enum WindowCoordinator {
     static func showFirstLaunchGuide() {
         guard FirstLaunchGuideAccess.shared.isAvailable,
               let permissionWindowController else { return }
-        // Settings is floating; otherwise it would cover the normal-level
-        // permission window as soon as the full-screen introduction disappears.
-        AppSettingsWindowController.shared.hideForFirstLaunchGuide()
         RecorderPopoverPresenter.shared.dismiss()
-        RecorderMemoController.shared.hide()
         recorderPanelController?.hide()
         permissionWindowController.presentManually()
     }
@@ -324,9 +320,6 @@ enum WindowCoordinator {
     }
 
     private static func apply(phase: AppPhase, model: AppModel) {
-        if model.showsRequiredPermissionGate || (phase != .setup && phase != .preparing && phase != .recording) {
-            RecorderMemoController.shared.hide()
-        }
         let guideAvailable = phase == .setup || phase == .editor
         if FirstLaunchGuideAccess.shared.isAvailable != guideAvailable {
             FirstLaunchGuideAccess.shared.isAvailable = guideAvailable
@@ -432,13 +425,12 @@ enum WindowCoordinator {
     }
 
     static func beginCaptureSourceSelection(source: CaptureSource) {
-        RecorderMemoController.shared.suspendForSelection()
         recorderPanelController?.setCaptureSelectionActive(true, source: source)
     }
 
     static func endCaptureSourceSelection(restoringRecorder: Bool = true) {
         // Selection cleanup also runs during permission onboarding. Never
-        // restore the recorder or memo before the permission page hands off.
+        // restore the recorder before the permission page hands off.
         let shouldRestoreRecorder = restoringRecorder
             && model?.phase == .setup
             && model?.showsRequiredPermissionGate == false
@@ -447,10 +439,6 @@ enum WindowCoordinator {
             false,
             restoringSetup: shouldRestoreRecorder
         )
-        guard shouldRestoreRecorder else { return }
-        if let owner = recorderPanelController?.window {
-            RecorderMemoController.shared.resumeAfterSelection(relativeTo: owner)
-        }
     }
 
     static func restoreCaptureSourceSelectionFocus() {
@@ -462,12 +450,6 @@ enum WindowCoordinator {
         guard let window = recorderPanelController?.window, window.isVisible else { return }
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(nil)
-    }
-
-    static func toggleRecorderMemo() {
-        guard let model, model.phase == .setup || model.phase == .recording,
-              let owner = recorderPanelController?.window else { return }
-        RecorderMemoController.shared.toggle(relativeTo: owner)
     }
 
     static func recorderDisplayID() -> UInt32? {
@@ -564,8 +546,6 @@ enum WindowCoordinator {
     }
 
     static func shutdown() {
-        AppSettingsWindowController.shared.hideForFirstLaunchGuide()
-        RecorderMemoController.shared.shutdown()
         presentationObservation = nil
         completionWindowController.close()
         editorWindowController.closeForPhaseChange()

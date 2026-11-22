@@ -149,9 +149,17 @@ struct EditorScrollEdgeFade: ViewModifier {
 
 /// The settings track: a recessed channel holding one raised thumb.
 enum EditorChoiceStyle {
-    static let track = SettingsTheme.track
-    static let thumb = SettingsTheme.thumb
-    static let thumbShadow = SettingsTheme.thumbShadow
+    static let track = Color(nsColor: .init(name: nil) {
+        $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor.white.withAlphaComponent(0.06)
+            : NSColor.black.withAlphaComponent(0.05)
+    })
+    static let thumb = Color(nsColor: .init(name: nil) {
+        $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0.16, green: 0.17, blue: 0.19, alpha: 1)
+            : NSColor.white
+    })
+    static let thumbShadow = Color.black.opacity(0.20)
     static let hover = RecorderStyle.chrome.opacity(EditorStateWash.hover)
 }
 

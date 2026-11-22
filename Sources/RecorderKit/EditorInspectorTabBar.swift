@@ -44,7 +44,7 @@ struct EditorInspectorTabBar: View {
                         .font(.appUI(size: 13, weight: .semibold))
                         .lineLimit(1)
                         .fixedSize()
-                        .transition(.settingsLabel)
+                        .transition(.opacity)
                 }
             }
             .modifier(AppChoiceContentFeedback())
@@ -62,7 +62,7 @@ struct EditorInspectorTabBar: View {
                         .fill(EditorTheme.platinumAccent)
                         .matchedGeometryEffect(id: "inspector.tab.thumb", in: indicator)
                 } else if hovered {
-                    Circle().fill(SettingsTheme.hover)
+                    Circle().fill(EditorChoiceStyle.hover)
                 }
             }
             .contentShape(Capsule(style: .continuous))
