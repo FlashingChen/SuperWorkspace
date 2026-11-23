@@ -251,6 +251,32 @@ final class AutomationServer: @unchecked Sendable {
                 try await HeadlessRecorder.shared.pasteText(text)
                 return .success(.object(["ok": .bool(true)]))
 
+            case "input_type":
+                guard let text = request.args["text"]?.stringValue else {
+                    return .failure("input_type 需要提供 text。")
+                }
+                let interval = request.args["interval"]?.numberValue ?? 0.12
+                try await HeadlessRecorder.shared.typeText(text, interval: interval)
+                return .success(.object(["ok": .bool(true)]))
+
+            case "input_drag":
+                guard let x0 = request.args["fromX"]?.numberValue,
+                      let y0 = request.args["fromY"]?.numberValue,
+                      let x1 = request.args["toX"]?.numberValue,
+                      let y1 = request.args["toY"]?.numberValue else {
+                    return .failure("input_drag 需要提供 fromX、fromY、toX、toY。")
+                }
+                let duration = request.args["duration"]?.numberValue ?? 0.45
+                try await HeadlessRecorder.shared.dragMouse(from: x0, y0: y0, to: x1, y1: y1, duration: duration)
+                return .success(.object(["ok": .bool(true)]))
+
+            case "screenshot":
+                guard let out = request.args["out"]?.stringValue, !out.isEmpty else {
+                    return .failure("screenshot 需要提供 out 路径。")
+                }
+                try await HeadlessRecorder.shared.captureScreenshot(to: URL(fileURLWithPath: out))
+                return .success(.object(["outputPath": .string(out)]))
+
             case "record_start":
                 if let projectName = request.args["projectName"]?.stringValue, !projectName.isEmpty {
                     if let existing = state.projects.first(where: { $0.name == projectName }) {

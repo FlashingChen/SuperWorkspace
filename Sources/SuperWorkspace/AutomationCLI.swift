@@ -72,9 +72,25 @@ enum AutomationCLI {
             case "paste":
                 if let text = flags["text"] { payload["text"] = .string(text) }
                 return AutomationRequest(command: "input_paste", args: payload)
+            case "type":
+                if let text = flags["text"] { payload["text"] = .string(text) }
+                if let interval = flags["interval"].flatMap(Double.init) { payload["interval"] = .number(interval) }
+                return AutomationRequest(command: "input_type", args: payload)
+            case "drag":
+                if let v = flags["from-x"].flatMap(Double.init) { payload["fromX"] = .number(v) }
+                if let v = flags["from-y"].flatMap(Double.init) { payload["fromY"] = .number(v) }
+                if let v = flags["to-x"].flatMap(Double.init) { payload["toX"] = .number(v) }
+                if let v = flags["to-y"].flatMap(Double.init) { payload["toY"] = .number(v) }
+                if let d = flags["duration"].flatMap(Double.init) { payload["duration"] = .number(d) }
+                return AutomationRequest(command: "input_drag", args: payload)
             default:
                 throw CLIError.usage
             }
+        case "screenshot":
+            let flags = parseFlags(rest)
+            var payload: [String: JSONValue] = [:]
+            if let out = flags["out"] { payload["out"] = .string(out) }
+            return AutomationRequest(command: "screenshot", args: payload)
         case "export":
             let flags = parseFlags(rest)
             var payload: [String: JSONValue] = [:]

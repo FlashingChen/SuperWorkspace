@@ -275,6 +275,93 @@ public final class HeadlessRecorder {
         try await pressKey(keyCode: 9, command: true) // Cmd+V
     }
 
+    public func typeText(_ text: String, interval: Double = 0.12) async throws {
+        guard AXIsProcessTrusted() else {
+            throw HeadlessRecorderError.missingAccessibilityPermission
+        }
+        let stepMs = max(25, Int(interval * 1000))
+        for ch in text {
+            if let mapped = Self.asciiKeyMapping[ch] {
+                try await pressKey(keyCode: mapped.code, command: false, shift: mapped.shift)
+            } else {
+                var utf16 = Array(String(ch).utf16)
+                if let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true) {
+                    down.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
+                    down.post(tap: .cghidEventTap)
+                }
+                try await Task.sleep(for: .milliseconds(30))
+                if let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false) {
+                    up.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
+                    up.post(tap: .cghidEventTap)
+                }
+            }
+            try await Task.sleep(for: .milliseconds(stepMs))
+        }
+    }
+
+    private static let asciiKeyMapping: [Character: (code: UInt16, shift: Bool)] = [
+        "a": (0, false), "b": (11, false), "c": (8, false), "d": (2, false), "e": (14, false),
+        "f": (3, false), "g": (5, false), "h": (4, false), "i": (34, false), "j": (38, false),
+        "k": (40, false), "l": (37, false), "m": (46, false), "n": (45, false), "o": (31, false),
+        "p": (35, false), "q": (12, false), "r": (15, false), "s": (1, false), "t": (17, false),
+        "u": (32, false), "v": (9, false), "w": (13, false), "x": (7, false), "y": (16, false),
+        "z": (6, false),
+        "A": (0, true), "B": (11, true), "C": (8, true), "D": (2, true), "E": (14, true),
+        "F": (3, true), "G": (5, true), "H": (4, true), "I": (34, true), "J": (38, true),
+        "K": (40, true), "L": (37, true), "M": (46, true), "N": (45, true), "O": (31, true),
+        "P": (35, true), "Q": (12, true), "R": (15, true), "S": (1, true), "T": (17, true),
+        "U": (32, true), "V": (9, true), "W": (13, true), "X": (7, true), "Y": (16, true),
+        "Z": (6, true),
+        "0": (29, false), "1": (18, false), "2": (19, false), "3": (20, false), "4": (21, false),
+        "5": (23, false), "6": (22, false), "7": (26, false), "8": (28, false), "9": (25, false),
+        " ": (49, false), "-": (27, false), "_": (27, true), "=": (24, false), "+": (24, true),
+        ".": (47, false), ",": (43, false), "/": (44, false), ":": (41, true), ";": (41, false),
+        "\n": (36, false),
+    ]
+
+    public func dragMouse(from x0: Double, y0: Double, to x1: Double, y1: Double, duration: Double = 0.45) async throws {
+        guard AXIsProcessTrusted() else {
+            throw HeadlessRecorderError.missingAccessibilityPermission
+        }
+        try await moveMouse(to: x0, y: y0, smooth: true, duration: 0.35)
+        let start = CGPoint(x: x0, y: y0)
+        let end = CGPoint(x: x1, y: y1)
+        CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: start, mouseButton: .left)?.post(tap: .cghidEventTap)
+        try await Task.sleep(for: .milliseconds(60))
+        let steps = max(12, Int(max(0.1, duration) * 60))
+        for i in 1...steps {
+            let t = Double(i) / Double(steps)
+            let e = t * t * (3 - 2 * t)
+            let pt = CGPoint(x: start.x + (end.x - start.x) * e, y: start.y + (end.y - start.y) * e)
+            CGEvent(mouseEventSource: nil, mouseType: .leftMouseDragged, mouseCursorPosition: pt, mouseButton: .left)?.post(tap: .cghidEventTap)
+            try await Task.sleep(for: .milliseconds(max(4, Int((duration / Double(steps)) * 1000))))
+        }
+        try await Task.sleep(for: .milliseconds(40))
+        CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: end, mouseButton: .left)?.post(tap: .cghidEventTap)
+    }
+
+    public func captureScreenshot(to outputURL: URL) async throws {
+        guard CGPreflightScreenCaptureAccess() else {
+            throw HeadlessRecorderError.missingScreenRecordingPermission
+        }
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        guard let display = content.displays.first else {
+            throw HeadlessRecorderError.targetNotFound("display")
+        }
+        let filter = SCContentFilter(display: display, excludingWindows: [])
+        let config = SCStreamConfiguration()
+        config.width = display.width
+        config.height = display.height
+        config.showsCursor = true
+        let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+        let rep = NSBitmapImageRep(cgImage: image)
+        guard let png = rep.representation(using: .png, properties: [:]) else {
+            throw HeadlessRecorderError.recordingEmpty
+        }
+        try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try png.write(to: outputURL, options: .atomic)
+    }
+
     public func start(request: HeadlessRecordStartRequest, outputURL: URL) async throws -> HeadlessRecordStartResult {
         guard activeRunID == nil else { throw HeadlessRecorderError.alreadyRecording }
         guard CGPreflightScreenCaptureAccess() else {
