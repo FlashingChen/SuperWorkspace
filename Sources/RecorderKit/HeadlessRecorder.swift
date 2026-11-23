@@ -466,11 +466,7 @@ public final class HeadlessRecorder {
         )
         project.zoomAnimations = zoomAnimations
         project.exportSettings.frameRate = configuration.captureFrameRate
-        let required = RequiredProjectMedia(project: project)
-        if required.backgroundImage || required.backgroundVideo {
-            project.canvas.backgroundSource = RecorderProject().canvas.backgroundSource
-        }
-        let resolvedWallpaperURL: URL? = nil
+        let resolvedWallpaperURL = Self.resolveStyledBackground(for: &project)
 
         let sessionID = EditorSessionID()
         let mediaSession = EditorMediaSession()
@@ -507,5 +503,39 @@ public final class HeadlessRecorder {
             return exported
         }
         throw VideoExporterError.exportFailed(exporter.errorMessage ?? "无头粗剪渲染失败。")
+    }
+
+    private static func resolveStyledBackground(for project: inout RecorderProject) -> URL? {
+        func wallpaperURLIfValid(_ source: BackgroundSource) -> URL? {
+            switch source {
+            case let .systemImage(path), let .systemVideo(path):
+                let url = URL(fileURLWithPath: path)
+                return FileManager.default.fileExists(atPath: url.path) ? url : nil
+            case .dynamicFlow:
+                return nil
+            case .pattern, .projectImage, .projectVideo:
+                return nil
+            }
+        }
+
+        switch project.canvas.backgroundSource {
+        case .systemImage, .systemVideo:
+            if let url = wallpaperURLIfValid(project.canvas.backgroundSource) {
+                return url
+            }
+        case .dynamicFlow:
+            return nil
+        case .pattern, .projectImage, .projectVideo:
+            break
+        }
+
+        if let desktop = SystemWallpaperLibrary.currentBackgroundSource(),
+           let url = wallpaperURLIfValid(desktop) {
+            project.canvas.backgroundSource = desktop
+            return url
+        }
+
+        project.canvas.backgroundSource = .dynamicFlow(.auroraFluid)
+        return nil
     }
 }
