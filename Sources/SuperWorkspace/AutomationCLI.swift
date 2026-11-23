@@ -50,6 +50,31 @@ enum AutomationCLI {
             if let x = flags["x"].flatMap(Double.init) { payload["x"] = .number(x) }
             if let y = flags["y"].flatMap(Double.init) { payload["y"] = .number(y) }
             return AutomationRequest(command: "resize", args: payload)
+        case "input":
+            guard let action = rest.first else { throw CLIError.usage }
+            let flags = parseFlags(Array(rest.dropFirst()))
+            var payload: [String: JSONValue] = [:]
+            switch action {
+            case "move":
+                if let x = flags["x"].flatMap(Double.init) { payload["x"] = .number(x) }
+                if let y = flags["y"].flatMap(Double.init) { payload["y"] = .number(y) }
+                if let d = flags["duration"].flatMap(Double.init) { payload["duration"] = .number(d) }
+                return AutomationRequest(command: "input_move", args: payload)
+            case "click":
+                if let x = flags["x"].flatMap(Double.init) { payload["x"] = .number(x) }
+                if let y = flags["y"].flatMap(Double.init) { payload["y"] = .number(y) }
+                return AutomationRequest(command: "input_click", args: payload)
+            case "key":
+                if let code = flags["code"].flatMap(Double.init) { payload["keyCode"] = .number(code) }
+                if flags["cmd"] != nil { payload["command"] = .bool(true) }
+                if flags["shift"] != nil { payload["shift"] = .bool(true) }
+                return AutomationRequest(command: "input_key", args: payload)
+            case "paste":
+                if let text = flags["text"] { payload["text"] = .string(text) }
+                return AutomationRequest(command: "input_paste", args: payload)
+            default:
+                throw CLIError.usage
+            }
         case "export":
             let flags = parseFlags(rest)
             var payload: [String: JSONValue] = [:]
@@ -77,6 +102,8 @@ enum AutomationCLI {
             } else if action == "stop" {
                 var payload: [String: JSONValue] = [:]
                 if flags["motion"] != nil { payload["wantsMotion"] = .bool(true) }
+                if flags["raw"] != nil { payload["styled"] = .bool(false) }
+                if flags["styled"] != nil { payload["styled"] = .bool(true) }
                 if let prompt = flags["prompt"] { payload["editingPrompt"] = .string(prompt) }
                 return AutomationRequest(command: "record_stop", args: payload)
             }

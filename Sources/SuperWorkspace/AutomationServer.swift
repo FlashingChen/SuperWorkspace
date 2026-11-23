@@ -218,6 +218,39 @@ final class AutomationServer: @unchecked Sendable {
                 )
                 return .success(.object(["resized": .bool(true), "windowID": .number(idNum)]))
 
+            case "input_move":
+                guard let x = request.args["x"]?.numberValue, let y = request.args["y"]?.numberValue else {
+                    return .failure("input_move 需要提供 x 和 y。")
+                }
+                let duration = request.args["duration"]?.numberValue ?? 0.35
+                try await HeadlessRecorder.shared.moveMouse(to: x, y: y, smooth: true, duration: duration)
+                return .success(.object(["ok": .bool(true)]))
+
+            case "input_click":
+                guard let x = request.args["x"]?.numberValue, let y = request.args["y"]?.numberValue else {
+                    return .failure("input_click 需要提供 x 和 y。")
+                }
+                try await HeadlessRecorder.shared.clickMouse(at: x, y: y, smooth: request.args["smooth"]?.boolValue ?? true)
+                return .success(.object(["ok": .bool(true)]))
+
+            case "input_key":
+                guard let code = request.args["keyCode"]?.numberValue else {
+                    return .failure("input_key 需要提供 keyCode。")
+                }
+                try await HeadlessRecorder.shared.pressKey(
+                    keyCode: UInt16(code),
+                    command: request.args["command"]?.boolValue ?? false,
+                    shift: request.args["shift"]?.boolValue ?? false
+                )
+                return .success(.object(["ok": .bool(true)]))
+
+            case "input_paste":
+                guard let text = request.args["text"]?.stringValue else {
+                    return .failure("input_paste 需要提供 text。")
+                }
+                try await HeadlessRecorder.shared.pasteText(text)
+                return .success(.object(["ok": .bool(true)]))
+
             case "record_start":
                 if let projectName = request.args["projectName"]?.stringValue, !projectName.isEmpty {
                     if let existing = state.projects.first(where: { $0.name == projectName }) {
@@ -264,7 +297,8 @@ final class AutomationServer: @unchecked Sendable {
             case "record_stop":
                 let wantsMotion = request.args["wantsMotion"]?.boolValue ?? false
                 let editingPrompt = request.args["editingPrompt"]?.stringValue
-                let stopped = try await HeadlessRecorder.shared.stop()
+                let styled = request.args["styled"]?.boolValue ?? true
+                let stopped = try await HeadlessRecorder.shared.stop(styled: styled)
                 guard let projectID = activeRecordingProjectID,
                       let materialID = activeRecordingMaterialID else {
                     return .failure("找不到对应的录制项目上下文。")

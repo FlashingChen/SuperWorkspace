@@ -115,7 +115,9 @@ public final class HeadlessRecorder {
     private let screenRecorder = ScreenRecorder()
     private let pointerRecorder = PointerEventRecorder()
     private var activeRunID: RecordingRunID?
+    private var activeRawURL: URL?
     private var activeOutputURL: URL?
+    private var activeConfiguration: CaptureConfiguration?
     private var activeTargetLabel: String?
     private var startedAt: Date?
     private var pointerStarted = false
@@ -216,6 +218,63 @@ public final class HeadlessRecorder {
         NSRunningApplication(processIdentifier: target.pid)?.activate(options: [])
     }
 
+    public func moveMouse(to x: Double, y: Double, smooth: Bool = true, duration: Double = 0.35) async throws {
+        guard AXIsProcessTrusted() else {
+            throw HeadlessRecorderError.missingAccessibilityPermission
+        }
+        let target = CGPoint(x: x, y: y)
+        let current = CGEvent(source: nil)?.location ?? target
+        if smooth, duration > 0.02 {
+            let steps = max(8, Int(duration * 60))
+            for i in 1...steps {
+                let t = Double(i) / Double(steps)
+                let e = t * t * (3 - 2 * t)
+                let pt = CGPoint(x: current.x + (target.x - current.x) * e, y: current.y + (target.y - current.y) * e)
+                CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: pt, mouseButton: .left)?.post(tap: .cghidEventTap)
+                try await Task.sleep(for: .milliseconds(max(4, Int((duration / Double(steps)) * 1000))))
+            }
+        } else {
+            CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: target, mouseButton: .left)?.post(tap: .cghidEventTap)
+        }
+    }
+
+    public func clickMouse(at x: Double, y: Double, smooth: Bool = true) async throws {
+        try await moveMouse(to: x, y: y, smooth: smooth)
+        let pt = CGPoint(x: x, y: y)
+        CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: pt, mouseButton: .left)?.post(tap: .cghidEventTap)
+        try await Task.sleep(for: .milliseconds(60))
+        CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: pt, mouseButton: .left)?.post(tap: .cghidEventTap)
+    }
+
+    public func pressKey(keyCode: UInt16, command: Bool = false, shift: Bool = false) async throws {
+        guard AXIsProcessTrusted() else {
+            throw HeadlessRecorderError.missingAccessibilityPermission
+        }
+        var flags: CGEventFlags = []
+        if command { flags.insert(.maskCommand) }
+        if shift { flags.insert(.maskShift) }
+        if let down = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(keyCode), keyDown: true) {
+            down.flags = flags
+            down.post(tap: .cghidEventTap)
+        }
+        try await Task.sleep(for: .milliseconds(40))
+        if let up = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(keyCode), keyDown: false) {
+            up.flags = flags
+            up.post(tap: .cghidEventTap)
+        }
+    }
+
+    public func pasteText(_ text: String) async throws {
+        guard AXIsProcessTrusted() else {
+            throw HeadlessRecorderError.missingAccessibilityPermission
+        }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        try await Task.sleep(for: .milliseconds(80))
+        try await pressKey(keyCode: 9, command: true) // Cmd+V
+    }
+
     public func start(request: HeadlessRecordStartRequest, outputURL: URL) async throws -> HeadlessRecordStartResult {
         guard activeRunID == nil else { throw HeadlessRecorderError.alreadyRecording }
         guard CGPreflightScreenCaptureAccess() else {
@@ -284,11 +343,15 @@ public final class HeadlessRecorder {
             at: outputURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
+        let rawURL = outputURL.deletingLastPathComponent()
+            .appendingPathComponent("headless-raw-\(UUID().uuidString.prefix(8)).mp4")
         let runID = RecordingRunID()
-        try await screenRecorder.start(runID: runID, configuration: config, outputURL: outputURL)
+        try await screenRecorder.start(runID: runID, configuration: config, outputURL: rawURL)
 
         activeRunID = runID
+        activeRawURL = rawURL
         activeOutputURL = outputURL
+        activeConfiguration = config
         activeTargetLabel = targetTitle
         startedAt = Date()
         pointerStarted = false
@@ -314,52 +377,135 @@ public final class HeadlessRecorder {
         )
     }
 
-    public func stop() async throws -> HeadlessRecordStopResult {
-        guard let runID = activeRunID, let expectedURL = activeOutputURL else {
+    public func stop(styled: Bool = true) async throws -> HeadlessRecordStopResult {
+        guard let runID = activeRunID, let rawExpectedURL = activeRawURL, let finalDestination = activeOutputURL else {
             throw HeadlessRecorderError.notRecording
         }
+        let savedConfig = activeConfiguration
         defer {
             activeRunID = nil
+            activeRawURL = nil
             activeOutputURL = nil
+            activeConfiguration = nil
             activeTargetLabel = nil
             startedAt = nil
             pointerStarted = false
         }
 
-        let events = pointerStarted ? pointerRecorder.stop() : []
-        let finalURL = try await screenRecorder.stop(runID: runID) ?? expectedURL
-        guard FileManager.default.fileExists(atPath: finalURL.path) else {
+        let rawEvents = pointerStarted ? pointerRecorder.stop() : []
+        let rawURL = try await screenRecorder.stop(runID: runID) ?? rawExpectedURL
+        guard FileManager.default.fileExists(atPath: rawURL.path) else {
             throw HeadlessRecorderError.recordingEmpty
         }
 
-        let asset = AVURLAsset(url: finalURL)
-        let durationCM = try await asset.load(.duration)
-        let duration = durationCM.seconds.isFinite ? max(0, durationCM.seconds) : 0
-        guard duration > 0 else {
+        let rawAsset = AVURLAsset(url: rawURL)
+        let rawDurationCM = try await rawAsset.load(.duration)
+        let rawDuration = rawDurationCM.seconds.isFinite ? max(0, rawDurationCM.seconds) : 0
+        guard rawDuration > 0 else {
             throw HeadlessRecorderError.recordingEmpty
         }
 
-        let autoZoomCount: Int
-        if !events.isEmpty,
-           let finalized = try? RecordingPointerFinalization.prepare(
-               events: events,
-               startOffset: 0,
-               sourceStartTime: 0,
-               createsAutomaticZooms: true,
-               easing: .spring,
-               transitionDuration: 0.45
-           ) {
-            autoZoomCount = finalized.automaticZoomAnimations.count
+        let finalizedPointer = try? RecordingPointerFinalization.prepare(
+            events: rawEvents,
+            startOffset: 0,
+            sourceStartTime: 0,
+            createsAutomaticZooms: true,
+            easing: .spring,
+            transitionDuration: 0.45
+        )
+        let normalizedEvents = finalizedPointer?.events ?? rawEvents
+        let autoZooms = (finalizedPointer?.automaticZoomAnimations ?? []).compactMap { zoom -> ZoomAnimationClip? in
+            let start = max(0, min(zoom.startTime, rawDuration))
+            let end = max(start, min(zoom.endTime, rawDuration))
+            guard end - start >= 0.25 else { return nil }
+            var copy = zoom
+            copy.startTime = start
+            copy.endTime = end
+            return copy
+        }
+
+        let outputURL: URL
+        if styled {
+            outputURL = try await renderStyledRoughCut(
+                rawURL: rawURL,
+                outputURL: finalDestination,
+                configuration: savedConfig ?? CaptureConfiguration(),
+                pointerEvents: normalizedEvents,
+                zoomAnimations: autoZooms
+            )
+            try? FileManager.default.removeItem(at: rawURL)
         } else {
-            autoZoomCount = 0
+            try? FileManager.default.removeItem(at: finalDestination)
+            try FileManager.default.moveItem(at: rawURL, to: finalDestination)
+            outputURL = finalDestination
         }
+
+        let finalAsset = AVURLAsset(url: outputURL)
+        let finalDuration = (try? await finalAsset.load(.duration).seconds) ?? rawDuration
 
         return HeadlessRecordStopResult(
-            outputPath: finalURL.path,
-            duration: duration,
-            pointerEventCount: events.count,
-            autoZoomCount: autoZoomCount,
+            outputPath: outputURL.path,
+            duration: finalDuration.isFinite && finalDuration > 0 ? finalDuration : rawDuration,
+            pointerEventCount: normalizedEvents.count,
+            autoZoomCount: autoZooms.count,
             warning: screenRecorder.lastStopWarning
         )
+    }
+
+    private func renderStyledRoughCut(
+        rawURL: URL,
+        outputURL: URL,
+        configuration: CaptureConfiguration,
+        pointerEvents: [PointerEventRecord],
+        zoomAnimations: [ZoomAnimationClip]
+    ) async throws -> URL {
+        var project = EditorStylePresetStore.applyingLastUsedStyle(to: RecorderProject())
+        project.capture = configuration
+        project.media = ProjectMediaManifest(
+            screen: ProjectMediaReference(relativePath: rawURL.lastPathComponent)
+        )
+        project.zoomAnimations = zoomAnimations
+        project.exportSettings.frameRate = configuration.captureFrameRate
+        let required = RequiredProjectMedia(project: project)
+        if required.backgroundImage || required.backgroundVideo {
+            project.canvas.backgroundSource = RecorderProject().canvas.backgroundSource
+        }
+        let resolvedWallpaperURL: URL? = nil
+
+        let sessionID = EditorSessionID()
+        let mediaSession = EditorMediaSession()
+        let mediaRequest = EditorMediaRequest(
+            editorSessionID: sessionID,
+            sourceURL: rawURL,
+            cameraURL: nil,
+            microphoneURL: nil,
+            sourceSequence: project.timeline.sourceSequence,
+            mediaManifest: project.media,
+            pointerEvents: pointerEvents
+        )
+        await mediaSession.prepare(mediaRequest)
+        guard let prepared = mediaSession.prepared else {
+            throw HeadlessRecorderError.recordingEmpty
+        }
+        let exportRequest = try EditorExportRequestBuilder.make(
+            editorSessionID: sessionID,
+            mediaGeneration: prepared.generation,
+            project: project,
+            preparedMedia: prepared,
+            wallpaperURL: resolvedWallpaperURL,
+            stickerURLs: [:],
+            outputURL: outputURL,
+            outputKind: .video,
+            outputRange: nil
+        )
+        let exporter = VideoExporter()
+        exporter.export(request: exportRequest)
+        while exporter.isExporting {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        if let exported = exporter.lastExportURL {
+            return exported
+        }
+        throw VideoExporterError.exportFailed(exporter.errorMessage ?? "无头粗剪渲染失败。")
     }
 }
