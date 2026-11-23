@@ -1,13 +1,15 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")"
+pkill -x SuperWorkspace 2>/dev/null || true
+sleep 1
 ./build-app.sh "${1:-debug}"
-installed_app="$HOME/Applications/SuperWorkspace.app"
-mkdir -p "$HOME/Applications"
+installed_app="/Applications/SuperWorkspace.app"
 if [[ -e "$installed_app" ]]; then
   installed_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$installed_app/Contents/Info.plist")
   [[ "$installed_id" == "com.superworkspace.app" ]] || { echo 'The destination contains a different app.' >&2; exit 1; }
 fi
+rm -rf "$installed_app"
 ditto .build/app/SuperWorkspace.app "$installed_app"
 [[ -x "$installed_app/Contents/MacOS/SuperWorkspace" ]] || { echo 'Application copy failed.' >&2; exit 1; }
 codesign --verify --deep --strict "$installed_app"

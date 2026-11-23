@@ -1836,4 +1836,81 @@ final class AppState: ObservableObject {
         progress.phase = "正在导出"
         return try await ExportService.export(project: output, progress: progress, inserts: inserts)
     }
+
+    func registerHeadlessRecording(
+        projectID: UUID,
+        materialID: UUID,
+        outputURL: URL,
+        duration: Double,
+        wantsMotion: Bool,
+        editingPrompt: String?
+    ) async throws {
+        guard let index = projects.firstIndex(where: { $0.id == projectID }) else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        if wantsMotion, !SettingsStore.shared.hasAIConnection {
+            throw ShellError.exitStatus(-1, "AI 动效尚未配置，请先在设置中连接 API 或选择执行器。")
+        }
+        var project = projects[index]
+        var material = Material()
+        material.id = materialID
+        material.duration = duration
+        material.exportState = .complete
+        material.wantsMotion = wantsMotion
+        material.editingPrompt = editingPrompt?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        material.motionState = wantsMotion ? .queued : .idle
+        let expected = ProjectLayout.source(material, in: project)
+        if outputURL.standardizedFileURL != expected.standardizedFileURL {
+            try FileManager.default.createDirectory(at: expected.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? FileManager.default.removeItem(at: expected)
+            try FileManager.default.copyItem(at: outputURL, to: expected)
+        }
+        project.materials.append(material)
+        project.updatedAt = Date()
+        try ProjectLayout.save(project)
+        projects[index] = project
+        await lockCanvas(projectID)
+        processMaterial(projectID, materialID)
+        showToast("AI 录制素材已入库")
+    }
+
+    func exportProjectHeadless(
+        projectID: UUID,
+        includeSubtitles: Bool,
+        exportSRT: Bool
+    ) async throws -> URL {
+        guard let index = projects.firstIndex(where: { $0.id == projectID }) else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        var project = projects[index]
+        guard !project.isFrozen else {
+            throw ShellError.exitStatus(-1, "项目已冻结，请先取消冻结。")
+        }
+        guard !project.materials.isEmpty, project.materials.allSatisfy(\.isReady) else {
+            throw ShellError.exitStatus(-1, "项目素材尚未全部就绪。")
+        }
+        if includeSubtitles || exportSRT {
+            guard project.materials.allSatisfy({ $0.transcriptState == .complete }) else {
+                throw ShellError.exitStatus(-1, "部分素材字幕尚未完成，请等待字幕识别完成或关闭字幕选项。")
+            }
+        }
+        project.includeSubtitles = includeSubtitles
+        project.exportSRT = exportSRT
+        let progress = ExportProgress()
+        let url = try await exportMovie(project, progress: progress)
+        let srtURL = url.deletingPathExtension().appendingPathExtension("srt")
+        let srtName = (exportSRT && FileManager.default.fileExists(atPath: srtURL.path)) ? srtURL.lastPathComponent : nil
+        project.lastExportName = url.lastPathComponent
+        project.lastExportSRTName = srtName
+        project.updatedAt = Date()
+        try ProjectLayout.save(project)
+        if let latest = projects.firstIndex(where: { $0.id == projectID }) {
+            projects[latest] = project
+        }
+        return url
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }
