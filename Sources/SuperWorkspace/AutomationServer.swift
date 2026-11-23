@@ -274,8 +274,18 @@ final class AutomationServer: @unchecked Sendable {
                 guard let out = request.args["out"]?.stringValue, !out.isEmpty else {
                     return .failure("screenshot 需要提供 out 路径。")
                 }
-                try await HeadlessRecorder.shared.captureScreenshot(to: URL(fileURLWithPath: out))
-                return .success(.object(["outputPath": .string(out)]))
+                let result = try await HeadlessRecorder.shared.captureScreenshot(
+                    to: URL(fileURLWithPath: out),
+                    windowID: request.args["windowID"]?.numberValue.map { UInt32($0) },
+                    appName: request.args["appName"]?.stringValue
+                )
+                return .success(.object([
+                    "outputPath": .string(result.outputPath),
+                    "x": .number(Double(result.x)),
+                    "y": .number(Double(result.y)),
+                    "width": .number(Double(result.width)),
+                    "height": .number(Double(result.height)),
+                ]))
 
             case "record_start":
                 if let projectName = request.args["projectName"]?.stringValue, !projectName.isEmpty {

@@ -90,6 +90,8 @@ enum AutomationCLI {
             let flags = parseFlags(rest)
             var payload: [String: JSONValue] = [:]
             if let out = flags["out"] { payload["out"] = .string(out) }
+            if let id = flags["window"].flatMap(Double.init) { payload["windowID"] = .number(id) }
+            if let app = flags["app"] { payload["appName"] = .string(app) }
             return AutomationRequest(command: "screenshot", args: payload)
         case "export":
             let flags = parseFlags(rest)

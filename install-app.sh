@@ -29,4 +29,10 @@ elif launcher.exists():
     raise SystemExit('Desktop launcher is not a symbolic link; left unchanged.')
 launcher.symlink_to(app, target_is_directory=True)
 PY
+mkdir -p "$HOME/.local/bin"
+cat > "$HOME/.local/bin/superworkspace" <<'SH'
+#!/bin/bash
+exec /Applications/SuperWorkspace.app/Contents/MacOS/SuperWorkspace cli "$@"
+SH
+chmod +x "$HOME/.local/bin/superworkspace"
 open "$installed_app"

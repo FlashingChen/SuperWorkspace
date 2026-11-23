@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import AVFoundation
+import Carbon
 import CoreMedia
 import Foundation
 import RecorderCore
@@ -279,6 +280,12 @@ public final class HeadlessRecorder {
         guard AXIsProcessTrusted() else {
             throw HeadlessRecorderError.missingAccessibilityPermission
         }
+        let isPureASCII = text.unicodeScalars.allSatisfy { $0.isASCII }
+        if isPureASCII,
+           let asciiSource = TISCopyCurrentASCIICapableKeyboardInputSource()?.takeRetainedValue() {
+            TISSelectInputSource(asciiSource)
+            try await Task.sleep(for: .milliseconds(60))
+        }
         let stepMs = max(25, Int(interval * 1000))
         for ch in text {
             if let mapped = Self.asciiKeyMapping[ch] {
@@ -340,18 +347,52 @@ public final class HeadlessRecorder {
         CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: end, mouseButton: .left)?.post(tap: .cghidEventTap)
     }
 
-    public func captureScreenshot(to outputURL: URL) async throws {
+    public struct ScreenshotResult: Codable, Equatable, Sendable {
+        public let outputPath: String
+        public let x: Int
+        public let y: Int
+        public let width: Int
+        public let height: Int
+    }
+
+    public func captureScreenshot(
+        to outputURL: URL,
+        windowID: UInt32? = nil,
+        appName: String? = nil
+    ) async throws -> ScreenshotResult {
         guard CGPreflightScreenCaptureAccess() else {
             throw HeadlessRecorderError.missingScreenRecordingPermission
         }
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        guard let display = content.displays.first else {
-            throw HeadlessRecorderError.targetNotFound("display")
+        let filter: SCContentFilter
+        let frame: CGRect
+
+        if let windowID {
+            guard let window = content.windows.first(where: { $0.windowID == windowID }) else {
+                throw HeadlessRecorderError.targetNotFound("windowID=\(windowID)")
+            }
+            filter = SCContentFilter(desktopIndependentWindow: window)
+            frame = window.frame
+        } else if let appName, !appName.isEmpty {
+            guard let window = content.windows.first(where: {
+                Self.isRecordableAppWindow($0) &&
+                ($0.owningApplication?.applicationName.localizedCaseInsensitiveContains(appName) == true)
+            }) else {
+                throw HeadlessRecorderError.targetNotFound("app=\(appName)")
+            }
+            filter = SCContentFilter(desktopIndependentWindow: window)
+            frame = window.frame
+        } else {
+            guard let display = content.displays.first else {
+                throw HeadlessRecorderError.targetNotFound("display")
+            }
+            filter = SCContentFilter(display: display, excludingWindows: [])
+            frame = CGRect(x: 0, y: 0, width: display.width, height: display.height)
         }
-        let filter = SCContentFilter(display: display, excludingWindows: [])
+
         let config = SCStreamConfiguration()
-        config.width = display.width
-        config.height = display.height
+        config.width = max(2, Int(frame.width.rounded()))
+        config.height = max(2, Int(frame.height.rounded()))
         config.showsCursor = true
         let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
         let rep = NSBitmapImageRep(cgImage: image)
@@ -360,6 +401,13 @@ public final class HeadlessRecorder {
         }
         try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try png.write(to: outputURL, options: .atomic)
+        return ScreenshotResult(
+            outputPath: outputURL.path,
+            x: Int(frame.origin.x.rounded()),
+            y: Int(frame.origin.y.rounded()),
+            width: Int(frame.width.rounded()),
+            height: Int(frame.height.rounded())
+        )
     }
 
     public func start(request: HeadlessRecordStartRequest, outputURL: URL) async throws -> HeadlessRecordStartResult {
