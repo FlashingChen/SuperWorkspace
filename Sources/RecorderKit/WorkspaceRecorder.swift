@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import RecorderCore
 import ScreenCaptureKit
 import SwiftUI
 
@@ -30,9 +31,11 @@ public final class WorkspaceRecorder {
     private var observers: [UUID: AnyCancellable] = [:]
     private var onStart: ((UUID, Bool, String?, Bool) throws -> URL)?
     private var onFinish: ((UUID, Result<URL, Error>) -> Void)?
+    private var onCaptureReady: ((URL, RecorderProject) -> Void)?
     private var onReturn: ((NSRect?) -> Void)?
     private var returnsAfterEditorClose = false
     private var isReturning = false
+    private var directCaptureMode = false
     public var returnActionStyle: @MainActor (AnyView) -> AnyView = { $0 }
     public var exportSheetStyle: @MainActor (AnyView) -> AnyView = { $0 }
     public var exportPromptField: @MainActor (Binding<String>) -> AnyView = { _ in AnyView(EmptyView()) }
@@ -61,6 +64,67 @@ public final class WorkspaceRecorder {
         onPresent(WindowCoordinator.presentIntegratedSession())
         phaseObserver = model.$phase.dropFirst().receive(on: DispatchQueue.main).sink { [weak self, weak model] phase in
             guard let self, let model, self.model === model else { return }
+            if phase == .editor { self.returnsAfterEditorClose = false }
+            if phase == .setup, model.phase == .setup, self.returnsAfterEditorClose {
+                self.finishSession()
+            }
+        }
+        activationObserver = NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak model] _ in
+                MainActor.assumeIsolated { model?.resumeRequiredPermissionOnboardingAfterActivation() }
+            }
+        permissionTask = Task { @MainActor [weak self, weak model] in
+            while !Task.isCancelled, let self, let model, self.model === model {
+                if model.phase == .setup {
+                    await model.verifyRequiredRecordingPermissions()
+                    if model.hasRequiredRecordingPermissions, NSApp.isActive {
+                        model.finishRequiredPermissionOnboarding()
+                    }
+                }
+                do { try await Task.sleep(for: .seconds(1)) }
+                catch { return }
+            }
+        }
+    }
+
+    /// Presents only the floating capture bar; when recording stops and finalizes,
+    /// hands the raw `.dogscproject` directly to SuperWorkspace's unified Editing Panel
+    /// without opening a separate standalone Rough Cut window.
+    public func presentDirectCapture(
+        onPresent: (NSRect?) -> Void,
+        onReturn: @escaping (NSRect?) -> Void,
+        onCaptureReady: @escaping (URL, RecorderProject) -> Void
+    ) {
+        if let model {
+            model.resumeRequiredPermissionOnboardingAfterActivation()
+            WindowCoordinator.bringCurrentWindowFront()
+            return
+        }
+        self.directCaptureMode = true
+        self.onCaptureReady = onCaptureReady
+        self.onStart = nil
+        self.onFinish = nil
+        self.onReturn = onReturn
+        WorkspaceInputPolicy.registerDefaults()
+        let model = AppModel()
+        self.model = model
+        WindowCoordinator.install(model: model)
+        model.beginRequiredPermissionOnboardingIfNeeded()
+        onPresent(WindowCoordinator.presentIntegratedSession())
+        phaseObserver = model.$phase.dropFirst().receive(on: DispatchQueue.main).sink { [weak self, weak model] phase in
+            guard let self, let model, self.model === model else { return }
+            if self.directCaptureMode, (phase == .editor || phase == .recordingComplete),
+               let session = model.currentSession {
+                let capturedProject = model.project
+                try? ProjectStore.saveProject(capturedProject, session: session)
+                let handoff = self.onCaptureReady
+                self.directCaptureMode = false
+                self.onCaptureReady = nil
+                self.finishSession()
+                handoff?(session.packageURL, capturedProject)
+                return
+            }
             if phase == .editor { self.returnsAfterEditorClose = false }
             if phase == .setup, model.phase == .setup, self.returnsAfterEditorClose {
                 self.finishSession()
@@ -137,6 +201,8 @@ public final class WorkspaceRecorder {
         onReturn = nil
         onStart = nil
         onFinish = nil
+        onCaptureReady = nil
+        directCaptureMode = false
         returnsAfterEditorClose = false
         phaseObserver = nil
         activationObserver = nil

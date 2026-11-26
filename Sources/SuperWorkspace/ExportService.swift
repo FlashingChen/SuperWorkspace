@@ -2,6 +2,7 @@ import AppKit
 import AVFoundation
 import ImageIO
 import QuartzCore
+import RecorderKit
 
 struct Assembly {
     let composition: AVMutableComposition
@@ -40,7 +41,10 @@ enum ExportService {
         for material in project.materials {
             try Task.checkCancellation()
             guard material.isReady else { throw failure("素材尚未完成，请先完成录制导出或移除失败素材。") }
-            let asset = AVURLAsset(url: ProjectLayout.picture(material, in: project))
+            let usesAIMotion = material.wantsMotion && material.useOriginal != true && material.motionState == .complete
+            let roughCutLoaded = usesAIMotion ? nil : RoughCutPackageStore.load(at: ProjectLayout.roughCutPackage(material, in: project))
+            let videoURL = roughCutLoaded?.screenURL ?? ProjectLayout.picture(material, in: project)
+            let asset = AVURLAsset(url: videoURL)
             guard let source = try await asset.loadTracks(withMediaType: .video).first else { throw failure("素材没有视频轨道。") }
             if let nominal = try? await source.load(.nominalFrameRate), nominal.isFinite, nominal > 0 {
                 observedFrameRates.append(nominal)
@@ -119,8 +123,47 @@ enum ExportService {
             if includeHTMLMotions {
                 // HTML motion overlays are attached after the material loop once output FPS and canvas are known.
             }
-            instructions.append(AssemblyInstruction(range: CMTimeRange(start: cursor, duration: scaledDuration),
-                trackID: video.trackID, transform: fit, overlays: overlays, cutaways: cutaways))
+            var cameraTrackID: CMPersistentTrackID?
+            if let camURL = roughCutLoaded?.cameraURL {
+                let camAsset = AVURLAsset(url: camURL)
+                if let camSource = try? await camAsset.loadTracks(withMediaType: .video).first,
+                   let camRange = try? await camSource.load(.timeRange) {
+                    let available = CMTimeRangeGetIntersection(range, otherRange: camRange)
+                    if available.duration > .zero,
+                       let camTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) {
+                        let offset = CMTimeSubtract(available.start, start)
+                        let scaledOffset = abs(rate - 1.0) > 0.001
+                            ? CMTime(seconds: offset.seconds / rate, preferredTimescale: 600)
+                            : offset
+                        let insertAt = CMTimeAdd(cursor, scaledOffset)
+                        try? camTrack.insertTimeRange(available, of: camSource, at: insertAt)
+                        if abs(rate - 1.0) > 0.001 {
+                            let scaledCamDur = CMTime(seconds: available.duration.seconds / rate, preferredTimescale: 600)
+                            camTrack.scaleTimeRange(CMTimeRange(start: insertAt, duration: available.duration), toDuration: scaledCamDur)
+                        }
+                        cameraTrackID = camTrack.trackID
+                    }
+                }
+            }
+            let roughCutCompositor: RoughCutFrameCompositor? = roughCutLoaded.map { loaded in
+                RoughCutFrameCompositor(
+                    project: loaded.project,
+                    packageURL: loaded.packageURL,
+                    pointerEvents: loaded.pointerEvents,
+                    outputDuration: duration.seconds
+                )
+            }
+            instructions.append(AssemblyInstruction(
+                range: CMTimeRange(start: cursor, duration: scaledDuration),
+                trackID: video.trackID,
+                transform: fit,
+                overlays: overlays,
+                cutaways: cutaways,
+                roughCutCompositor: roughCutCompositor,
+                roughCutSourceStart: material.inPoint,
+                roughCutPlaybackSpeed: rate,
+                cameraTrackID: cameraTrackID
+            ))
             cursor = CMTimeAdd(cursor, scaledDuration)
         }
         let outputFPS = Self.resolvedFrameRate(from: observedFrameRates)
@@ -142,7 +185,11 @@ enum ExportService {
                         trackID: inst.trackID,
                         transform: inst.transform,
                         overlays: inst.overlays + matching,
-                        cutaways: inst.cutaways
+                        cutaways: inst.cutaways,
+                        roughCutCompositor: inst.roughCutCompositor,
+                        roughCutSourceStart: inst.roughCutSourceStart,
+                        roughCutPlaybackSpeed: inst.roughCutPlaybackSpeed,
+                        cameraTrackID: inst.cameraTrackID
                     )
                 }
             }

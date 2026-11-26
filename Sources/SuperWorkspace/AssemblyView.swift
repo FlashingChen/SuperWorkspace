@@ -28,6 +28,24 @@ struct AssemblyView: View {
     @State private var showsSubtitlesSheet = false
     @State private var previewRate = 1.0
     @State private var importingMedia = false
+    @State private var showsClipInspector = true
+    @State private var rightPanelMode: RightPanelMode = .clipInspector
+
+    private enum RightPanelMode {
+        case clipInspector
+        case aiDirector
+    }
+
+    private var activeSelectedMaterial: (index: Int, material: Material, timelineStart: Double)? {
+        var offset = 0.0
+        for (idx, m) in project.materials.enumerated() {
+            if m.id == selectedMaterial {
+                return (idx, m, offset)
+            }
+            offset += m.timelineDuration
+        }
+        return nil
+    }
 
     private var chatAgent: AssemblyAgent { state.assemblyAgent(for: project.id) }
 
@@ -101,21 +119,74 @@ struct AssemblyView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                    // Right: Collapsible Floating AI Director Island
-                    if showsAIPanel {
-                        AssemblyChatPanel(
-                            project: project,
-                            agent: chatAgent,
-                            focusContext: editorFocusContext,
-                            onPlayPreview: { focusTime in playFrom(focusTime) },
-                            onImportMedia: { importingMedia = true },
-                            onOpenLibrary: onOpenLibrary,
-                            onClose: {
-                                withAnimation(StudioMotion.settle) {
-                                    showsAIPanel = false
+                    // Right: Unified Floating Island (Clip Rough-Cut Inspector + AI Director)
+                    let canShowInspector = activeSelectedMaterial != nil && showsClipInspector
+                    if showsAIPanel || canShowInspector {
+                        VStack(spacing: 0) {
+                            if showsAIPanel && activeSelectedMaterial != nil {
+                                HStack(spacing: Metrics.space1) {
+                                    Button("片段粗剪", systemImage: "slider.horizontal.3") {
+                                        rightPanelMode = .clipInspector
+                                        showsClipInspector = true
+                                    }
+                                    .buttonStyle(StudioButtonStyle(
+                                        kind: rightPanelMode == .clipInspector ? .primary : .quiet,
+                                        size: .compact
+                                    ))
+                                    .frame(maxWidth: .infinity)
+
+                                    Button("AI 导演", systemImage: "sparkles") {
+                                        rightPanelMode = .aiDirector
+                                    }
+                                    .buttonStyle(StudioButtonStyle(
+                                        kind: rightPanelMode == .aiDirector ? .primary : .quiet,
+                                        size: .compact
+                                    ))
+                                    .frame(maxWidth: .infinity)
                                 }
+                                .padding(.horizontal, Metrics.space2_5)
+                                .padding(.top, Metrics.space2_5)
+                                .padding(.bottom, Metrics.space2)
+                                .background(palette.island)
+                                Divider().overlay(palette.hairline)
                             }
-                        )
+
+                            if let selected = activeSelectedMaterial,
+                               (rightPanelMode == .clipInspector || !showsAIPanel) && showsClipInspector {
+                                let localTime = selected.material.inPoint
+                                    + max(0, playhead - selected.timelineStart) * selected.material.playbackSpeed
+                                ClipRoughCutInspector(
+                                    project: project,
+                                    material: selected.material,
+                                    clipIndex: selected.index,
+                                    clipLocalTime: localTime,
+                                    onSeekClipLocalTime: { local in
+                                        let target = selected.timelineStart
+                                            + max(0, local - selected.material.inPoint) / selected.material.playbackSpeed
+                                        seek(target)
+                                    },
+                                    onClose: {
+                                        withAnimation(StudioMotion.settle) {
+                                            showsClipInspector = false
+                                        }
+                                    }
+                                )
+                            } else if showsAIPanel {
+                                AssemblyChatPanel(
+                                    project: project,
+                                    agent: chatAgent,
+                                    focusContext: editorFocusContext,
+                                    onPlayPreview: { focusTime in playFrom(focusTime) },
+                                    onImportMedia: { importingMedia = true },
+                                    onOpenLibrary: onOpenLibrary,
+                                    onClose: {
+                                        withAnimation(StudioMotion.settle) {
+                                            showsAIPanel = false
+                                        }
+                                    }
+                                )
+                            }
+                        }
                         .frame(width: Metrics.chatPanel)
                         .frame(maxHeight: .infinity)
                         .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusIsland, style: .continuous))
@@ -159,7 +230,16 @@ struct AssemblyView: View {
                 focusedSubtitle = key
             }
         }
-        .onChange(of: selectedMaterial) { _, _ in remember(flush: true) }
+        .onChange(of: selectedMaterial) { _, next in
+            remember(flush: true)
+            if next != nil {
+                showsClipInspector = true
+                rightPanelMode = .clipInspector
+            }
+        }
+        .onChange(of: showsAIPanel) { _, open in
+            if open { rightPanelMode = .aiDirector }
+        }
         .onChange(of: project.materials.map(\.id)) { _, ids in
             if let selectedMaterial, !ids.contains(selectedMaterial) {
                 self.selectedMaterial = nil
@@ -759,6 +839,7 @@ struct AssemblyPreviewInputs: Equatable {
         let outPoint: Double
         let playbackSpeed: Double
         let inserts: [AIEditing.Insert]?
+        let roughCutRevision: Int?
     }
     let clips: [ClipSignature]
     let audioClips: [AudioClip]?
@@ -776,7 +857,8 @@ struct AssemblyPreviewInputs: Equatable {
                 inPoint: $0.inPoint,
                 outPoint: $0.outPoint,
                 playbackSpeed: $0.playbackSpeed,
-                inserts: $0.inserts
+                inserts: $0.inserts,
+                roughCutRevision: $0.roughCutRevision
             )
         }
         audioClips = project.audioClips

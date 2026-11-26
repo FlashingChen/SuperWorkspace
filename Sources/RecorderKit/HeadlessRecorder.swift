@@ -570,6 +570,19 @@ public final class HeadlessRecorder {
             )
             try? FileManager.default.removeItem(at: rawURL)
         } else {
+            let roughCutPackageURL = finalDestination
+                .deletingLastPathComponent()
+                .appendingPathComponent("roughcut.dogscproject", isDirectory: true)
+            var rawProject = RecorderProject()
+            rawProject.capture = savedConfig ?? CaptureConfiguration()
+            rawProject.zoomAnimations = autoZooms
+            rawProject.canvas.backgroundSource = RoughCutPackageStore.defaultStyledBackground()
+            try? RoughCutPackageStore.saveHeadlessPackage(
+                at: roughCutPackageURL,
+                rawScreenURL: rawURL,
+                project: rawProject,
+                pointerEvents: normalizedEvents
+            )
             try? FileManager.default.removeItem(at: finalDestination)
             try FileManager.default.moveItem(at: rawURL, to: finalDestination)
             outputURL = finalDestination
@@ -602,6 +615,16 @@ public final class HeadlessRecorder {
         project.zoomAnimations = zoomAnimations
         project.exportSettings.frameRate = configuration.captureFrameRate
         let resolvedWallpaperURL = Self.resolveStyledBackground(for: &project)
+
+        let roughCutPackageURL = outputURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("roughcut.dogscproject", isDirectory: true)
+        try? RoughCutPackageStore.saveHeadlessPackage(
+            at: roughCutPackageURL,
+            rawScreenURL: rawURL,
+            project: project,
+            pointerEvents: pointerEvents
+        )
 
         let sessionID = EditorSessionID()
         let mediaSession = EditorMediaSession()

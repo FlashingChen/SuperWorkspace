@@ -11,7 +11,7 @@ let package = Package(
         .target(name: "RecorderKit", dependencies: ["StudioTheme", "RecorderCore", "AudioWriterBridge"], path: "Sources/RecorderKit"),
         .executableTarget(
             name: "SuperWorkspace",
-            dependencies: ["StudioTheme", "RecorderKit"],
+            dependencies: ["StudioTheme", "RecorderCore", "RecorderKit"],
             path: "Sources/SuperWorkspace",
             resources: [.copy("AgentSkills")]
         ),

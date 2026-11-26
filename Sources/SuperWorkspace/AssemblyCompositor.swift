@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreImage
+import RecorderKit
 
 struct SubtitleOverlay: @unchecked Sendable {
     let start: Double
@@ -37,17 +38,34 @@ final class AssemblyInstruction: NSObject, AVVideoCompositionInstructionProtocol
     let transform: CGAffineTransform
     let overlays: [SubtitleOverlay]
     let cutaways: [Cutaway]
+    let roughCutCompositor: RoughCutFrameCompositor?
+    let roughCutSourceStart: Double
+    let roughCutPlaybackSpeed: Double
+    let cameraTrackID: CMPersistentTrackID?
     init(range: CMTimeRange, trackID: CMPersistentTrackID, transform: CGAffineTransform,
-         overlays: [SubtitleOverlay], cutaways: [Cutaway] = []) {
+         overlays: [SubtitleOverlay], cutaways: [Cutaway] = [],
+         roughCutCompositor: RoughCutFrameCompositor? = nil,
+         roughCutSourceStart: Double = 0,
+         roughCutPlaybackSpeed: Double = 1.0,
+         cameraTrackID: CMPersistentTrackID? = nil) {
         timeRange = range
         self.trackID = trackID
         self.transform = transform
         self.overlays = overlays
         self.cutaways = cutaways
-        requiredSourceTrackIDs = [NSNumber(value: trackID)] + cutaways.compactMap {
+        self.roughCutCompositor = roughCutCompositor
+        self.roughCutSourceStart = roughCutSourceStart
+        self.roughCutPlaybackSpeed = roughCutPlaybackSpeed
+        self.cameraTrackID = cameraTrackID
+        var required = [NSNumber(value: trackID)]
+        if let cameraTrackID {
+            required.append(NSNumber(value: cameraTrackID))
+        }
+        required.append(contentsOf: cutaways.compactMap {
             if case .video(let id, _) = $0.content { return NSNumber(value: id) }
             return nil
-        }
+        })
+        requiredSourceTrackIDs = required
     }
 }
 
@@ -125,7 +143,27 @@ final class AssemblyCompositor: NSObject, AVVideoCompositing, @unchecked Sendabl
             }
             var image: CIImage
             if let source {
-                image = CIImage(cvPixelBuffer: source).transformed(by: instruction.transform)
+                if let roughCut = instruction.roughCutCompositor {
+                    let elapsed = max(0, (request.compositionTime - instruction.timeRange.start).seconds)
+                    let sourceTime = instruction.roughCutSourceStart + elapsed * instruction.roughCutPlaybackSpeed
+                    let screenCI = CIImage(cvPixelBuffer: source)
+                    let cameraCI: CIImage?
+                    if let camID = instruction.cameraTrackID,
+                       let camBuf = request.sourceFrame(byTrackID: camID) ?? cachedFrame(camID) {
+                        rememberFrame(camBuf, for: camID)
+                        cameraCI = CIImage(cvPixelBuffer: camBuf)
+                    } else {
+                        cameraCI = nil
+                    }
+                    image = roughCut.render(
+                        screenFrame: screenCI,
+                        cameraFrame: cameraCI,
+                        at: sourceTime,
+                        canvasSize: bounds.size
+                    ) ?? screenCI.transformed(by: instruction.transform)
+                } else {
+                    image = CIImage(cvPixelBuffer: source).transformed(by: instruction.transform)
+                }
             } else {
                 // Nothing decoded yet: keep the export running with an empty frame.
                 image = CIImage(color: .black)
