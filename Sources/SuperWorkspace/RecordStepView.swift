@@ -276,8 +276,13 @@ private struct MaterialCard: View {
                         Button("重试动效") { state.enqueueMotion(projectID, material.id) }
                             .buttonStyle(StudioButtonStyle(kind: .secondary, size: .compact))
                     } else if material.exportState == .complete {
-                        Button("时间线编辑", action: onEdit)
-                            .buttonStyle(StudioButtonStyle(kind: .secondary, size: .compact))
+                        HStack(spacing: Metrics.space1_5) {
+                            Button("粗剪") { state.resumeRoughCut(projectID, material.id) }
+                                .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
+                                .help("在粗剪面板（Rough Cutting Panel）重新打开此素材")
+                            Button("时间线编辑", action: onEdit)
+                                .buttonStyle(StudioButtonStyle(kind: .secondary, size: .compact))
+                        }
                     }
                 }
             }

@@ -35,9 +35,6 @@ struct Material: Identifiable, Codable, Equatable, Sendable {
     var trimEnd: Double?
     /// Playback speed multiplier for this clip (`0.5...4.0`, default `1.0`).
     var speed: Double?
-    /// Monotonically incremented whenever non-destructive rough-cut settings in
-    /// `roughcut.dogscproject` change, invalidating the real-time preview composition.
-    var roughCutRevision: Int?
 
     var sourceReady: Bool { duration.isFinite && duration > 0 && exportState == .complete }
     var inPoint: Double { min(max(0, trimStart ?? 0), max(0, duration)) }

@@ -1,6 +1,5 @@
 import AppKit
 import Combine
-import RecorderCore
 import ScreenCaptureKit
 import SwiftUI
 
@@ -31,11 +30,11 @@ public final class WorkspaceRecorder {
     private var observers: [UUID: AnyCancellable] = [:]
     private var onStart: ((UUID, Bool, String?, Bool) throws -> URL)?
     private var onFinish: ((UUID, Result<URL, Error>) -> Void)?
-    private var onCaptureReady: ((URL, RecorderProject) -> Void)?
     private var onReturn: ((NSRect?) -> Void)?
+    private var archivePackageURL: ((UUID) -> URL?)?
     private var returnsAfterEditorClose = false
     private var isReturning = false
-    private var directCaptureMode = false
+    private(set) var isResumeMode = false
     public var returnActionStyle: @MainActor (AnyView) -> AnyView = { $0 }
     public var exportSheetStyle: @MainActor (AnyView) -> AnyView = { $0 }
     public var exportPromptField: @MainActor (Binding<String>) -> AnyView = { _ in AnyView(EmptyView()) }
@@ -46,6 +45,7 @@ public final class WorkspaceRecorder {
         onPresent: (NSRect?) -> Void,
         onReturn: @escaping (NSRect?) -> Void,
         onStart: @escaping (UUID, Bool, String?, Bool) throws -> URL,
+        archivePackageURL: ((UUID) -> URL?)? = nil,
         onFinish: @escaping (UUID, Result<URL, Error>) -> Void
     ) {
         if let model {
@@ -53,9 +53,12 @@ public final class WorkspaceRecorder {
             WindowCoordinator.bringCurrentWindowFront()
             return
         }
+        self.isResumeMode = false
         self.onStart = onStart
+        self.archivePackageURL = archivePackageURL
         self.onFinish = onFinish
         self.onReturn = onReturn
+        RoughCutMotionLayerStore.shared.clear()
         WorkspaceInputPolicy.registerDefaults()
         let model = AppModel()
         self.model = model
@@ -88,65 +91,53 @@ public final class WorkspaceRecorder {
         }
     }
 
-    /// Presents only the floating capture bar; when recording stops and finalizes,
-    /// hands the raw `.dogscproject` directly to SuperWorkspace's unified Editing Panel
-    /// without opening a separate standalone Rough Cut window.
-    public func presentDirectCapture(
+    /// Resumes an existing SuperWorkspace material directly inside the Rough Cutting Panel.
+    /// If the material has AI motion outputs, `motionLayer` activates the overlaid AI Motion Layer.
+    public func resume(
+        packageURL: URL,
+        fallbackSourceURL: URL,
+        title: String,
+        motionLayer: RoughCutMotionLayerContext?,
         onPresent: (NSRect?) -> Void,
         onReturn: @escaping (NSRect?) -> Void,
-        onCaptureReady: @escaping (URL, RecorderProject) -> Void
-    ) {
-        if let model {
-            model.resumeRequiredPermissionOnboardingAfterActivation()
+        onStart: @escaping (UUID, Bool, String?, Bool) throws -> URL,
+        onFinish: @escaping (UUID, Result<URL, Error>) -> Void
+    ) throws {
+        if model != nil {
             WindowCoordinator.bringCurrentWindowFront()
             return
         }
-        self.directCaptureMode = true
-        self.onCaptureReady = onCaptureReady
-        self.onStart = nil
-        self.onFinish = nil
+        let resolvedPackageURL = try RoughCutPackageHelper.ensurePackage(
+            at: packageURL,
+            fallbackSourceURL: fallbackSourceURL,
+            title: title
+        )
+        self.isResumeMode = true
+        self.onStart = onStart
+        self.archivePackageURL = nil
+        self.onFinish = onFinish
         self.onReturn = onReturn
+        self.returnsAfterEditorClose = false
+        RoughCutMotionLayerStore.shared.load(motionLayer)
         WorkspaceInputPolicy.registerDefaults()
-        let model = AppModel()
+
+        let model = AppModel(workspace: ProjectWorkspace(), purpose: .editing)
         self.model = model
         WindowCoordinator.install(model: model)
-        model.beginRequiredPermissionOnboardingIfNeeded()
-        onPresent(WindowCoordinator.presentIntegratedSession())
+        WindowCoordinator.prepareExternalProjectPresentation()
+        var enteredEditor = false
         phaseObserver = model.$phase.dropFirst().receive(on: DispatchQueue.main).sink { [weak self, weak model] phase in
             guard let self, let model, self.model === model else { return }
-            if self.directCaptureMode, (phase == .editor || phase == .recordingComplete),
-               let session = model.currentSession {
-                let capturedProject = model.project
-                try? ProjectStore.saveProject(capturedProject, session: session)
-                let handoff = self.onCaptureReady
-                self.directCaptureMode = false
-                self.onCaptureReady = nil
-                self.finishSession()
-                handoff?(session.packageURL, capturedProject)
-                return
+            if phase == .editor {
+                enteredEditor = true
+                self.returnsAfterEditorClose = false
             }
-            if phase == .editor { self.returnsAfterEditorClose = false }
-            if phase == .setup, model.phase == .setup, self.returnsAfterEditorClose {
+            if phase == .setup, model.phase == .setup, enteredEditor || self.returnsAfterEditorClose {
                 self.finishSession()
             }
         }
-        activationObserver = NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak model] _ in
-                MainActor.assumeIsolated { model?.resumeRequiredPermissionOnboardingAfterActivation() }
-            }
-        permissionTask = Task { @MainActor [weak self, weak model] in
-            while !Task.isCancelled, let self, let model, self.model === model {
-                if model.phase == .setup {
-                    await model.verifyRequiredRecordingPermissions()
-                    if model.hasRequiredRecordingPermissions, NSApp.isActive {
-                        model.finishRequiredPermissionOnboarding()
-                    }
-                }
-                do { try await Task.sleep(for: .seconds(1)) }
-                catch { return }
-            }
-        }
+        model.requestOpenProject(at: resolvedPackageURL)
+        onPresent(nil)
     }
 
     public func bringToFront() {
@@ -200,14 +191,15 @@ public final class WorkspaceRecorder {
         model = nil
         onReturn = nil
         onStart = nil
+        archivePackageURL = nil
         onFinish = nil
-        onCaptureReady = nil
-        directCaptureMode = false
+        isResumeMode = false
         returnsAfterEditorClose = false
         phaseObserver = nil
         activationObserver = nil
         permissionTask?.cancel()
         permissionTask = nil
+        RoughCutMotionLayerStore.shared.clear()
         WindowCoordinator.shutdown()
         // An export job keeps its own immutable request and completion callback.
         retiredModel?.shutdownForApplicationTermination()
@@ -222,6 +214,13 @@ public final class WorkspaceRecorder {
         let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("\(id).mp4")
         _ = try makeRequest(temporary)
         let output = try onStart(id, wantsMotion, wantsMotion || wantsAIEditing ? editingPrompt : nil, wantsAIEditing)
+        if let activeEditor = WindowCoordinator.activeEditorModel,
+           let session = activeEditor.currentSession {
+            try? ProjectStore.saveProject(activeEditor.project, session: session)
+            if !isResumeMode, let archiveDest = archivePackageURL?(id) {
+                try? RoughCutPackageHelper.archivePackage(from: session.packageURL, to: archiveDest)
+            }
+        }
         let request: EditorExportRequest
         do { request = try makeRequest(output) }
         catch { onFinish(id, .failure(error)); throw error }
@@ -276,10 +275,11 @@ struct IntegratedExportSheet: View {
     }
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Text("完成录制").font(.title2.weight(.semibold))
+        let isResume = WorkspaceRecorder.shared.isResumeMode
+        return VStack(alignment: .leading, spacing: 20) {
+            Text(isResume ? "保存粗剪修改" : "完成录制").font(.title2.weight(.semibold))
             VStack(alignment: .leading, spacing: 12) {
-                Toggle("添加 AI 动效", isOn: $wantsMotion)
+                Toggle(isResume ? "重新生成 AI 动效" : "添加 AI 动效", isOn: $wantsMotion)
                 if wantsMotion {
                     VStack(alignment: .leading, spacing: 6) {
                         Toggle("引用素材库素材", isOn: $wantsAIEditing)
@@ -296,7 +296,7 @@ struct IntegratedExportSheet: View {
                 Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
                 WorkspaceRecorder.shared.exportPrimaryActionStyle(AnyView(
-                    Button("确定") { submit() }
+                    Button(isResume ? "保存并更新" : "确定") { submit() }
                         .keyboardShortcut(.defaultAction)
                         .disabled(mediaSession.prepared == nil)
                 ))

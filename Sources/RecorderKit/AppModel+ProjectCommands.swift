@@ -700,13 +700,6 @@ extension AppModel {
         requestOpenProject(at: packageURL)
     }
 
-    /// Opens a `.dogscproject` directly inside an embedded `EditorView` host
-    /// without routing through standalone `WindowCoordinator` windows.
-    func openEmbeddedProject(at packageURL: URL) {
-        let projectToFlush: RecorderProject? = (phase == .editor && currentSession != nil) ? project : nil
-        beginProjectOpen(at: packageURL, projectToFlush: projectToFlush)
-    }
-
     func updateSessionPackageURL(to newURL: URL) {
         let updatedSession = RecordingSession(packageURL: newURL)
         workspace.activate(session: updatedSession, isSaved: workspace.isSaved)

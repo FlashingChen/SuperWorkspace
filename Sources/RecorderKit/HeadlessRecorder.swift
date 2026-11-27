@@ -576,8 +576,7 @@ public final class HeadlessRecorder {
             var rawProject = RecorderProject()
             rawProject.capture = savedConfig ?? CaptureConfiguration()
             rawProject.zoomAnimations = autoZooms
-            rawProject.canvas.backgroundSource = RoughCutPackageStore.defaultStyledBackground()
-            try? RoughCutPackageStore.saveHeadlessPackage(
+            try? RoughCutPackageHelper.saveHeadlessPackage(
                 at: roughCutPackageURL,
                 rawScreenURL: rawURL,
                 project: rawProject,
@@ -619,7 +618,7 @@ public final class HeadlessRecorder {
         let roughCutPackageURL = outputURL
             .deletingLastPathComponent()
             .appendingPathComponent("roughcut.dogscproject", isDirectory: true)
-        try? RoughCutPackageStore.saveHeadlessPackage(
+        try? RoughCutPackageHelper.saveHeadlessPackage(
             at: roughCutPackageURL,
             rawScreenURL: rawURL,
             project: project,

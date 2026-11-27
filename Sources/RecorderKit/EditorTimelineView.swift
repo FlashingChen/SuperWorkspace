@@ -889,7 +889,6 @@ struct EditorTimelineView: View {
     @State var selectedCameraSyncAnchorID: UUID?
     @State var cameraSyncAnchorDrag: CameraSyncAnchorDrag?
     @ObservedObject var motionLayerStore = RoughCutMotionLayerStore.shared
-    @State var aiMotionDragOrigin: (id: String, start: Double, end: Double)?
 
     init(
         context: EditorSessionContext,

@@ -1,5 +1,4 @@
 import AVKit
-import RecorderKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -29,29 +28,6 @@ struct AssemblyView: View {
     @State private var showsSubtitlesSheet = false
     @State private var previewRate = 1.0
     @State private var importingMedia = false
-    @State private var editingSurface: EditingSurface = .clipStudio
-    @State private var showsMotionPromptPopover = false
-    @State private var draftMotionPrompt = ""
-
-    private enum EditingSurface: Equatable {
-        case clipStudio
-        case multiClipAssembly
-    }
-
-    private var activeSelectedMaterial: (index: Int, material: Material, timelineStart: Double)? {
-        var offset = 0.0
-        for (idx, m) in project.materials.enumerated() {
-            if m.id == selectedMaterial {
-                return (idx, m, offset)
-            }
-            offset += m.timelineDuration
-        }
-        if let idx = project.materials.firstIndex(where: { $0.sourceReady }) {
-            let prior = project.materials.prefix(idx).reduce(0.0) { $0 + $1.timelineDuration }
-            return (idx, project.materials[idx], prior)
-        }
-        return nil
-    }
 
     private var chatAgent: AssemblyAgent { state.assemblyAgent(for: project.id) }
 
@@ -70,27 +46,58 @@ struct AssemblyView: View {
                 }
             } else {
                 HStack(spacing: Metrics.space3) {
-                    VStack(spacing: Metrics.space2) {
-                        editingHeaderStrip
-                        Group {
-                            if editingSurface == .clipStudio, let active = activeSelectedMaterial {
-                                EmbeddedRoughCutEditorView(
-                                    materialID: active.material.id,
-                                    packageURL: ProjectLayout.roughCutPackage(active.material, in: project),
-                                    fallbackSourceURL: ProjectLayout.source(active.material, in: project),
-                                    title: active.material.displayTitle(index: active.index),
-                                    motionLayer: AppState.buildRoughCutMotionLayer(for: active.material, in: project),
-                                    onDidSave: {
-                                        state.bumpRoughCutRevision(project.id, active.material.id)
-                                    }
-                                )
-                                .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusIsland, style: .continuous))
-                                .studioIsland(cornerRadius: Metrics.radiusIsland)
-                            } else {
-                                multiClipAssemblyWorkspace
+                    // Left: Stage Preview + Floating Transport Pill + Floating Timeline Island
+                    GeometryReader { geometry in
+                        let minTimeline: CGFloat = 236
+                        let previewHeight = min(max(240, geometry.size.height * previewFraction),
+                                                max(240, geometry.size.height - minTimeline - 12))
+                        VStack(spacing: 0) {
+                            VStack(spacing: Metrics.space2_5) {
+                                previewStage
+                                floatingTransportPill
                             }
+                            .padding(.top, Metrics.space1)
+                            .frame(height: previewHeight)
+
+                            Rectangle().fill(Color.clear).frame(height: 12)
+                                .overlay {
+                                    Capsule()
+                                        .fill(palette.surface3)
+                                        .frame(width: 36, height: 3)
+                                }
+                                .contentShape(Rectangle())
+                                .onHover { ($0 ? NSCursor.resizeUpDown : NSCursor.arrow).set() }
+                                .gesture(DragGesture().onChanged { value in
+                                    if dragOrigin == nil { dragOrigin = previewHeight }
+                                    previewFraction = min(0.80, max(0.32, ((dragOrigin ?? previewHeight) + value.translation.height) / max(1, geometry.size.height)))
+                                }.onEnded { _ in dragOrigin = nil; remember(flush: true) })
+                                .accessibilityLabel("预览区域高度")
+                                .accessibilityAdjustableAction { direction in
+                                    previewFraction = min(0.80, max(0.32, previewFraction + (direction == .increment ? 0.05 : -0.05)))
+                                }
+
+                            AssemblyTimeline(
+                                project: project,
+                                playhead: playhead,
+                                isPlaying: isPlaying,
+                                canPlay: player.currentItem != nil,
+                                selectedMaterial: $selectedMaterial,
+                                selectedSubtitle: $selectedSubtitle,
+                                selectedInsert: $selectedInsert,
+                                focusSubtitle: $focusSubtitle,
+                                showsSubtitlesPreview: $showsSubtitlesPreview,
+                                previewRate: $previewRate,
+                                editingCaption: focusedSubtitle != nil || showsSubtitlesSheet,
+                                onSeek: seek,
+                                onPlay: togglePlayback,
+                                onMove: { state.reorderMaterial(project.id, source: $0, target: $1, after: $2) },
+                                onOpenSubtitles: { showsSubtitlesSheet = true },
+                                zoom: $zoom
+                            )
+                            .frame(maxHeight: .infinity)
+                            .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusIsland, style: .continuous))
+                            .studioIsland(cornerRadius: Metrics.radiusIsland)
                         }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -100,10 +107,7 @@ struct AssemblyView: View {
                             project: project,
                             agent: chatAgent,
                             focusContext: editorFocusContext,
-                            onPlayPreview: { focusTime in
-                                editingSurface = .multiClipAssembly
-                                playFrom(focusTime)
-                            },
+                            onPlayPreview: { focusTime in playFrom(focusTime) },
                             onImportMedia: { importingMedia = true },
                             onOpenLibrary: onOpenLibrary,
                             onClose: {
@@ -133,26 +137,13 @@ struct AssemblyView: View {
             playhead = session.playhead.isFinite ? max(0, session.playhead) : 0
             zoom = min(64, max(0.5, session.zoom))
             previewFraction = min(0.80, max(0.28, session.previewHeight))
-            selectedMaterial = session.selectedMaterial ?? project.materials.first(where: { $0.sourceReady })?.id
+            selectedMaterial = session.selectedMaterial
             selectedSubtitle = session.selectedSubtitle
             restored = true
-            if editingSurface == .multiClipAssembly {
-                schedulePreview()
-            }
+            schedulePreview()
             Task { await state.lockCanvas(project.id) }
         }
-        .onChange(of: editingSurface) { _, next in
-            if next == .multiClipAssembly {
-                schedulePreview()
-            } else {
-                stopPreview()
-            }
-        }
-        .onChange(of: previewKey) { _, _ in
-            if editingSurface == .multiClipAssembly {
-                schedulePreview()
-            }
-        }
+        .onChange(of: previewKey) { _, _ in schedulePreview() }
         .onChange(of: playhead) { _, _ in remember() }
         .onChange(of: zoom) { _, _ in remember(flush: true) }
         .onChange(of: selectedSubtitle) { _, _ in remember(flush: true) }
@@ -168,203 +159,15 @@ struct AssemblyView: View {
                 focusedSubtitle = key
             }
         }
-        .onChange(of: selectedMaterial) { _, _ in
-            remember(flush: true)
-        }
+        .onChange(of: selectedMaterial) { _, _ in remember(flush: true) }
         .onChange(of: project.materials.map(\.id)) { _, ids in
             if let selectedMaterial, !ids.contains(selectedMaterial) {
-                self.selectedMaterial = project.materials.first(where: { $0.sourceReady })?.id
+                self.selectedMaterial = nil
                 selectedSubtitle = nil
                 selectedInsert = nil
             }
         }
         .onDisappear { remember(flush: true); restored = false; rebuildTask?.cancel(); stopPreview() }
-    }
-
-    // MARK: - Unified Editing Header Strip
-
-    private var editingHeaderStrip: some View {
-        HStack(spacing: Metrics.space2) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: Metrics.space1_5) {
-                    ForEach(Array(project.materials.enumerated()), id: \.element.id) { idx, material in
-                        let isSelected = activeSelectedMaterial?.material.id == material.id
-                        Button {
-                            selectedMaterial = material.id
-                            editingSurface = .clipStudio
-                        } label: {
-                            HStack(spacing: 5) {
-                                Text(String(format: "%02d", idx + 1))
-                                    .font(.studio(.micro, weight: .semibold))
-                                    .monospacedDigit()
-                                    .foregroundStyle(isSelected ? palette.onAccent.opacity(0.85) : palette.textSecondary)
-                                Text(material.displayTitle(index: idx))
-                                    .lineLimit(1)
-                                if material.wantsMotion && material.useOriginal != true && material.motionState == .complete {
-                                    Image(systemName: "sparkles")
-                                        .font(.system(size: 10, weight: .semibold))
-                                        .foregroundStyle(isSelected ? palette.onAccent : palette.ai)
-                                }
-                            }
-                        }
-                        .buttonStyle(StudioButtonStyle(kind: isSelected && editingSurface == .clipStudio ? .primary : .secondary, size: .compact))
-                        .disabled(!material.sourceReady)
-                    }
-                }
-            }
-
-            if let active = activeSelectedMaterial {
-                let material = active.material
-                let isAIMotionOn: Bool = {
-                    if material.motionState == .complete {
-                        return material.wantsMotion && material.useOriginal != true
-                    }
-                    return material.wantsMotion && [.queued, .running].contains(material.motionState)
-                }()
-                let isBusy = [.queued, .running].contains(material.motionState)
-                    || state.motionPhases[material.mediaID] != nil
-
-                Divider().frame(height: 18).overlay(palette.hairline)
-
-                HStack(spacing: Metrics.space1_5) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(isAIMotionOn ? palette.ai : palette.textSecondary)
-                    Text("AI 动效")
-                        .font(.studio(.caption))
-                        .foregroundStyle(palette.textPrimary)
-                    if isBusy {
-                        ProgressView().controlSize(.mini)
-                    }
-                    Toggle("AI 动效", isOn: Binding(
-                        get: { isAIMotionOn },
-                        set: { enabled in
-                            if enabled && material.motionState != .complete {
-                                draftMotionPrompt = material.editingPrompt ?? ""
-                                showsMotionPromptPopover = true
-                            } else {
-                                state.toggleMaterialAIMotion(project.id, material.id, enabled: enabled)
-                            }
-                        }
-                    ))
-                    .labelsHidden()
-                    .toggleStyle(StudioToggleStyle())
-                    .disabled(project.isFrozen == true || !material.sourceReady)
-                    .popover(isPresented: $showsMotionPromptPopover, arrowEdge: .bottom) {
-                        VStack(alignment: .leading, spacing: Metrics.space2_5) {
-                            Text("为当前片段生成 AI 动效")
-                                .font(.studio(.smallStrong))
-                                .foregroundStyle(palette.textPrimary)
-                            TextField("可选提示词：例如讲到重点时加入关键数据卡片", text: $draftMotionPrompt, axis: .vertical)
-                                .textFieldStyle(StudioTextFieldStyle())
-                                .lineLimit(2...4)
-                            HStack {
-                                Button("取消") { showsMotionPromptPopover = false }
-                                    .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
-                                Spacer()
-                                Button("开始生成", systemImage: "sparkles") {
-                                    showsMotionPromptPopover = false
-                                    state.toggleMaterialAIMotion(
-                                        project.id,
-                                        material.id,
-                                        enabled: true,
-                                        prompt: draftMotionPrompt
-                                    )
-                                }
-                                .buttonStyle(StudioButtonStyle(kind: .primary, size: .compact))
-                            }
-                        }
-                        .padding(Metrics.space3)
-                        .frame(width: 300)
-                        .background(palette.island)
-                    }
-                }
-                .padding(.horizontal, Metrics.space2)
-                .padding(.vertical, 3)
-                .background(palette.surface2, in: Capsule())
-
-                Button("字幕", systemImage: "captions.bubble") {
-                    showsSubtitlesSheet = true
-                }
-                .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
-                .help("编辑与复核项目字幕")
-
-                if project.materials.count > 1, editingSurface == .clipStudio {
-                    Button("样式同步全部", systemImage: "square.on.square") {
-                        state.applyRoughCutStyleToAll(project.id, from: material.id)
-                    }
-                    .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
-                    .help("将当前片段的画面背景与光标样式同步到项目全部片段")
-                }
-            }
-
-            Divider().frame(height: 18).overlay(palette.hairline)
-
-            HStack(spacing: 2) {
-                Button("单段编辑") { editingSurface = .clipStudio }
-                    .buttonStyle(StudioButtonStyle(kind: editingSurface == .clipStudio ? .primary : .quiet, size: .compact))
-                Button("多段拼装") { editingSurface = .multiClipAssembly }
-                    .buttonStyle(StudioButtonStyle(kind: editingSurface == .multiClipAssembly ? .primary : .quiet, size: .compact))
-            }
-        }
-        .padding(.horizontal, Metrics.space2_5)
-        .padding(.vertical, Metrics.space1_5)
-        .studioIsland(cornerRadius: Metrics.radiusIsland)
-    }
-
-    private var multiClipAssemblyWorkspace: some View {
-        GeometryReader { geometry in
-            let minTimeline: CGFloat = 236
-            let previewHeight = min(max(240, geometry.size.height * previewFraction),
-                                    max(240, geometry.size.height - minTimeline - 12))
-            VStack(spacing: 0) {
-                VStack(spacing: Metrics.space2_5) {
-                    previewStage
-                    floatingTransportPill
-                }
-                .padding(.top, Metrics.space1)
-                .frame(height: previewHeight)
-
-                Rectangle().fill(Color.clear).frame(height: 12)
-                    .overlay {
-                        Capsule()
-                            .fill(palette.surface3)
-                            .frame(width: 36, height: 3)
-                    }
-                    .contentShape(Rectangle())
-                    .onHover { ($0 ? NSCursor.resizeUpDown : NSCursor.arrow).set() }
-                    .gesture(DragGesture().onChanged { value in
-                        if dragOrigin == nil { dragOrigin = previewHeight }
-                        previewFraction = min(0.80, max(0.32, ((dragOrigin ?? previewHeight) + value.translation.height) / max(1, geometry.size.height)))
-                    }.onEnded { _ in dragOrigin = nil; remember(flush: true) })
-                    .accessibilityLabel("预览区域高度")
-                    .accessibilityAdjustableAction { direction in
-                        previewFraction = min(0.80, max(0.32, previewFraction + (direction == .increment ? 0.05 : -0.05)))
-                    }
-
-                AssemblyTimeline(
-                    project: project,
-                    playhead: playhead,
-                    isPlaying: isPlaying,
-                    canPlay: player.currentItem != nil,
-                    selectedMaterial: $selectedMaterial,
-                    selectedSubtitle: $selectedSubtitle,
-                    selectedInsert: $selectedInsert,
-                    focusSubtitle: $focusSubtitle,
-                    showsSubtitlesPreview: $showsSubtitlesPreview,
-                    previewRate: $previewRate,
-                    editingCaption: focusedSubtitle != nil || showsSubtitlesSheet,
-                    onSeek: seek,
-                    onPlay: togglePlayback,
-                    onMove: { state.reorderMaterial(project.id, source: $0, target: $1, after: $2) },
-                    onOpenSubtitles: { showsSubtitlesSheet = true },
-                    zoom: $zoom
-                )
-                .frame(maxHeight: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusIsland, style: .continuous))
-                .studioIsland(cornerRadius: Metrics.radiusIsland)
-            }
-        }
     }
 
     // MARK: - Preview Stage
@@ -956,7 +759,6 @@ struct AssemblyPreviewInputs: Equatable {
         let outPoint: Double
         let playbackSpeed: Double
         let inserts: [AIEditing.Insert]?
-        let roughCutRevision: Int?
     }
     let clips: [ClipSignature]
     let audioClips: [AudioClip]?
@@ -974,8 +776,7 @@ struct AssemblyPreviewInputs: Equatable {
                 inPoint: $0.inPoint,
                 outPoint: $0.outPoint,
                 playbackSpeed: $0.playbackSpeed,
-                inserts: $0.inserts,
-                roughCutRevision: $0.roughCutRevision
+                inserts: $0.inserts
             )
         }
         audioClips = project.audioClips

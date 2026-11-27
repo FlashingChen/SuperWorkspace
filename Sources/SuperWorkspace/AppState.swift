@@ -1,7 +1,6 @@
 import AVFoundation
 import AppKit
 import Foundation
-import RecorderCore
 import RecorderKit
 import SwiftUI
 import UniformTypeIdentifiers
@@ -307,6 +306,29 @@ final class AppState: ObservableObject {
               let material = project.materials.first(where: { $0.id == id }) ?? project.materials.first(where: { $0.mediaID == id }) else { return nil }
         return (project, material)
     }
+    private func configureRecorderStyles(_ recorder: WorkspaceRecorder) {
+        recorder.returnActionStyle = { content in
+            AnyView(ThemedContent {
+                content.buttonStyle(StudioButtonStyle(kind: .secondary, size: .compact))
+            })
+        }
+        recorder.exportSheetStyle = { content in
+            AnyView(ThemedContent { StudioSheetSurface { content } })
+        }
+        recorder.exportPrimaryActionStyle = { content in
+            AnyView(content.buttonStyle(StudioButtonStyle(kind: .primary)))
+        }
+        recorder.exportPromptField = { prompt in
+            AnyView(VStack(alignment: .leading, spacing: Metrics.space2) {
+                Text("剪辑提示词").font(.studio(.bodyMedium))
+                TextField("例如：讲到结论时加入关键词动效", text: prompt, axis: .vertical)
+                    .textFieldStyle(StudioTextFieldStyle())
+                    .lineLimit(3...5)
+                    .accessibilityLabel("剪辑提示词")
+            })
+        }
+    }
+
     func record() {
         guard let projectID = selectedProjectID else { return }
         guard projects.first(where: { $0.id == projectID })?.isFrozen != true else {
@@ -320,128 +342,216 @@ final class AppState: ObservableObject {
         }
         let transition = WorkspaceRecordingTransition.shared
         transition.prepare()
-        recorder.returnActionStyle = { content in
-            AnyView(ThemedContent {
-                content.buttonStyle(StudioButtonStyle(kind: .secondary, size: .compact))
-            })
-        }
-        recorder.presentDirectCapture(onPresent: transition.collapse, onReturn: transition.restore) { [weak self] packageURL, capturedProject in
-            guard let self, let project = self.projects.first(where: { $0.id == projectID }) else { return }
-            let id = UUID()
+        configureRecorderStyles(recorder)
+        recorder.present(onPresent: transition.collapse, onReturn: transition.restore, onStart: { [weak self] id, wantsMotion, editingPrompt, wantsAIEditing in
+            guard let self, let project = self.projects.first(where: { $0.id == projectID }) else {
+                throw CocoaError(.fileNoSuchFile)
+            }
+            if wantsMotion, !SettingsStore.shared.hasAIConnection {
+                throw ShellError.exitStatus(-1, "AI 动效尚未配置，请先在设置中连接 API 或选择执行器。")
+            }
+            if wantsAIEditing, !project.referenceMedia.isEmpty, !SettingsStore.shared.hasAIConnection {
+                throw ShellError.exitStatus(-1, "AI 剪辑尚未配置，请先在设置中连接 API 或选择执行器。")
+            }
             var material = Material()
             material.id = id
-            material.exportState = .running
-            material.wantsMotion = false
-            material.motionState = .idle
-            let materialDir = ProjectLayout.materialDirectory(material, in: project)
-            let destPackageURL = ProjectLayout.roughCutPackage(material, in: project)
-            let destSourceURL = ProjectLayout.source(material, in: project)
-            do {
-                try FileManager.default.createDirectory(at: materialDir, withIntermediateDirectories: true)
-                try RoughCutPackageStore.archivePackage(from: packageURL, to: destPackageURL)
-                var styled = capturedProject
-                if case .pattern = styled.canvas.backgroundSource {
-                    styled.canvas.backgroundSource = RoughCutPackageStore.defaultStyledBackground()
-                    try? RoughCutPackageStore.save(styled, at: destPackageURL)
-                }
-                guard let loaded = RoughCutPackageStore.load(at: destPackageURL),
-                      let screenURL = loaded.screenURL else {
-                    self.showToast("录制文件缺失，无法导入到编辑面板。")
-                    return
-                }
-                if FileManager.default.fileExists(atPath: destSourceURL.path) {
-                    try FileManager.default.removeItem(at: destSourceURL)
-                }
-                try FileManager.default.copyItem(at: screenURL, to: destSourceURL)
-                var updated = project
-                updated.materials.append(material)
-                updated.updatedAt = Date()
-                try ProjectLayout.save(updated)
-                if let i = self.projects.firstIndex(where: { $0.id == projectID }) { self.projects[i] = updated }
+            material.wantsMotion = wantsMotion
+            material.editingPrompt = editingPrompt
+            material.wantsAIEditing = wantsAIEditing
+            material.motionState = wantsMotion ? .queued : .idle
+            try FileManager.default.createDirectory(at: ProjectLayout.materialDirectory(material, in: project), withIntermediateDirectories: true)
+            var updated = project
+            updated.materials.append(material)
+            updated.updatedAt = Date()
+            try ProjectLayout.save(updated)
+            if let i = self.projects.firstIndex(where: { $0.id == projectID }) { self.projects[i] = updated }
+            return ProjectLayout.source(material, in: project)
+        }, archivePackageURL: { [weak self] id in
+            guard let self, let (project, material) = self.pair(projectID, id) else { return nil }
+            return ProjectLayout.roughCutPackage(material, in: project)
+        }, onFinish: { [weak self] id, result in
+            guard let self else { return }
+            switch result {
+            case .success(let url):
                 Task {
-                    let duration = await RoughCutService.duration(of: destSourceURL) ?? 0
+                    let duration = await RoughCutService.duration(of: url) ?? 0
                     guard duration > 0, duration.isFinite else {
-                        self.updateMaterial(projectID, id) { $0.exportState = .failed; $0.exportError = "录制的视频无法读取。" }
+                        self.updateMaterial(projectID, id) { $0.exportState = .failed; $0.exportError = "导出的视频无法读取。" }
                         return
                     }
-                    self.updateMaterial(projectID, id) {
-                        $0.duration = duration
-                        $0.exportState = .complete
-                        $0.roughCutRevision = 1
-                    }
+                    self.updateMaterial(projectID, id) { $0.duration = duration; $0.exportState = .complete }
                     await self.lockCanvas(projectID)
                     self.processMaterial(projectID, id)
-                    self.stage = .assemble
-                    var session = self.editorSession(projectID)
-                    session.selectedMaterial = id
-                    self.rememberEditor(projectID, session, flush: true)
-                    self.showToast("录制完成，已进入编辑面板")
+                    self.startAIEditing(projectID, id)
+                    self.showToast("素材已添加，后台处理中")
                 }
-            } catch {
-                self.showToast("导入录制失败：\(error.localizedDescription)")
+            case .failure(let error):
+                self.updateMaterial(projectID, id) { $0.exportState = .failed; $0.exportError = error.localizedDescription }
             }
-        }
+        })
     }
 
-    // MARK: - Unified Editing Panel Rough-Cut & AI Motion Controls
-
-    func loadRoughCutProject(_ projectID: UUID, _ materialID: UUID) -> RecorderProject? {
-        guard let (project, material) = pair(projectID, materialID) else { return nil }
-        let packageURL = ProjectLayout.roughCutPackage(material, in: project)
-        if let loaded = RoughCutPackageStore.load(at: packageURL) {
-            return loaded.project
-        }
-        let sourceURL = ProjectLayout.source(material, in: project)
-        let index = project.materials.firstIndex(where: { $0.id == material.id }) ?? 0
-        return (try? RoughCutPackageStore.ensurePackage(
-            at: packageURL,
-            fallbackSourceURL: sourceURL,
-            title: material.displayTitle(index: index)
-        ))?.project
-    }
-
-    func hasRoughCutCamera(_ projectID: UUID, _ materialID: UUID) -> Bool {
-        guard let (project, material) = pair(projectID, materialID) else { return false }
-        return RoughCutPackageStore.load(at: ProjectLayout.roughCutPackage(material, in: project))?.cameraURL != nil
-    }
-
-    func updateRoughCutProject(
-        _ projectID: UUID,
-        _ materialID: UUID,
-        mutate: (inout RecorderProject) -> Void
-    ) {
-        guard let (project, material) = pair(projectID, materialID), project.isFrozen != true else { return }
-        let packageURL = ProjectLayout.roughCutPackage(material, in: project)
-        let sourceURL = ProjectLayout.source(material, in: project)
-        let index = project.materials.firstIndex(where: { $0.id == material.id }) ?? 0
-        guard var roughCut = RoughCutPackageStore.load(at: packageURL)?.project
-                ?? (try? RoughCutPackageStore.ensurePackage(
-                    at: packageURL,
-                    fallbackSourceURL: sourceURL,
-                    title: material.displayTitle(index: index)
-                ))?.project else {
+    /// Resumes an existing material in the Rough Cutting Panel (in-place rough-cut re-edit).
+    /// Activates the AI Motion Layer ONLY when this material already has AI motion outputs.
+    func resumeRoughCut(_ projectID: UUID, _ materialID: UUID) {
+        guard let (project, material) = pair(projectID, materialID) else { return }
+        guard project.isFrozen != true else {
+            showToast("项目已冻结，取消冻结后再进行粗剪。")
             return
         }
-        mutate(&roughCut)
+        guard material.sourceReady else {
+            showToast("素材尚未就绪，暂不能进入粗剪面板。")
+            return
+        }
+        let sourceURL = ProjectLayout.source(material, in: project)
+        guard FileManager.default.fileExists(atPath: sourceURL.path) else {
+            showToast("找不到原始素材文件。")
+            return
+        }
+        let recorder = WorkspaceRecorder.shared
+        if recorder.hasOpenSession {
+            recorder.bringToFront()
+            return
+        }
+        let packageURL = ProjectLayout.roughCutPackage(material, in: project)
+        let motionLayer = Self.buildRoughCutMotionLayer(for: material, in: project)
+        let index = project.materials.firstIndex(where: { $0.id == material.id }) ?? 0
+        let title = material.displayTitle(index: index)
+
+        let transition = WorkspaceRecordingTransition.shared
+        transition.prepare()
+        configureRecorderStyles(recorder)
+
+        var pendingWantsMotion = false
+        var pendingPrompt: String?
+        var pendingWantsAIEditing = false
         do {
-            try RoughCutPackageStore.save(roughCut, at: packageURL)
-            updateMaterial(projectID, materialID) { m in
-                m.roughCutRevision = (m.roughCutRevision ?? 0) + 1
+            RoughCutMotionLayerStore.shared.onRequestRefinement = { [weak self] clip, instruction in
+                self?.refineRoughCutMotionClip(projectID, materialID, clip: clip, instruction: instruction)
             }
+            try recorder.resume(
+                packageURL: packageURL,
+                fallbackSourceURL: sourceURL,
+                title: title,
+                motionLayer: motionLayer,
+                onPresent: transition.collapse,
+                onReturn: transition.restore,
+                onStart: { [weak self] jobID, wantsMotion, editingPrompt, wantsAIEditing in
+                    guard let self, let (currentProject, currentMaterial) = self.pair(projectID, materialID) else {
+                        throw CocoaError(.fileNoSuchFile)
+                    }
+                    if wantsMotion, !SettingsStore.shared.hasAIConnection {
+                        throw ShellError.exitStatus(-1, "AI 动效尚未配置，请先在设置中连接 API 或选择执行器。")
+                    }
+                    pendingWantsMotion = wantsMotion
+                    pendingPrompt = editingPrompt
+                    pendingWantsAIEditing = wantsAIEditing
+                    self.updateMaterial(projectID, materialID) {
+                        $0.exportState = .running
+                        $0.exportError = nil
+                    }
+                    let dir = ProjectLayout.materialDirectory(currentMaterial, in: currentProject)
+                    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                    return dir.appendingPathComponent("roughcut-export-\(jobID.uuidString).mp4")
+                },
+                onFinish: { [weak self] _, result in
+                    guard let self else { return }
+                    switch result {
+                    case .success(let exportedURL):
+                        Task {
+                            let duration = await RoughCutService.duration(of: exportedURL) ?? 0
+                            guard duration > 0, duration.isFinite else {
+                                try? FileManager.default.removeItem(at: exportedURL)
+                                self.updateMaterial(projectID, materialID) {
+                                    $0.exportState = .complete
+                                    $0.exportError = "粗剪导出的视频无法读取，已保留原素材。"
+                                }
+                                return
+                            }
+                            if let (latestProject, latestMaterial) = self.pair(projectID, materialID) {
+                                let targetSource = ProjectLayout.source(latestMaterial, in: latestProject)
+                                do {
+                                    if FileManager.default.fileExists(atPath: targetSource.path) {
+                                        _ = try FileManager.default.replaceItemAt(targetSource, withItemAt: exportedURL)
+                                    } else {
+                                        try FileManager.default.moveItem(at: exportedURL, to: targetSource)
+                                    }
+                                } catch {
+                                    try? FileManager.default.removeItem(at: exportedURL)
+                                    self.updateMaterial(projectID, materialID) {
+                                        $0.exportState = .complete
+                                        $0.exportError = "更新素材失败：\(error.localizedDescription)"
+                                    }
+                                    return
+                                }
+                            }
+                            self.updateMaterial(projectID, materialID) {
+                                $0.duration = duration
+                                $0.exportState = .complete
+                                $0.exportError = nil
+                                if pendingWantsMotion {
+                                    $0.wantsMotion = true
+                                    $0.editingPrompt = pendingPrompt ?? $0.editingPrompt
+                                    $0.wantsAIEditing = pendingWantsAIEditing
+                                    $0.motionState = .queued
+                                }
+                            }
+                            if pendingWantsMotion {
+                                self.enqueueMotion(projectID, materialID)
+                            }
+                            self.showToast("粗剪修改已保存并更新素材")
+                        }
+                    case .failure(let error):
+                        self.updateMaterial(projectID, materialID) {
+                            $0.exportState = .complete
+                            $0.exportError = error.localizedDescription
+                        }
+                    }
+                }
+            )
         } catch {
-            showToast("保存粗剪参数失败：\(error.localizedDescription)")
+            transition.restore(from: nil)
+            showToast("无法打开粗剪面板：\(error.localizedDescription)")
         }
     }
 
-    func bumpRoughCutRevision(_ projectID: UUID, _ materialID: UUID) {
-        updateMaterial(projectID, materialID) { m in
-            m.roughCutRevision = (m.roughCutRevision ?? 0) + 1
+    /// Dispatches a shot-level AI motion refinement from the Rough Cutting Panel's read-only AI Motion track popover.
+    func refineRoughCutMotionClip(
+        _ projectID: UUID,
+        _ materialID: UUID,
+        clip: RoughCutMotionClip,
+        instruction: String
+    ) {
+        guard let (project, material) = pair(projectID, materialID) else {
+            RoughCutMotionLayerStore.shared.failRefinement("找不到对应素材。")
+            return
+        }
+        guard project.isFrozen != true else {
+            RoughCutMotionLayerStore.shared.failRefinement("项目已冻结，取消冻结后再修改动效。")
+            return
+        }
+        guard SettingsStore.shared.hasAIConnection else {
+            RoughCutMotionLayerStore.shared.failRefinement("AI 动效尚未配置，请先在设置中连接 API 或选择执行器。")
+            return
+        }
+        guard motionTasks[material.mediaID] == nil,
+              !motionQueue.contains(where: { $0.1 == material.mediaID }) else {
+            RoughCutMotionLayerStore.shared.failRefinement("该素材的动效正在处理中，请等待完成。")
+            return
+        }
+        let dir = ProjectLayout.materialDirectory(material, in: project)
+        let manifest = MotionManifest.load(in: dir)
+        if let target = manifest?.target(id: clip.targetID) ?? manifest?.targets(at: clip.start + 0.1).first {
+            let directive = MotionManifest.refinementBrief(target: target, instruction: instruction)
+            refineMotionShot(projectID, materialID, directive: directive)
+        } else {
+            regenerateMotion(projectID, materialID, instruction: instruction)
         }
     }
 
-    /// Builds the AI Motion Layer context for a material ONLY when AI motion is enabled and outputs exist.
+    /// Builds the read-only AI Motion overlay layer context for a material ONLY if AI motion outputs already exist.
+    /// Returns `nil` for materials without AI motion so the layer stays hidden.
     static func buildRoughCutMotionLayer(for material: Material, in project: VideoProject) -> RoughCutMotionLayerContext? {
-        guard material.wantsMotion, material.useOriginal != true else { return nil }
         let dir = ProjectLayout.materialDirectory(material, in: project)
         let motionURL = ProjectLayout.motion(material, in: project)
         let hasMotionFile = FileManager.default.fileExists(atPath: motionURL.path)
@@ -473,6 +583,7 @@ final class AppState: ObservableObject {
                 if let url = findCachedFile(prefix: "overlay-\(overlay.id)-", allowedExtensions: ["mov", "mp4"]) {
                     clips.append(RoughCutMotionClip(
                         id: "overlay:\(overlay.id)",
+                        targetID: overlay.id,
                         title: overlay.composition,
                         kind: .overlay,
                         start: overlay.start,
@@ -489,6 +600,7 @@ final class AppState: ObservableObject {
                 if let url = findCachedFile(prefix: "shot-\(shot.id)-", allowedExtensions: ["mp4", "mov"]) {
                     clips.append(RoughCutMotionClip(
                         id: "shot:\(shot.id)",
+                        targetID: shot.id,
                         title: shot.composition,
                         kind: .shot,
                         start: shot.start,
@@ -503,6 +615,7 @@ final class AppState: ObservableObject {
             let totalEnd = max(material.duration, 0.1)
             clips.append(RoughCutMotionClip(
                 id: "motion:full",
+                targetID: "",
                 title: "AI 动效层",
                 kind: .full,
                 start: 0,
@@ -514,140 +627,12 @@ final class AppState: ObservableObject {
         guard !clips.isEmpty else { return nil }
         clips.sort { $0.start < $1.start }
 
-        let stateURL = ProjectLayout.roughCutMotionLayerState(material, in: project)
-        var isLayerVisible = true
-        if let savedData = try? Data(contentsOf: stateURL),
-           let saved = try? JSONDecoder().decode(RoughCutMotionLayerContext.self, from: savedData) {
-            isLayerVisible = saved.isLayerVisible
-            let savedByID = Dictionary(uniqueKeysWithValues: saved.clips.map { ($0.id, $0) })
-            clips = clips.map { clip in
-                guard let prior = savedByID[clip.id] else { return clip }
-                var merged = clip
-                merged.isEnabled = prior.isEnabled
-                merged.opacity = prior.opacity
-                merged.start = prior.start
-                merged.end = prior.end
-                return merged
-            }
-        }
-
         return RoughCutMotionLayerContext(
             materialID: material.id,
             clips: clips,
-            isLayerVisible: isLayerVisible,
             canvasWidth: manifest?.width.map(Double.init),
-            canvasHeight: manifest?.height.map(Double.init),
-            persistencePath: stateURL.path
+            canvasHeight: manifest?.height.map(Double.init)
         )
-    }
-
-    func applyRoughCutStyleToAll(_ projectID: UUID, from sourceMaterialID: UUID) {
-        guard let (project, _) = pair(projectID, sourceMaterialID),
-              project.isFrozen != true,
-              let template = loadRoughCutProject(projectID, sourceMaterialID) else { return }
-        for target in project.materials where target.id != sourceMaterialID && target.sourceReady {
-            updateRoughCutProject(projectID, target.id) { rc in
-                rc.canvas = template.canvas
-                rc.cursorStyle = template.cursorStyle
-            }
-        }
-        showToast("已将画面与光标样式应用到全部片段")
-    }
-
-    /// Unified per-clip AI Motion toggle in Editing Panel:
-    /// - Turning ON: if AI motion is already complete, switches to AI motion (`useOriginal = false`);
-    ///   otherwise sets `wantsMotion = true` and enqueues AI motion generation.
-    /// - Turning OFF: switches back to original real-time rough-cut view (`useOriginal = true`),
-    ///   and cancels an in-flight motion job if it hasn't completed yet.
-    func toggleMaterialAIMotion(
-        _ projectID: UUID,
-        _ materialID: UUID,
-        enabled: Bool,
-        prompt: String? = nil
-    ) {
-        guard let (project, material) = pair(projectID, materialID), project.isFrozen != true else { return }
-        if enabled {
-            if material.motionState == .complete {
-                updateMaterial(projectID, materialID) {
-                    $0.wantsMotion = true
-                    $0.useOriginal = false
-                }
-                showToast("已开启该片段的 AI 动效")
-                return
-            }
-            guard SettingsStore.shared.hasAIConnection else {
-                showToast("AI 动效尚未配置，请先在设置中连接 API 或选择执行器。")
-                return
-            }
-            let trimmedPrompt = prompt?.trimmingCharacters(in: .whitespacesAndNewlines)
-            updateMaterial(projectID, materialID) {
-                $0.wantsMotion = true
-                $0.useOriginal = false
-                if let trimmedPrompt, !trimmedPrompt.isEmpty {
-                    $0.editingPrompt = trimmedPrompt
-                }
-                $0.motionState = .queued
-                $0.motionError = nil
-            }
-            enqueueMotion(projectID, materialID)
-            showToast("已开始为该片段生成 AI 动效")
-        } else {
-            if [.queued, .running].contains(material.motionState) {
-                cancelProcessing(projectID, materialID, motion: true)
-            }
-            updateMaterial(projectID, materialID) {
-                $0.useOriginal = true
-            }
-            showToast("已切回实时粗剪画面")
-        }
-    }
-
-    func applySilenceCut(_ projectID: UUID, _ materialID: UUID) {
-        guard let (project, material) = pair(projectID, materialID),
-              project.isFrozen != true,
-              material.sourceReady else { return }
-        let sourceURL = ProjectLayout.source(material, in: project)
-        showToast("正在检测静音气口…")
-        Task {
-            do {
-                let keepRanges = try await RoughCutSilenceAnalyzer.detectSpeechRanges(in: sourceURL)
-                let clipped = keepRanges.compactMap { range -> (Double, Double)? in
-                    let s = max(material.inPoint, range.start)
-                    let e = min(material.outPoint, range.end)
-                    return e - s >= 0.2 ? (s, e) : nil
-                }
-                guard !clipped.isEmpty else {
-                    self.showToast("未检测到可保留的有效人声片段")
-                    return
-                }
-                if clipped.count == 1,
-                   abs(clipped[0].0 - material.inPoint) < 0.15,
-                   abs(clipped[0].1 - material.outPoint) < 0.15 {
-                    self.showToast("未发现明显静音气口")
-                    return
-                }
-                _ = self.updateProject(projectID) { p in
-                    guard let idx = p.materials.firstIndex(where: { $0.id == materialID }) else { return }
-                    let base = p.materials[idx]
-                    var replacements: [Material] = []
-                    for (offset, seg) in clipped.enumerated() {
-                        var copy = base
-                        if offset > 0 {
-                            copy.id = UUID()
-                            copy.storageID = base.mediaID
-                        }
-                        copy.trimStart = seg.0
-                        copy.trimEnd = seg.1
-                        replacements.append(copy)
-                    }
-                    p.materials.replaceSubrange(idx...idx, with: replacements)
-                }
-                let removed = max(0, (material.outPoint - material.inPoint) - clipped.reduce(0) { $0 + ($1.1 - $1.0) })
-                self.showToast(String(format: "已剪除 %.1f 秒静音气口（保留 %d 段）", removed, clipped.count))
-            } catch {
-                self.showToast("静音气口检测失败：\(error.localizedDescription)")
-            }
-        }
     }
     func processMaterial(_ projectID: UUID, _ id: UUID) {
         guard let (_, material) = pair(projectID, id), material.exportState == .complete else { return }
@@ -919,6 +904,11 @@ final class AppState: ObservableObject {
                             guard let label = AppState.motionPhaseLabel(progress) else { return }
                             if progress.type == "budget" { self.motionBudgetHolds[id] = nil }
                             self.motionPhases[id] = label
+                            if let ctxMatID = RoughCutMotionLayerStore.shared.context?.materialID,
+                               let (_, m) = self.pair(projectID, ctxMatID),
+                               m.mediaID == id {
+                                RoughCutMotionLayerStore.shared.updateRefinementProgress(label)
+                            }
                         }
                     }
                 }
@@ -968,6 +958,13 @@ final class AppState: ObservableObject {
                 motionAttempts[id] = nil
                 motionStartedAt[id] = nil
                 updateMaterial(projectID, id) { $0.motionState = .complete }
+                if let ctxMatID = RoughCutMotionLayerStore.shared.context?.materialID,
+                   let (updatedProject, updatedMaterial) = pair(projectID, ctxMatID),
+                   updatedMaterial.mediaID == id {
+                    RoughCutMotionLayerStore.shared.reloadAfterRefinement(
+                        Self.buildRoughCutMotionLayer(for: updatedMaterial, in: updatedProject)
+                    )
+                }
             } catch {
                 let message = error.localizedDescription
                 motionPhases[id] = nil
@@ -993,6 +990,11 @@ final class AppState: ObservableObject {
                 motionAttempts[id] = nil
                 motionStartedAt[id] = nil
                 updateMaterial(projectID, id) { $0.motionState = .failed; $0.motionError = message }
+                if let ctxMatID = RoughCutMotionLayerStore.shared.context?.materialID,
+                   let (_, failedMat) = pair(projectID, ctxMatID),
+                   failedMat.mediaID == id {
+                    RoughCutMotionLayerStore.shared.failRefinement(message)
+                }
             }
         }
     }

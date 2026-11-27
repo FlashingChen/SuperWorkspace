@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct MaterialActionsMenu: View {
+    @EnvironmentObject private var state: AppState
     let projectID: UUID
     let material: Material
     let onEdit: () -> Void
@@ -8,6 +9,10 @@ struct MaterialActionsMenu: View {
 
     var body: some View {
         Menu {
+            Button("在粗剪面板打开", systemImage: "scissors") {
+                state.resumeRoughCut(projectID, material.id)
+            }
+            .disabled(!material.sourceReady)
             Button("在时间线中编辑", systemImage: "timeline.selection", action: onEdit)
                 .disabled(!material.sourceReady)
             MaterialProcessingActions(projectID: projectID, materialID: material.id)

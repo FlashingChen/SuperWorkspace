@@ -724,6 +724,8 @@ struct AssemblyTimeline: View {
                     return true
                 } isTargeted: { dropTarget = $0 ? clip.id : nil }
                 .contextMenu {
+                    Button("在粗剪面板打开", systemImage: "scissors") { state.resumeRoughCut(project.id, clip.id) }
+                        .disabled(!material.sourceReady)
                     Button("在播放头处分割") { selectedMaterial = clip.id; splitAtPlayhead(materialID: clip.id) }
                         .disabled(!canSplit(materialID: clip.id))
                     Menu("片段倍速") {

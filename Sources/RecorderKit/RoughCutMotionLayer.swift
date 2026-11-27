@@ -97,8 +97,9 @@ public enum RoughCutPackageHelper {
     }
 }
 
-/// One AI-generated motion segment (transparent overlay, fullscreen shot, or full motion track)
-/// displayed and editable in the Rough Cutting Panel after AI motion has been generated.
+/// One read-only AI-generated motion overlay/shot displayed over the original recording
+/// inside the Rough Cutting Panel after AI motion has been generated.
+/// Clicking a clip opens an AI refinement prompt popover to ask AI to modify that animation.
 public struct RoughCutMotionClip: Identifiable, Codable, Equatable, Sendable {
     public enum Kind: String, Codable, Equatable, Sendable {
         case overlay
@@ -106,21 +107,22 @@ public struct RoughCutMotionClip: Identifiable, Codable, Equatable, Sendable {
         case full
     }
 
-    public var id: String
-    public var title: String
-    public var kind: Kind
-    public var start: Double
-    public var end: Double
-    public var mediaPath: String
-    public var x: Double?
-    public var y: Double?
-    public var width: Double?
-    public var height: Double?
-    public var isEnabled: Bool
-    public var opacity: Double
+    public let id: String
+    /// Raw manifest target ID (e.g. `"O2Run"`, `"Act1"`) used for shot-level AI refinement.
+    public let targetID: String
+    public let title: String
+    public let kind: Kind
+    public let start: Double
+    public let end: Double
+    public let mediaPath: String
+    public let x: Double?
+    public let y: Double?
+    public let width: Double?
+    public let height: Double?
 
     public init(
         id: String,
+        targetID: String = "",
         title: String,
         kind: Kind,
         start: Double,
@@ -129,11 +131,10 @@ public struct RoughCutMotionClip: Identifiable, Codable, Equatable, Sendable {
         x: Double? = nil,
         y: Double? = nil,
         width: Double? = nil,
-        height: Double? = nil,
-        isEnabled: Bool = true,
-        opacity: Double = 1.0
+        height: Double? = nil
     ) {
         self.id = id
+        self.targetID = targetID
         self.title = title
         self.kind = kind
         self.start = start
@@ -143,40 +144,32 @@ public struct RoughCutMotionClip: Identifiable, Codable, Equatable, Sendable {
         self.y = y
         self.width = width
         self.height = height
-        self.isEnabled = isEnabled
-        self.opacity = opacity
     }
 
     public var duration: Double { max(0, end - start) }
     public var mediaURL: URL { URL(fileURLWithPath: mediaPath) }
 
     public func contains(time: Double) -> Bool {
-        isEnabled && time >= start && time <= end && end > start
+        time >= start && time <= end && end > start
     }
 }
 
 public struct RoughCutMotionLayerContext: Codable, Equatable, Sendable {
     public let materialID: UUID
-    public var clips: [RoughCutMotionClip]
-    public var isLayerVisible: Bool
-    public var canvasWidth: Double?
-    public var canvasHeight: Double?
-    public var persistencePath: String?
+    public let clips: [RoughCutMotionClip]
+    public let canvasWidth: Double?
+    public let canvasHeight: Double?
 
     public init(
         materialID: UUID,
         clips: [RoughCutMotionClip],
-        isLayerVisible: Bool = true,
         canvasWidth: Double? = nil,
-        canvasHeight: Double? = nil,
-        persistencePath: String? = nil
+        canvasHeight: Double? = nil
     ) {
         self.materialID = materialID
         self.clips = clips
-        self.isLayerVisible = isLayerVisible
         self.canvasWidth = canvasWidth
         self.canvasHeight = canvasHeight
-        self.persistencePath = persistencePath
     }
 }
 
@@ -210,19 +203,37 @@ private actor MotionFrameDecoder {
     }
 }
 
-/// Manages the active AI Motion Layer inside the Rough Cutting Panel.
-/// Only active when resuming a material that already has AI motion outputs.
+/// Manages the read-only AI Motion overlay layer inside the Rough Cutting Panel.
+/// Active only when resuming a material that already has AI motion outputs.
+/// Supports click-to-prompt AI shot refinement with live hot-reload on completion.
 @MainActor
 public final class RoughCutMotionLayerStore: ObservableObject {
     public static let shared = RoughCutMotionLayerStore()
 
     @Published public private(set) var context: RoughCutMotionLayerContext?
+    @Published public var isLayerVisible: Bool = true {
+        didSet {
+            if !isLayerVisible {
+                currentFrameImage = nil
+                currentActiveClip = nil
+                lastEvaluatedKey = nil
+            }
+        }
+    }
     @Published public var selectedClipID: String?
+    @Published public var promptClipID: String?
+    @Published public var refiningClipID: String?
+    @Published public var refiningStatusMessage: String?
+    @Published public var refiningErrorMessage: String?
     @Published public private(set) var currentFrameImage: NSImage?
     @Published public private(set) var currentActiveClip: RoughCutMotionClip?
 
+    /// Host callback invoked when the user submits an AI refinement prompt for a specific motion clip.
+    public var onRequestRefinement: ((RoughCutMotionClip, String) -> Void)?
+
     private let decoder = MotionFrameDecoder()
     private var lastEvaluatedKey: String?
+    private var lastOutputTime: Double = 0
     private var frameTask: Task<Void, Never>?
 
     private init() {}
@@ -232,24 +243,6 @@ public final class RoughCutMotionLayerStore: ObservableObject {
         return !context.clips.isEmpty
     }
 
-    public var isLayerVisible: Bool {
-        get { context?.isLayerVisible ?? false }
-        set {
-            guard context != nil else { return }
-            context?.isLayerVisible = newValue
-            if !newValue {
-                currentFrameImage = nil
-                currentActiveClip = nil
-            }
-            persist()
-        }
-    }
-
-    public var selectedClip: RoughCutMotionClip? {
-        guard let id = selectedClipID else { return nil }
-        return context?.clips.first { $0.id == id }
-    }
-
     public func load(_ next: RoughCutMotionLayerContext?) {
         frameTask?.cancel()
         frameTask = nil
@@ -257,65 +250,73 @@ public final class RoughCutMotionLayerStore: ObservableObject {
         currentFrameImage = nil
         currentActiveClip = nil
         context = next
-        selectedClipID = next?.clips.first?.id
+        isLayerVisible = true
+        selectedClipID = nil
+        promptClipID = nil
+        refiningClipID = nil
+        refiningStatusMessage = nil
+        refiningErrorMessage = nil
         let decoder = self.decoder
         Task { await decoder.reset() }
     }
 
+    /// Hot-reloads updated AI motion clips after a background refinement completes
+    /// while keeping the Rough Cutting Panel open.
+    public func reloadAfterRefinement(_ next: RoughCutMotionLayerContext?) {
+        frameTask?.cancel()
+        frameTask = nil
+        lastEvaluatedKey = nil
+        currentFrameImage = nil
+        currentActiveClip = nil
+        context = next
+        refiningClipID = nil
+        refiningStatusMessage = nil
+        refiningErrorMessage = nil
+        let decoder = self.decoder
+        let timeToRefresh = lastOutputTime
+        Task {
+            await decoder.reset()
+            await MainActor.run {
+                self.updateFrame(at: timeToRefresh)
+            }
+        }
+    }
+
     public func clear() {
+        onRequestRefinement = nil
         load(nil)
     }
 
     public func activeClip(at outputTime: Double) -> RoughCutMotionClip? {
-        guard let context, context.isLayerVisible else { return nil }
+        guard let context, isLayerVisible else { return nil }
         // Prefer transparent overlays over fullscreen shots/full track if overlapping.
         let matching = context.clips.filter { $0.contains(time: outputTime) }
         return matching.first(where: { $0.kind == .overlay }) ?? matching.first
     }
 
-    public func toggleClipEnabled(_ id: String) {
-        mutateClip(id) { $0.isEnabled.toggle() }
+    public func submitRefinement(for clip: RoughCutMotionClip, instruction: String) {
+        let trimmed = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        refiningClipID = clip.id
+        refiningStatusMessage = "已派发 AI 修改「\(clip.title)」…"
+        refiningErrorMessage = nil
+        promptClipID = nil
+        onRequestRefinement?(clip, trimmed)
     }
 
-    public func setClipOpacity(_ id: String, opacity: Double) {
-        mutateClip(id) { $0.opacity = min(max(opacity, 0.05), 1.0) }
+    public func updateRefinementProgress(_ message: String?) {
+        guard refiningClipID != nil else { return }
+        refiningStatusMessage = message
     }
 
-    public func nudgeClip(_ id: String, delta: Double, maxDuration: Double) {
-        mutateClip(id) { clip in
-            let span = clip.end - clip.start
-            let nextStart = min(max(0, clip.start + delta), max(0, maxDuration - span))
-            clip.start = nextStart
-            clip.end = nextStart + span
-        }
-    }
-
-    public func setClipRange(_ id: String, start: Double, end: Double) {
-        mutateClip(id) { clip in
-            clip.start = max(0, start)
-            clip.end = max(clip.start + 0.05, end)
-        }
-    }
-
-    private func mutateClip(_ id: String, _ transform: (inout RoughCutMotionClip) -> Void) {
-        guard var current = context,
-              let idx = current.clips.firstIndex(where: { $0.id == id }) else { return }
-        transform(&current.clips[idx])
-        context = current
-        lastEvaluatedKey = nil
-        persist()
-    }
-
-    private func persist() {
-        guard let current = context, let path = current.persistencePath else { return }
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        if let data = try? encoder.encode(current) {
-            try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
-        }
+    public func failRefinement(_ errorMessage: String) {
+        refiningClipID = nil
+        refiningStatusMessage = nil
+        refiningErrorMessage = errorMessage
     }
 
     public func updateFrame(at outputTime: Double) {
+        lastOutputTime = outputTime
         guard let clip = activeClip(at: outputTime) else {
             if currentFrameImage != nil || currentActiveClip != nil {
                 currentFrameImage = nil
@@ -326,7 +327,7 @@ public final class RoughCutMotionLayerStore: ObservableObject {
         }
         let localTime = clip.kind == .full ? outputTime : max(0, outputTime - clip.start)
         let quantized = Int((localTime * 24).rounded())
-        let cacheKey = "\(clip.id)#\(quantized)"
+        let cacheKey = "\(clip.id)#\(clip.mediaPath)#\(quantized)"
         guard cacheKey != lastEvaluatedKey else { return }
         lastEvaluatedKey = cacheKey
         currentActiveClip = clip
@@ -351,7 +352,8 @@ public final class RoughCutMotionLayerStore: ObservableObject {
     }
 }
 
-/// Real-time AI Motion overlay rendered directly on top of the Rough Cutting Panel canvas.
+/// Read-only real-time AI Motion overlay rendered directly on top of the Rough Cutting Panel canvas.
+/// The underlying recorded video stays untouched underneath.
 struct RoughCutMotionOverlayView: View {
     @ObservedObject var store: RoughCutMotionLayerStore
     let outputTime: TimeInterval
@@ -378,13 +380,11 @@ struct RoughCutMotionOverlayView: View {
                             .aspectRatio(contentMode: .fit)
                             .frame(width: rectW, height: rectH)
                             .position(x: rectX + rectW / 2, y: rectY + rectH / 2)
-                            .opacity(clip.opacity)
                     } else {
                         Image(nsImage: image)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(width: geo.size.width, height: geo.size.height)
-                            .opacity(clip.opacity)
                     }
                 }
             }
@@ -394,11 +394,12 @@ struct RoughCutMotionOverlayView: View {
         .onAppear { store.updateFrame(at: outputTime) }
         .onChange(of: outputTime) { _, next in store.updateFrame(at: next) }
         .onChange(of: store.context) { _, _ in store.updateFrame(at: outputTime) }
+        .onChange(of: store.isLayerVisible) { _, _ in store.updateFrame(at: outputTime) }
     }
 }
 
 /// First-class native AI Motion timeline track lane at the same peer level as Zoom / 3D / Overlay.
-/// Appears inside `EditorTimelineView` ONLY when resuming a material that already has AI motion outputs.
+/// Strictly read-only: clicking any clip jumps the playhead and opens a popover to ask AI to modify that animation.
 extension EditorTimelineView {
     var aiMotionTint: Color {
         StudioTokens.adaptive(light: StudioTokens.Light.aiNS, dark: StudioTokens.Dark.aiNS)
@@ -414,23 +415,30 @@ extension EditorTimelineView {
                 collapsed: timelineLabelsCollapsed
             )
             if !timelineLabelsCollapsed {
-                Button {
-                    motionLayerStore.isLayerVisible.toggle()
-                } label: {
-                    Image(systemName: motionLayerStore.isLayerVisible ? "eye" : "eye.slash")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(
-                            motionLayerStore.isLayerVisible
-                                ? EditorTheme.primaryText.opacity(0.72)
-                                : EditorTheme.secondaryText.opacity(0.45)
-                        )
-                        .frame(width: 24, height: 24)
-                        .contentShape(Rectangle())
+                if motionLayerStore.refiningClipID != nil {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .padding(.trailing, 6)
+                        .help(motionLayerStore.refiningStatusMessage ?? "正在修改动效…")
+                } else {
+                    Button {
+                        motionLayerStore.isLayerVisible.toggle()
+                    } label: {
+                        Image(systemName: motionLayerStore.isLayerVisible ? "eye" : "eye.slash")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(
+                                motionLayerStore.isLayerVisible
+                                    ? EditorTheme.primaryText.opacity(0.72)
+                                    : EditorTheme.secondaryText.opacity(0.45)
+                            )
+                            .frame(width: 24, height: 24)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(EditorToolbarPressButtonStyle())
+                    .help(motionLayerStore.isLayerVisible ? "暂时隐藏 AI 动效覆盖层" : "显示 AI 动效覆盖层")
+                    .accessibilityLabel(motionLayerStore.isLayerVisible ? "隐藏 AI 动效覆盖层" : "显示 AI 动效覆盖层")
+                    .padding(.trailing, 6)
                 }
-                .buttonStyle(EditorToolbarPressButtonStyle())
-                .help(motionLayerStore.isLayerVisible ? "隐藏 AI 动效层" : "显示 AI 动效层")
-                .accessibilityLabel(motionLayerStore.isLayerVisible ? "隐藏 AI 动效层" : "显示 AI 动效层")
-                .padding(.trailing, 6)
             }
         }
         .frame(height: aiMotionTimelineHeight)
@@ -455,59 +463,39 @@ extension EditorTimelineView {
                     22
                 )
                 let isSelected = motionLayerStore.selectedClipID == clip.id
-                let isActive = layerVisible && clip.isEnabled
-
-                aiMotionClipBar(
-                    clip: clip,
-                    barWidth: clipWidth,
-                    isSelected: isSelected,
-                    isActive: isActive
+                let isRefining = motionLayerStore.refiningClipID == clip.id
+                let isPromptOpen = Binding<Bool>(
+                    get: { motionLayerStore.promptClipID == clip.id },
+                    set: { open in
+                        if !open, motionLayerStore.promptClipID == clip.id {
+                            motionLayerStore.promptClipID = nil
+                        }
+                    }
                 )
-                .offset(x: startX)
-                .onTapGesture {
+
+                Button {
                     motionLayerStore.selectedClipID = clip.id
                     if playbackTime < clip.start || playbackTime > clip.end {
                         seekTimeline(to: clip.start + min(0.25, clip.duration * 0.25))
                     }
+                    motionLayerStore.promptClipID = clip.id
+                } label: {
+                    aiMotionClipBar(
+                        clip: clip,
+                        barWidth: clipWidth,
+                        isSelected: isSelected,
+                        isVisible: layerVisible,
+                        isRefining: isRefining
+                    )
                 }
-                .gesture(
-                    DragGesture(minimumDistance: 3)
-                        .onChanged { value in
-                            if aiMotionDragOrigin == nil {
-                                aiMotionDragOrigin = (clip.id, clip.start, clip.end)
-                                motionLayerStore.selectedClipID = clip.id
-                            }
-                            guard let origin = aiMotionDragOrigin, origin.id == clip.id else { return }
-                            let deltaSeconds = Double(value.translation.width / max(width, 1)) * safeDuration
-                            let span = origin.end - origin.start
-                            let nextStart = min(max(0, origin.start + deltaSeconds), max(0, safeDuration - span))
-                            motionLayerStore.setClipRange(clip.id, start: nextStart, end: nextStart + span)
-                        }
-                        .onEnded { _ in
-                            aiMotionDragOrigin = nil
-                        }
-                )
-                .contextMenu {
-                    Button(clip.isEnabled ? "停用此动效" : "启用此动效") {
-                        motionLayerStore.toggleClipEnabled(clip.id)
-                    }
-                    Button("前移 0.1 秒") {
-                        motionLayerStore.nudgeClip(clip.id, delta: -0.1, maxDuration: safeDuration)
-                    }
-                    Button("后移 0.1 秒") {
-                        motionLayerStore.nudgeClip(clip.id, delta: 0.1, maxDuration: safeDuration)
-                    }
-                    Menu("不透明度（\(Int((clip.opacity * 100).rounded()))%）") {
-                        ForEach([1.0, 0.85, 0.7, 0.5, 0.3], id: \.self) { level in
-                            Button("\(Int((level * 100).rounded()))%") {
-                                motionLayerStore.setClipOpacity(clip.id, opacity: level)
-                            }
-                        }
-                    }
-                    Divider()
-                    Button(layerVisible ? "隐藏整个 AI 动效层" : "显示整个 AI 动效层") {
-                        motionLayerStore.isLayerVisible.toggle()
-                    }
+                .buttonStyle(EditorToolbarPressButtonStyle())
+                .offset(x: startX)
+                .popover(isPresented: isPromptOpen, arrowEdge: .top) {
+                    AIMotionRefinePopover(
+                        clip: clip,
+                        store: motionLayerStore,
+                        tint: aiMotionTint
+                    )
                 }
             }
         }
@@ -518,18 +506,24 @@ extension EditorTimelineView {
         clip: RoughCutMotionClip,
         barWidth: CGFloat,
         isSelected: Bool,
-        isActive: Bool
+        isVisible: Bool,
+        isRefining: Bool
     ) -> some View {
-        let fillOpacity: Double = isActive ? (isSelected ? 0.30 : 0.18) : 0.08
-        let strokeOpacity: Double = isActive ? (isSelected ? 0.92 : 0.48) : 0.22
+        let fillOpacity: Double = isVisible ? (isSelected ? 0.30 : 0.18) : 0.08
+        let strokeOpacity: Double = isVisible ? (isSelected ? 0.92 : 0.48) : 0.22
         return HStack(spacing: 4) {
-            Image(systemName: clip.kind == .overlay ? "sparkles" : "film")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(isActive ? aiMotionTint : EditorTheme.secondaryText.opacity(0.6))
+            if isRefining {
+                ProgressView()
+                    .controlSize(.mini)
+            } else {
+                Image(systemName: clip.kind == .overlay ? "sparkles" : "film")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(isVisible ? aiMotionTint : EditorTheme.secondaryText.opacity(0.6))
+            }
             if barWidth >= 46 {
                 Text(clip.title)
                     .font(.appUI(size: 11, weight: isSelected ? .semibold : .medium))
-                    .foregroundStyle(isActive ? EditorTheme.primaryText : EditorTheme.secondaryText)
+                    .foregroundStyle(isVisible ? EditorTheme.primaryText : EditorTheme.secondaryText)
                     .lineLimit(1)
             }
             if barWidth >= 110 {
@@ -550,7 +544,126 @@ extension EditorTimelineView {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .strokeBorder(aiMotionTint.opacity(strokeOpacity), lineWidth: isSelected ? 1.5 : 1)
         }
-        .opacity(isActive ? 1.0 : 0.55)
-        .help("\(clip.title) (\(String(format: "%.1f–%.1fs", clip.start, clip.end))) · 拖动调整时间，右键更多选项")
+        .opacity(isVisible ? 1.0 : 0.55)
+        .help("\(clip.title) (\(String(format: "%.1f–%.1fs", clip.start, clip.end))) · 点击让 AI 修改这段动画")
+    }
+}
+
+/// Popover opened when clicking a read-only AI motion clip on the Rough Cutting Panel timeline.
+/// Lets the user describe how AI should revise that specific animation segment.
+private struct AIMotionRefinePopover: View {
+    let clip: RoughCutMotionClip
+    @ObservedObject var store: RoughCutMotionLayerStore
+    let tint: Color
+
+    @State private var instruction = ""
+
+    private var isRefiningAny: Bool {
+        store.refiningClipID != nil
+    }
+
+    private var kindBadge: String {
+        switch clip.kind {
+        case .overlay: return "透明覆盖层"
+        case .shot: return "全屏动效"
+        case .full: return "AI 动效层"
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(tint)
+                Text(clip.title)
+                    .font(.appUI(size: 13, weight: .semibold))
+                    .foregroundStyle(EditorTheme.primaryText)
+                Text(kindBadge)
+                    .font(.appUI(size: 10, weight: .medium))
+                    .foregroundStyle(tint)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(tint.opacity(0.16), in: Capsule())
+                Spacer(minLength: 8)
+                Text(String(format: "%.1f–%.1fs", clip.start, clip.end))
+                    .font(.appUI(size: 11, design: .monospaced))
+                    .monospacedDigit()
+                    .foregroundStyle(EditorTheme.secondaryText)
+            }
+
+            Text("此动效为只读覆盖层，底层原画面完整保留。直接告诉 AI 如何修改这段动画：")
+                .font(.appUI(size: 11))
+                .foregroundStyle(EditorTheme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if isRefiningAny {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(store.refiningStatusMessage ?? "AI 正在重新生成该段动画…")
+                        .font(.appUI(size: 12))
+                        .foregroundStyle(tint)
+                }
+                .padding(.vertical, 4)
+            } else {
+                TextEditor(text: $instruction)
+                    .font(.appUI(size: 12))
+                    .foregroundStyle(EditorTheme.primaryText)
+                    .scrollContentBackground(.hidden)
+                    .padding(8)
+                    .frame(height: 76)
+                    .background(EditorTheme.controlWell, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(EditorTheme.hairline, lineWidth: 1)
+                    }
+                    .overlay(alignment: .topLeading) {
+                        if instruction.isEmpty {
+                            Text("例如：把标题字号放大、节奏加快一点、换成更明亮的配色")
+                                .font(.appUI(size: 12))
+                                .foregroundStyle(EditorTheme.secondaryText.opacity(0.65))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 10)
+                                .allowsHitTesting(false)
+                        }
+                    }
+
+                if let error = store.refiningErrorMessage {
+                    Text(error)
+                        .font(.appUI(size: 11))
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                HStack {
+                    Button("取消") {
+                        store.promptClipID = nil
+                    }
+                    .buttonStyle(EditorToolbarPressButtonStyle())
+                    .font(.appUI(size: 12, weight: .medium))
+                    .foregroundStyle(EditorTheme.secondaryText)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(EditorTheme.controlWell, in: Capsule())
+
+                    Spacer()
+
+                    Button {
+                        store.submitRefinement(for: clip, instruction: instruction)
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text("让 AI 修改动画")
+                        }
+                    }
+                    .buttonStyle(EditorPrimaryPillButtonStyle())
+                    .disabled(instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .padding(16)
+        .frame(width: 340)
+        .background(EditorTheme.panelSurface)
     }
 }
