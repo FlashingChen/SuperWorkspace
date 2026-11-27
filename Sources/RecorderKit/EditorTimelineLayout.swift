@@ -41,6 +41,7 @@ extension EditorTimelineView {
         case primary
         case cameraSync
         case zoom
+        case aiMotion
         case screenMotion
         case cameraMotion
         case overlays
@@ -397,6 +398,11 @@ extension EditorTimelineView {
                     track: .zoom
                 )
             }
+            if showsAIMotionTimeline {
+                aiMotionTrackLabel
+                    .timelineRowDivider()
+                    .transition(.timelineLane)
+            }
             if showsScreenMotionTimeline {
                 optionalTimelineLabel(
                     "屏幕 3D",
@@ -463,6 +469,12 @@ extension EditorTimelineView {
                 }
                 if showsZoomTimeline {
                     zoomTimeline(width: width, duration: duration)
+                        .editorTimelineEdits()
+                        .timelineRowDivider()
+                        .transition(.timelineLane)
+                }
+                if showsAIMotionTimeline {
+                    aiMotionTimeline(width: width, duration: duration)
                         .editorTimelineEdits()
                         .timelineRowDivider()
                         .transition(.timelineLane)

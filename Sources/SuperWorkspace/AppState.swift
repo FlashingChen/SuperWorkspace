@@ -433,6 +433,114 @@ final class AppState: ObservableObject {
         }
     }
 
+    func bumpRoughCutRevision(_ projectID: UUID, _ materialID: UUID) {
+        updateMaterial(projectID, materialID) { m in
+            m.roughCutRevision = (m.roughCutRevision ?? 0) + 1
+        }
+    }
+
+    /// Builds the AI Motion Layer context for a material ONLY when AI motion is enabled and outputs exist.
+    static func buildRoughCutMotionLayer(for material: Material, in project: VideoProject) -> RoughCutMotionLayerContext? {
+        guard material.wantsMotion, material.useOriginal != true else { return nil }
+        let dir = ProjectLayout.materialDirectory(material, in: project)
+        let motionURL = ProjectLayout.motion(material, in: project)
+        let hasMotionFile = FileManager.default.fileExists(atPath: motionURL.path)
+        let manifest = MotionManifest.load(in: dir)
+
+        guard material.motionState == .complete || hasMotionFile || manifest != nil else {
+            return nil
+        }
+
+        let cacheDir = dir.appendingPathComponent(".sw-cache", isDirectory: true)
+        let cachedFiles = ((try? FileManager.default.contentsOfDirectory(
+            at: cacheDir,
+            includingPropertiesForKeys: [.contentModificationDateKey]
+        )) ?? []).sorted { lhs, rhs in
+            let lDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            let rDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            return lDate > rDate
+        }
+
+        func findCachedFile(prefix: String, allowedExtensions: Set<String>) -> URL? {
+            cachedFiles.first { url in
+                url.lastPathComponent.hasPrefix(prefix) && allowedExtensions.contains(url.pathExtension.lowercased())
+            }
+        }
+
+        var clips: [RoughCutMotionClip] = []
+        if let manifest {
+            for overlay in manifest.overlays {
+                if let url = findCachedFile(prefix: "overlay-\(overlay.id)-", allowedExtensions: ["mov", "mp4"]) {
+                    clips.append(RoughCutMotionClip(
+                        id: "overlay:\(overlay.id)",
+                        title: overlay.composition,
+                        kind: .overlay,
+                        start: overlay.start,
+                        end: overlay.end,
+                        mediaPath: url.path,
+                        x: overlay.x,
+                        y: overlay.y,
+                        width: overlay.width,
+                        height: overlay.height
+                    ))
+                }
+            }
+            for shot in manifest.shots {
+                if let url = findCachedFile(prefix: "shot-\(shot.id)-", allowedExtensions: ["mp4", "mov"]) {
+                    clips.append(RoughCutMotionClip(
+                        id: "shot:\(shot.id)",
+                        title: shot.composition,
+                        kind: .shot,
+                        start: shot.start,
+                        end: shot.end,
+                        mediaPath: url.path
+                    ))
+                }
+            }
+        }
+
+        if clips.isEmpty, hasMotionFile {
+            let totalEnd = max(material.duration, 0.1)
+            clips.append(RoughCutMotionClip(
+                id: "motion:full",
+                title: "AI 动效层",
+                kind: .full,
+                start: 0,
+                end: totalEnd,
+                mediaPath: motionURL.path
+            ))
+        }
+
+        guard !clips.isEmpty else { return nil }
+        clips.sort { $0.start < $1.start }
+
+        let stateURL = ProjectLayout.roughCutMotionLayerState(material, in: project)
+        var isLayerVisible = true
+        if let savedData = try? Data(contentsOf: stateURL),
+           let saved = try? JSONDecoder().decode(RoughCutMotionLayerContext.self, from: savedData) {
+            isLayerVisible = saved.isLayerVisible
+            let savedByID = Dictionary(uniqueKeysWithValues: saved.clips.map { ($0.id, $0) })
+            clips = clips.map { clip in
+                guard let prior = savedByID[clip.id] else { return clip }
+                var merged = clip
+                merged.isEnabled = prior.isEnabled
+                merged.opacity = prior.opacity
+                merged.start = prior.start
+                merged.end = prior.end
+                return merged
+            }
+        }
+
+        return RoughCutMotionLayerContext(
+            materialID: material.id,
+            clips: clips,
+            isLayerVisible: isLayerVisible,
+            canvasWidth: manifest?.width.map(Double.init),
+            canvasHeight: manifest?.height.map(Double.init),
+            persistencePath: stateURL.path
+        )
+    }
+
     func applyRoughCutStyleToAll(_ projectID: UUID, from sourceMaterialID: UUID) {
         guard let (project, _) = pair(projectID, sourceMaterialID),
               project.isFrozen != true,

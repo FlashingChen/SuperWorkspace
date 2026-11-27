@@ -157,6 +157,7 @@ struct EditorToolbarDivider: View {
 
 struct EditorView: View {
     let context: EditorSessionContext
+    let isEmbedded: Bool
     @ObservedObject var hostActions: EditorHostActions
     @ObservedObject private var exporter: VideoExporter
     @StateObject var editorStore: EditorStore
@@ -196,9 +197,11 @@ struct EditorView: View {
     /// adds transient multi-selection for ranged export without changing the
     /// persisted project or the inspector's single-target editing semantics.
     @State var selectedPrimarySegmentIDs: Set<UUID> = []
+    @ObservedObject private var motionLayerStore = RoughCutMotionLayerStore.shared
 
-    init(context: EditorSessionContext) {
+    init(context: EditorSessionContext, isEmbedded: Bool = false) {
         self.context = context
+        self.isEmbedded = isEmbedded
         _hostActions = ObservedObject(wrappedValue: context.hostActions)
         _exporter = ObservedObject(wrappedValue: context.exporter)
         _editorStore = StateObject(
@@ -224,8 +227,10 @@ struct EditorView: View {
             // transport HUD, the inspector docked to the right edge, and the
             // timeline spanning the full width below. Panels meet at hairlines.
             VStack(spacing: 0) {
-                editorToolbar(layout: layout)
-                Rectangle().fill(EditorTheme.hairline).frame(height: 1)
+                if !isEmbedded {
+                    editorToolbar(layout: layout)
+                    Rectangle().fill(EditorTheme.hairline).frame(height: 1)
+                }
                 GeometryReader { geometry in
                     let timelineHeight = layout.timelineHeight(
                         preferred: preferredTimelineHeight,
@@ -249,17 +254,17 @@ struct EditorView: View {
                 }
             }
         }
-        // The title bar starts at the window's top edge; the native traffic
-        // lights are re-centred on its midline by the lifecycle bridge.
-        .ignoresSafeArea(.container, edges: .top)
-        .frame(minWidth: EditorWorkspaceLayout.minimumWindowSize.width,
-               minHeight: EditorWorkspaceLayout.minimumWindowSize.height)
+        .ignoresSafeArea(.container, edges: isEmbedded ? [] : .top)
+        .frame(
+            minWidth: isEmbedded ? 640 : EditorWorkspaceLayout.minimumWindowSize.width,
+            minHeight: isEmbedded ? 420 : EditorWorkspaceLayout.minimumWindowSize.height
+        )
         .background(EditorTheme.backgroundDeep)
         // 界面交互使用铂金强调；橙/红/绿只表达内容身份与录制状态。
         .tint(editorAccent)
         .font(.appUI(size: 13))
         .focusEffectDisabled()
-        .firstUseTour(.editor, enabled: !showsExportSheet && !isCropping)
+        .firstUseTour(.editor, enabled: !isEmbedded && !showsExportSheet && !isCropping)
         .environment(\.editorIsActive, isEditorActive)
         .onDisappear { workspaceReflowTask?.cancel() }
         .onChange(of: editorStore.selection) { _, selection in
@@ -271,19 +276,21 @@ struct EditorView: View {
                 )
         }
         .background {
-            EditorWindowLifecycleBridge(
-                projectTitle: projectDisplayTitle,
-                onResignKey: {
-                    resolveExternalAction(.windowDeactivation)
-                    windowDeactivationRevision &+= 1
-                },
-                onActivityChanged: { active in
-                    isEditorActive = active
-                    playbackController.setPreviewActive(active)
-                },
-                onScreenSizeChanged: { workspaceScreenSize = $0 }
-            )
-            .frame(width: 0, height: 0)
+            if !isEmbedded {
+                EditorWindowLifecycleBridge(
+                    projectTitle: projectDisplayTitle,
+                    onResignKey: {
+                        resolveExternalAction(.windowDeactivation)
+                        windowDeactivationRevision &+= 1
+                    },
+                    onActivityChanged: { active in
+                        isEditorActive = active
+                        playbackController.setPreviewActive(active)
+                    },
+                    onScreenSizeChanged: { workspaceScreenSize = $0 }
+                )
+                .frame(width: 0, height: 0)
+            }
         }
         .overlay(alignment: .topTrailing) {
             VStack(spacing: 0) {
@@ -393,6 +400,10 @@ struct EditorView: View {
             if let message { hostActions.reportError(message) }
         }
         .onAppear {
+            if isEmbedded {
+                isEditorActive = true
+                playbackController.setPreviewActive(true)
+            }
             editorStore.attachUndoManager(undoManager)
             if editorStore.selection == nil {
                 editorStore.selection = .canvas
@@ -567,6 +578,14 @@ struct EditorView: View {
                 previewArea
                     .frame(width: canvasWidth, height: canvasHeight)
                     .clipped()
+                    .overlay {
+                        if motionLayerStore.hasMotionLayer {
+                            RoughCutMotionOverlayView(
+                                store: motionLayerStore,
+                                outputTime: playbackController.outputTime
+                            )
+                        }
+                    }
                     .overlay { EditorConsoleHUDOverlay(color: inspectorPalette.fill) }
                     .overlay(alignment: .top) {
                         if let undoToast {

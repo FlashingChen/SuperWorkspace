@@ -251,6 +251,9 @@ enum ProjectLayout {
     static func roughCutPackage(_ material: Material, in project: VideoProject) -> URL {
         materialDirectory(material, in: project).appendingPathComponent("roughcut.dogscproject", isDirectory: true)
     }
+    static func roughCutMotionLayerState(_ material: Material, in project: VideoProject) -> URL {
+        materialDirectory(material, in: project).appendingPathComponent("roughcut-motion-layer.json")
+    }
     static func picture(_ material: Material, in project: VideoProject) -> URL {
         material.wantsMotion && material.useOriginal != true && material.motionState == .complete ? motion(material, in: project) : source(material, in: project)
     }

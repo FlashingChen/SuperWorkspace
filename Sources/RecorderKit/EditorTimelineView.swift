@@ -888,6 +888,8 @@ struct EditorTimelineView: View {
     @State var microphoneWaveform: EditorTimelineWaveformData?
     @State var selectedCameraSyncAnchorID: UUID?
     @State var cameraSyncAnchorDrag: CameraSyncAnchorDrag?
+    @ObservedObject var motionLayerStore = RoughCutMotionLayerStore.shared
+    @State var aiMotionDragOrigin: (id: String, start: Double, end: Double)?
 
     init(
         context: EditorSessionContext,
@@ -1046,6 +1048,8 @@ struct EditorTimelineView: View {
     }
 
     var showsZoomTimeline: Bool { visibleTracks.contains(.zoom) }
+
+    var showsAIMotionTimeline: Bool { motionLayerStore.hasMotionLayer }
 
     var showsOverlayTimeline: Bool {
         !visibleTracks.intersection(.overlays).isEmpty

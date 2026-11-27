@@ -8,6 +8,7 @@ extension EditorTimelineView {
     var timelineCanvasHeight: CGFloat {
         timelineRulerHeight + primaryTimelineHeight
             + (showsZoomTimeline ? zoomTimelineHeight : 0)
+            + (showsAIMotionTimeline ? aiMotionTimelineHeight : 0)
             + (showsCameraSyncTimeline ? cameraSyncTimelineHeight : 0)
             + (showsScreenMotionTimeline ? motionTimelineHeight : 0)
             + (showsCameraMotionTimeline ? motionTimelineHeight : 0)
@@ -17,6 +18,7 @@ extension EditorTimelineView {
     var cameraSyncTimelineHeight: CGFloat { 62 }
     var motionTimelineHeight: CGFloat { layout.value(regular: 44, compact: 40) }
     var zoomTimelineHeight: CGFloat { layout.value(regular: 44, compact: 40) }
+    var aiMotionTimelineHeight: CGFloat { layout.value(regular: 44, compact: 40) }
     var zoomBarHeight: CGFloat { layout.value(regular: 30, compact: 28) }
     var overlayTimelineHeight: CGFloat {
         max(CGFloat(max(overlayTimelineRows.count, 1) * 34 + 16), motionTimelineHeight)
