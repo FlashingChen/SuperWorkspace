@@ -202,9 +202,6 @@ struct RecorderSavePopover: View {
     var body: some View {
         RecorderPopoverSurface(width: 300) {
             VStack(alignment: .leading, spacing: 4) {
-                RecorderSaveActionRow(title: model.recordingDestinationName, symbol: "folder.fill") { [model] in
-                    RecorderPopoverPresenter.shared.dismissAndPerform { model.chooseProjectsFolder() }
-                }
                 TextField("自动命名", text: $model.recordingTitleDraft)
                     .textFieldStyle(.plain).padding(.horizontal, 12).frame(height: 34)
                     .background(RecorderStyle.well, in: Capsule())

@@ -88,8 +88,11 @@ Every command outputs JSON: `{"ok": true, "data": ...}` or `{"ok": false, "error
    # Fast raw capture without rough-cut styling:
    $CLI record stop --raw
 
-   # Optional: also enqueue AI motion generation on the recorded clip
-   $CLI record stop --styled --motion --prompt "Add callout on key result"
+   # Save the recorded demo directly into the project's media library (for AI Packaging to reference):
+   $CLI record stop --styled --library --name "settings-demo"
+
+   # Optional: mark the recorded video as ready for AI Packaging (manually started from workspace)
+   $CLI record stop --styled --package --prompt "Highlight key workflow steps"
    ```
 
 7. **Inspect project state and export final MP4**

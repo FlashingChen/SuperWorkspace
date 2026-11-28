@@ -40,7 +40,7 @@ struct RecorderSetupSurface: View {
             .firstUseTourTarget("recorder.inputs", in: .recorder, highlight: .recorderInputs)
             .padding(.leading, 6)
 
-            RecorderPopoverButton(id: "destination", title: "保存与录制配置", width: 44, height: 44, panelWidth: 300) {
+            RecorderPopoverButton(id: "destination", title: "录制配置", width: 44, height: 44, panelWidth: 300) {
                 Image(systemName: "ellipsis").font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(RecorderStyle.muted)
                     .frame(width: 44, height: 44)

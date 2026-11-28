@@ -119,8 +119,8 @@ struct RecordStepView: View {
         let motionReady = project.materials.filter { $0.wantsMotion && $0.motionState == .complete }.count
         let motionActive = project.materials.filter { $0.wantsMotion && [.queued, .running].contains($0.motionState) }.count
         var parts = ["\(project.materials.count) 段", total]
-        if motionReady > 0 { parts.append("\(motionReady) 段动效就绪") }
-        if motionActive > 0 { parts.append("\(motionActive) 段动效处理中") }
+        if motionReady > 0 { parts.append("\(motionReady) 段已包装") }
+        if motionActive > 0 { parts.append("\(motionActive) 段包装中") }
         return parts.joined(separator: " · ")
     }
 
@@ -146,22 +146,26 @@ private struct MaterialCard: View {
     @State private var draftTitle = ""
 
     private var statusSummary: (text: String, color: Color, spinning: Bool)? {
-        if material.exportState == .running { return ("正在导出素材…", palette.textSecondary, true) }
-        if material.exportState == .failed { return ("素材导出失败", palette.danger, false) }
+        if material.exportState == .running { return ("正在导出视频…", palette.textSecondary, true) }
+        if material.exportState == .failed { return ("视频导出失败", palette.danger, false) }
         if material.wantsMotion {
             switch material.motionState {
             case .running:
-                return (state.motionPhases[material.mediaID] ?? "动效渲染中…", palette.ai, true)
+                return (state.motionPhases[material.mediaID] ?? "AI 包装中…", palette.ai, true)
             case .queued:
-                return ("动效排队中", palette.ai, false)
+                return (state.motionPhases[material.mediaID] ?? "AI 包装排队中", palette.ai, false)
             case .failed:
-                return ("动效失败", palette.danger, false)
+                return ("AI 包装失败", palette.danger, false)
             case .complete:
                 if material.transcriptState == .running {
-                    return ("动效就绪 · \(state.taskPhases[material.mediaID] ?? "识别字幕中")", palette.ai, true)
+                    return ("AI 包装就绪 · \(state.taskPhases[material.mediaID] ?? "识别字幕中")", palette.ai, true)
                 }
-                return ("动效就绪", palette.success, false)
-            case .idle: break
+                return (material.useOriginal == true ? "已切回原片" : "AI 包装就绪", material.useOriginal == true ? palette.textSecondary : palette.success, false)
+            case .idle:
+                if material.transcriptState == .running {
+                    return ("待开始包装 · \(state.taskPhases[material.mediaID] ?? "识别字幕中")", palette.ai, true)
+                }
+                return ("待开始包装", palette.ai, false)
             }
         }
         if material.transcriptState == .running {
@@ -171,41 +175,61 @@ private struct MaterialCard: View {
         return nil
     }
 
+    private var awaitingPackagingStart: Bool {
+        material.exportState == .complete && material.wantsMotion && material.motionState == .idle
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: Metrics.space2_5) {
-            Button(action: onPreview) {
-                ZStack {
-                    palette.mediaGround
-                        .aspectRatio(16.0 / 9.0, contentMode: .fit)
-                        .overlay {
-                            MaterialThumbnail(url: material.exportState == .complete ? picture : nil)
-                        }
-                        .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusM + 2, style: .continuous))
+            ZStack {
+                Button(action: onPreview) {
+                    ZStack {
+                        palette.mediaGround
+                            .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                            .overlay {
+                                MaterialThumbnail(url: material.exportState == .complete ? picture : nil)
+                                    .saturation(awaitingPackagingStart ? 0.15 : 1.0)
+                            }
+                            .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusM + 2, style: .continuous))
+                    }
+                    .overlay(alignment: .topLeading) {
+                        Text(String(format: "%02d", number))
+                            .font(.studio(.micro, weight: .semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(Color.white.opacity(0.9))
+                            .padding(.horizontal, Metrics.space2)
+                            .padding(.vertical, 3)
+                            .background(Color.black.opacity(0.72), in: Capsule())
+                            .padding(Metrics.space2)
+                    }
+                    .overlay(alignment: .bottomTrailing) {
+                        Text(material.exportState == .complete ? durationLabel(material.timelineDuration) : "—")
+                            .font(.studio(.timecode, weight: .medium))
+                            .monospacedDigit()
+                            .foregroundStyle(Color.white)
+                            .padding(.horizontal, Metrics.space2)
+                            .padding(.vertical, 3)
+                            .background(Color.black.opacity(0.76), in: Capsule())
+                            .padding(Metrics.space2)
+                    }
                 }
-                .overlay(alignment: .topLeading) {
-                    Text(String(format: "%02d", number))
-                        .font(.studio(.micro, weight: .semibold))
-                        .monospacedDigit()
-                        .foregroundStyle(Color.white.opacity(0.9))
-                        .padding(.horizontal, Metrics.space2)
-                        .padding(.vertical, 3)
-                        .background(Color.black.opacity(0.72), in: Capsule())
-                        .padding(Metrics.space2)
-                }
-                .overlay(alignment: .bottomTrailing) {
-                    Text(material.exportState == .complete ? durationLabel(material.timelineDuration) : "—")
-                        .font(.studio(.timecode, weight: .medium))
-                        .monospacedDigit()
-                        .foregroundStyle(Color.white)
-                        .padding(.horizontal, Metrics.space2)
-                        .padding(.vertical, 3)
-                        .background(Color.black.opacity(0.76), in: Capsule())
-                        .padding(Metrics.space2)
+                .buttonStyle(StudioContentButtonStyle())
+                .disabled(material.exportState != .complete)
+                .accessibilityLabel("预览 \(material.displayTitle(index: number - 1))")
+
+                if awaitingPackagingStart {
+                    RoundedRectangle(cornerRadius: Metrics.radiusM + 2, style: .continuous)
+                        .fill(Color.black.opacity(0.52))
+                        .allowsHitTesting(false)
+                    Button {
+                        state.enqueueMotion(projectID, material.id)
+                    } label: {
+                        Label("开始 AI 包装", systemImage: "sparkles")
+                    }
+                    .buttonStyle(StudioButtonStyle(kind: .primary))
+                    .help("结合字幕与素材库自动生成动效与画面包装")
                 }
             }
-            .buttonStyle(StudioContentButtonStyle())
-            .disabled(material.exportState != .complete)
-            .accessibilityLabel("预览 \(material.displayTitle(index: number - 1))")
 
             VStack(alignment: .leading, spacing: Metrics.space2) {
                 HStack(spacing: Metrics.space2) {
@@ -271,17 +295,29 @@ private struct MaterialCard: View {
                             .padding(.vertical, 3)
                             .background(palette.controlWell, in: Capsule())
                     }
-                    Spacer(minLength: 0)
+                    Spacer(minLength: Metrics.space1)
                     if material.wantsMotion && material.motionState == .failed {
-                        Button("重试动效") { state.enqueueMotion(projectID, material.id) }
+                        Button("重试包装") { state.enqueueMotion(projectID, material.id) }
                             .buttonStyle(StudioButtonStyle(kind: .secondary, size: .compact))
+                            .fixedSize()
                     } else if material.exportState == .complete {
                         HStack(spacing: Metrics.space1_5) {
+                            if material.wantsMotion && material.motionState == .complete {
+                                Button(material.useOriginal == true ? "启用包装" : "原片") {
+                                    state.setUseOriginal(projectID, material.id, material.useOriginal != true)
+                                }
+                                .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
+                                .fixedSize()
+                                .help(material.useOriginal == true ? "启用 AI 包装版本" : "临时切回未包装原片")
+                            }
                             Button("粗剪") { state.resumeRoughCut(projectID, material.id) }
                                 .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
-                                .help("在粗剪面板（Rough Cutting Panel）重新打开此素材")
-                            Button("时间线编辑", action: onEdit)
+                                .fixedSize()
+                                .help("在粗剪面板（Rough Cutting Panel）重新打开此视频")
+                            Button("时间线", action: onEdit)
                                 .buttonStyle(StudioButtonStyle(kind: .secondary, size: .compact))
+                                .fixedSize()
+                                .help("在时间线编辑字幕与拼装")
                         }
                     }
                 }

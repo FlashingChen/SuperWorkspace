@@ -16,7 +16,7 @@ enum FirstUseTourKind: String, CaseIterable {
             [
                 .init("recorder.source", "选择录制范围", "录整个屏幕、一个窗口，或自己框选区域。连接的设备也可以作为录制来源。", "viewfinder"),
                 .init("recorder.inputs", "按需开启声音与摄像头", "在这里选择麦克风、摄像头和系统声音。只开启这次录制需要的输入。", "mic"),
-                .init("recorder.save", "设置保存位置", "选择项目位置、格式和画质。已有项目也可以从这里打开，继续编辑。", "folder")
+                .init("recorder.save", "录制配置", "选择编码格式、画质以及隐藏桌面与程序坞选项。", "slider.horizontal.3")
             ]
         case .editor:
             [

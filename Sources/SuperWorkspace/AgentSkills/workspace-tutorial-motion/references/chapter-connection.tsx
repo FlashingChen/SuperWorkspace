@@ -1,17 +1,15 @@
 import React from 'react';
 import {AbsoluteFill, interpolate, useCurrentFrame} from 'remotion';
-import {WorldCamera, type CameraKey} from './world-camera';
+import {WorldCamera, defaultTheme, type CameraKey} from '../sw-kit';
 
-// Example composition: 960 × 540, 30 fps, at least 60 frames.
+// Example composition: 1920 × 1080, 60 fps.
 // Replace labels, coordinates and narration beats together when adapting it.
-const width = 960;
-const height = 540;
-const previous = {x: 300, y: 270};
-const current = {x: 1100, y: 270};
-const leave = 16;
-const arrive = 46;
-const cardWidth = 280;
-const cardHeight = 132;
+const previous = {x: 560, y: 540};
+const current = {x: 1520, y: 540};
+const leave = 30;
+const arrive = 90;
+const cardWidth = 360;
+const cardHeight = 160;
 const routeStart = current.x - cardWidth / 2;
 const routeEnd = previous.x + cardWidth / 2;
 const camera: CameraKey[] = [
@@ -27,8 +25,12 @@ const Card: React.FC<{x: number; y: number; label: string; active: boolean}> =
       position: 'absolute', left: x - cardWidth / 2, top: y - cardHeight / 2,
       width: cardWidth, height: cardHeight, boxSizing: 'border-box',
       display: 'grid', placeItems: 'center',
-      border: `2px solid ${active ? '#6de3e8' : '#385268'}`, borderRadius: 18,
-      background: active ? '#183742' : '#172636', color: '#f2f7fa', fontSize: 34,
+      border: `2px solid ${active ? defaultTheme.cyan : defaultTheme.borderStrong}`,
+      borderRadius: 18,
+      background: active ? defaultTheme.surfaceAlt : defaultTheme.surface,
+      color: defaultTheme.text,
+      fontSize: 38,
+      fontWeight: 700,
     }}>
       {label}
     </div>
@@ -40,17 +42,17 @@ export const ChapterConnection: React.FC = () => {
   const tipX = routeStart + (routeEnd - routeStart) * progress;
   const tipY = current.y + (previous.y - current.y) * progress;
   return (
-    <AbsoluteFill style={{background: '#0c1724', fontFamily: 'sans-serif'}}>
-      <WorldCamera viewportWidth={width} viewportHeight={height} keys={camera}>
-        <svg width={1400} height={height} style={{position: 'absolute', inset: 0}}>
-          <line x1={routeStart} x2={routeEnd} y1={current.y} y2={previous.y} stroke="#385268" strokeWidth={3} />
-          <line x1={routeStart} x2={tipX} y1={current.y} y2={tipY} stroke="#6de3e8" strokeWidth={4} />
-          <circle cx={tipX} cy={tipY} r={7} fill="#6de3e8" />
+    <AbsoluteFill style={{background: defaultTheme.bg, fontFamily: defaultTheme.fontSans}}>
+      <WorldCamera keys={camera}>
+        <svg width={2100} height={1080} style={{position: 'absolute', inset: 0}}>
+          <line x1={routeStart} x2={routeEnd} y1={current.y} y2={previous.y} stroke={defaultTheme.borderStrong} strokeWidth={3} />
+          <line x1={routeStart} x2={tipX} y1={current.y} y2={tipY} stroke={defaultTheme.cyan} strokeWidth={4} />
+          <circle cx={tipX} cy={tipY} r={8} fill={defaultTheme.cyan} />
         </svg>
         <Card {...previous} label="输入" active={progress === 1} />
         <Card {...current} label="结果" active={progress === 0} />
       </WorldCamera>
-      <div style={{position: 'absolute', left: 40, top: 32, color: '#f2f7fa', fontSize: 22}}>
+      <div style={{position: 'absolute', left: 56, top: 44, color: defaultTheme.textMuted, fontSize: 24, fontWeight: 600}}>
         追溯结果的来源
       </div>
     </AbsoluteFill>

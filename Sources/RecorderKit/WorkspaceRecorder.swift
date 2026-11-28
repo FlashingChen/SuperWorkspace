@@ -35,6 +35,7 @@ public final class WorkspaceRecorder {
     private var returnsAfterEditorClose = false
     private var isReturning = false
     private(set) var isResumeMode = false
+    private(set) var isLibraryMode = false
     public var returnActionStyle: @MainActor (AnyView) -> AnyView = { $0 }
     public var exportSheetStyle: @MainActor (AnyView) -> AnyView = { $0 }
     public var exportPromptField: @MainActor (Binding<String>) -> AnyView = { _ in AnyView(EmptyView()) }
@@ -54,6 +55,7 @@ public final class WorkspaceRecorder {
             return
         }
         self.isResumeMode = false
+        self.isLibraryMode = false
         self.onStart = onStart
         self.archivePackageURL = archivePackageURL
         self.onFinish = onFinish
@@ -91,6 +93,23 @@ public final class WorkspaceRecorder {
         }
     }
 
+    /// Opens the Rough Cutting recorder to capture a standalone demo clip directly into the project's media library.
+    public func presentForLibrary(
+        onPresent: (NSRect?) -> Void,
+        onReturn: @escaping (NSRect?) -> Void,
+        onStart: @escaping (UUID) throws -> URL,
+        onFinish: @escaping (UUID, Result<URL, Error>) -> Void
+    ) {
+        present(
+            onPresent: onPresent,
+            onReturn: onReturn,
+            onStart: { id, _, _, _ in try onStart(id) },
+            archivePackageURL: nil,
+            onFinish: onFinish
+        )
+        self.isLibraryMode = true
+    }
+
     /// Resumes an existing SuperWorkspace material directly inside the Rough Cutting Panel.
     /// If the material has AI motion outputs, `motionLayer` activates the overlaid AI Motion Layer.
     public func resume(
@@ -113,6 +132,7 @@ public final class WorkspaceRecorder {
             title: title
         )
         self.isResumeMode = true
+        self.isLibraryMode = false
         self.onStart = onStart
         self.archivePackageURL = nil
         self.onFinish = onFinish
@@ -271,38 +291,56 @@ struct IntegratedExportSheet: View {
     @State private var error: String?
 
     var body: some View {
-        WorkspaceRecorder.shared.exportSheetStyle(AnyView(content))
+        let base = WorkspaceRecorder.shared.exportSheetStyle(AnyView(content))
+            .background(SheetAutoSizeFitter(trigger: "\(wantsMotion)-\(error ?? "")-\(WorkspaceRecorder.shared.isLibraryMode)"))
+        if #available(macOS 15.0, *) {
+            base.presentationSizing(.fitted)
+        } else {
+            base
+        }
     }
 
     private var content: some View {
         let isResume = WorkspaceRecorder.shared.isResumeMode
+        let isLibrary = WorkspaceRecorder.shared.isLibraryMode
         return VStack(alignment: .leading, spacing: 20) {
-            Text(isResume ? "保存粗剪修改" : "完成录制").font(.title2.weight(.semibold))
-            VStack(alignment: .leading, spacing: 12) {
-                Toggle(isResume ? "重新生成 AI 动效" : "添加 AI 动效", isOn: $wantsMotion)
-                if wantsMotion {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Toggle("引用素材库素材", isOn: $wantsAIEditing)
-                            .help("允许动效任务使用项目素材库中的图片或视频。")
-                        Text("允许动效结合素材库里的真实画面，也可稍后在拼装台直接插入")
+            Text(isLibrary ? "保存到素材库" : (isResume ? "保存粗剪修改" : "完成录制")).font(.title2.weight(.semibold))
+            if isLibrary {
+                Text("导出后直接存入当前项目素材库，可在素材库中指定必用于哪条视频。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                VStack(alignment: .leading, spacing: 12) {
+                    Toggle(isResume ? "准备重新 AI 包装" : "准备 AI 包装", isOn: $wantsMotion)
+                    if wantsMotion {
+                        Text("导出后先完成字幕；回到工作台确认素材齐备后，点击「开始 AI 包装」才会启动。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        WorkspaceRecorder.shared.exportPromptField($editingPrompt)
                     }
-                    WorkspaceRecorder.shared.exportPromptField($editingPrompt)
                 }
             }
-            if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
+            if let error {
+                Text(error)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             HStack {
                 Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
                 WorkspaceRecorder.shared.exportPrimaryActionStyle(AnyView(
-                    Button(isResume ? "保存并更新" : "确定") { submit() }
+                    Button(isLibrary ? "存入素材库" : (isResume ? "保存并更新" : "确定")) { submit() }
                         .keyboardShortcut(.defaultAction)
                         .disabled(mediaSession.prepared == nil)
                 ))
             }
         }
-        .padding(28).frame(width: 380)
+        .padding(28)
+        .frame(width: 400)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func submit() {
@@ -310,7 +348,9 @@ struct IntegratedExportSheet: View {
         guard let media = mediaSession.prepared else { return }
         do {
             let prompt = editingPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-            try WorkspaceRecorder.shared.submit(wantsMotion: wantsMotion, editingPrompt: prompt.isEmpty ? nil : prompt, wantsAIEditing: wantsMotion && wantsAIEditing) { output in
+            let isLibrary = WorkspaceRecorder.shared.isLibraryMode
+            let enablePackaging = !isLibrary && wantsMotion
+            try WorkspaceRecorder.shared.submit(wantsMotion: enablePackaging, editingPrompt: prompt.isEmpty ? nil : prompt, wantsAIEditing: false) { output in
                 let project = editorStore.project
                 return try EditorExportRequestBuilder.make(
                     editorSessionID: editorStore.sessionID, mediaGeneration: media.generation,
@@ -323,6 +363,33 @@ struct IntegratedExportSheet: View {
             playbackController.pause()
             dismiss()
         } catch { self.error = error.localizedDescription }
+    }
+}
+
+/// Resizes the hosting macOS sheet window smoothly whenever dynamic content expands/collapses.
+private struct SheetAutoSizeFitter: NSViewRepresentable {
+    let trigger: String
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        view.isHidden = true
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            guard let window = nsView.window, let contentView = window.contentView else { return }
+            contentView.layoutSubtreeIfNeeded()
+            let fitted = contentView.fittingSize
+            guard fitted.width > 100, fitted.height > 80 else { return }
+            let target = NSSize(width: max(400, ceil(fitted.width)), height: ceil(fitted.height))
+            let current = window.contentRect(forFrameRect: window.frame).size
+            guard abs(current.height - target.height) > 1 || abs(current.width - target.width) > 1 else { return }
+            var frame = window.frameRect(forContentRect: NSRect(origin: .zero, size: target))
+            frame.origin.x = window.frame.midX - frame.width / 2
+            frame.origin.y = window.frame.midY - frame.height / 2
+            window.setFrame(frame, display: true, animate: true)
+        }
     }
 }
 

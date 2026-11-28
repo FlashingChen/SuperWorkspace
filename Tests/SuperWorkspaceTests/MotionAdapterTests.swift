@@ -69,6 +69,7 @@ final class MotionAdapterTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: workspace.appendingPathComponent("src/sw-kit/WorldCamera.tsx").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: workspace.appendingPathComponent("src/sw-kit/StageFrame.tsx").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: workspace.appendingPathComponent("src/sw-kit/DeviceMockup.tsx").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: workspace.appendingPathComponent("src/sw-kit/EditorialUI.tsx").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: workspace.appendingPathComponent("src/sw-kit/theme.ts").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: workspace.appendingPathComponent("remotion.config.ts").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: workspace.appendingPathComponent("src/index.ts").path))
@@ -77,7 +78,24 @@ final class MotionAdapterTests: XCTestCase {
             encoding: .utf8
         )
         XCTAssertTrue(cameraSource.contains("useVideoConfig"))
-        XCTAssertTrue(cameraSource.contains("viewportWidth ?? width ?? config.width"))
+        XCTAssertTrue(cameraSource.contains("viewportWidth ?? width ?? stage?.width ?? config.width"))
+        XCTAssertTrue(cameraSource.contains("rotateY"))
+        XCTAssertTrue(cameraSource.contains("perspective"))
+
+        let editorialSource = try String(
+            contentsOf: workspace.appendingPathComponent("src/sw-kit/EditorialUI.tsx"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(editorialSource.contains("export const SpokenMicroPill"))
+        XCTAssertTrue(editorialSource.contains("export const LiquidMeter"))
+        XCTAssertTrue(editorialSource.contains("export const MacWindowStage"))
+
+        let libSource = try String(
+            contentsOf: workspace.appendingPathComponent("src/sw-kit/lib.ts"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(libSource.contains("export const springIn"))
+        XCTAssertTrue(libSource.contains("export const springMorph"))
 
         let adapterSource = try String(
             contentsOf: workspace.appendingPathComponent("sw-motion.mjs"),
@@ -85,6 +103,8 @@ final class MotionAdapterTests: XCTestCase {
         )
         XCTAssertTrue(adapterSource.contains("contact-sheet-${sheets.length + 1}.jpg"))
         XCTAssertTrue(adapterSource.contains("'-c:v', 'mjpeg'"))
+        XCTAssertTrue(adapterSource.contains("personAnchor"))
+        XCTAssertTrue(adapterSource.contains("eval=frame"))
         XCTAssertEqual(try String(contentsOf: customConfig, encoding: .utf8), "{\"custom\":true}")
     }
 

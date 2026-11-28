@@ -81,30 +81,23 @@ struct MaterialProcessingActions: View {
     }
     var body: some View {
         if let material {
-            if material.wantsMotion {
-                Button(material.useOriginal == true ? "使用动效" : "使用原片") {
-                    state.setUseOriginal(projectID, materialID, material.useOriginal != true)
-                }
-                .disabled(material.useOriginal == true && material.motionState != .complete)
-                if [.queued, .running].contains(material.motionState) {
+            if material.exportState == .complete {
+                if !material.wantsMotion || material.motionState == .idle {
+                    Button("开始 AI 包装") { state.enqueueMotion(projectID, materialID) }
+                } else if [.queued, .running].contains(material.motionState) {
                     if state.motionBudgetHolds[material.mediaID] != nil {
                         if let hold = state.motionBudgetHolds[material.mediaID], hold.canExtend {
                             Button("继续 \(hold.extendMinutes) 分钟") { state.continueMotion(projectID, materialID) }
                         }
                     }
-                    Button("取消动效") { state.cancelProcessing(projectID, materialID, motion: true) }
+                    Button("取消 AI 包装") { state.cancelProcessing(projectID, materialID, motion: true) }
                 } else if material.motionState == .failed {
-                    Button("重试动效") { state.enqueueMotion(projectID, materialID) }
-                }
-            }
-            if material.wantsAIEditing == true {
-                if state.taskPhases[material.mediaID] == "AI 剪辑" {
-                    Text("正在规划插图…")
-                } else if (material.inserts ?? []).isEmpty {
-                    Button(material.aiEditWarning == nil ? "规划 AI 插图" : "重试 AI 剪辑") {
-                        state.retryAIEditing(projectID, materialID)
+                    Button("重试 AI 包装") { state.enqueueMotion(projectID, materialID) }
+                } else if material.motionState == .complete {
+                    Button(material.useOriginal == true ? "启用 AI 包装" : "切换为原片") {
+                        state.setUseOriginal(projectID, materialID, material.useOriginal != true)
                     }
-                    .disabled(material.exportState != .complete)
+                    Button("重新 AI 包装") { state.enqueueMotion(projectID, materialID) }
                 }
             }
             if material.transcriptState == .running {

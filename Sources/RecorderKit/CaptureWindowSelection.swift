@@ -917,13 +917,26 @@ private final class WindowSelectionOverlayView: NSView {
 
     private func confirmationCardFrame(for target: CGRect) -> CGRect {
         let size = CGSize(width: 436, height: 60)
-        let centerX = min(max(target.midX, size.width / 2 + 20), bounds.maxX - size.width / 2 - 20)
+        let safeRect: CGRect = {
+            guard let panel = window, let screen = panel.screen else { return bounds }
+            let localVisible = screen.visibleFrame.offsetBy(dx: -panel.frame.minX, dy: -panel.frame.minY)
+            let clipped = bounds.intersection(localVisible)
+            return clipped.isNull || clipped.width < size.width || clipped.height < size.height ? bounds : clipped
+        }()
+        let minCenterX = safeRect.minX + size.width / 2 + 20
+        let maxCenterX = max(minCenterX, safeRect.maxX - size.width / 2 - 20)
+        let centerX = min(max(target.midX, minCenterX), maxCenterX)
         let above = target.maxY + 14
         let below = target.minY - size.height - 14
         let y: CGFloat
-        if below >= bounds.minY + 20 { y = below }
-        else if above + size.height <= bounds.maxY - 20 { y = above }
-        else { y = min(max(target.maxY - size.height - 22, bounds.minY + 20), bounds.maxY - size.height - 20) }
+        if below >= safeRect.minY + 16 {
+            y = below
+        } else if above + size.height <= safeRect.maxY - 16 {
+            y = above
+        } else {
+            // Maximized or full-height window: float cleanly inside the lower area safely above the Dock.
+            y = min(max(target.minY + 24, safeRect.minY + 20), safeRect.maxY - size.height - 20)
+        }
         return CGRect(x: centerX - size.width / 2, y: y, width: size.width, height: size.height)
     }
 }

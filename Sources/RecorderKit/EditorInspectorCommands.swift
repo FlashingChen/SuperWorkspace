@@ -125,6 +125,9 @@ extension EditorInspectorView {
             // 组合预设的两侧时间窗取两条轨道的并集贴合，保证成对一致。
             let among = timeline.cameraMotionClips.map(\.timing)
                 + (screenTarget == nil ? [] : timeline.screenMotionClips.map(\.timing))
+            let leadIn = (layout == .fullscreen && playbackTime <= 0.05)
+                ? 0
+                : editorStore.project.motion.defaultZoomTransitionDuration
             guard let fitted = EditorTimelineMath.fitMotionTiming(
                 start: playbackTime,
                 end: playbackTime,
@@ -132,7 +135,7 @@ extension EditorInspectorView {
                 duration: timelineDuration,
                 easing: editorStore.project.motion.defaultZoomEasing,
                 returnDuration: editorStore.project.motion.defaultZoomTransitionDuration,
-                leadInDuration: editorStore.project.motion.defaultZoomTransitionDuration
+                leadInDuration: leadIn
             ) else {
                 onError("播放头附近没有空间添加布局动画，请先移动播放头。")
                 return

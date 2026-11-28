@@ -332,7 +332,9 @@ final class AutomationServer: @unchecked Sendable {
 
             case "record_stop":
                 let wantsMotion = request.args["wantsMotion"]?.boolValue ?? false
+                let toLibrary = request.args["toLibrary"]?.boolValue ?? false
                 let editingPrompt = request.args["editingPrompt"]?.stringValue
+                let explicitName = request.args["name"]?.stringValue
                 let styled = request.args["styled"]?.boolValue ?? true
                 let stopped = try await HeadlessRecorder.shared.stop(styled: styled)
                 guard let projectID = activeRecordingProjectID,
@@ -341,6 +343,29 @@ final class AutomationServer: @unchecked Sendable {
                 }
                 activeRecordingProjectID = nil
                 activeRecordingMaterialID = nil
+
+                if toLibrary {
+                    let media = try await state.registerHeadlessLibraryRecording(
+                        projectID: projectID,
+                        outputURL: URL(fileURLWithPath: stopped.outputPath),
+                        preferredName: explicitName
+                    )
+                    // Clean up the temporary material directory created by record_start.
+                    if let project = state.projects.first(where: { $0.id == projectID }) {
+                        var placeholder = Material()
+                        placeholder.id = materialID
+                        try? FileManager.default.removeItem(at: ProjectLayout.materialDirectory(placeholder, in: project))
+                    }
+                    var obj: [String: JSONValue] = [
+                        "projectID": .string(projectID.uuidString),
+                        "assetID": .string(media.id.uuidString),
+                        "assetName": .string(media.name),
+                        "duration": .number(stopped.duration),
+                        "savedToLibrary": .bool(true),
+                    ]
+                    if let warning = stopped.warning { obj["warning"] = .string(warning) }
+                    return .success(.object(obj))
+                }
 
                 try await state.registerHeadlessRecording(
                     projectID: projectID,

@@ -578,21 +578,17 @@ enum ProjectStore {
         return RecordingSession(packageURL: packageURL)
     }
 
-    /// User-configurable destination for saved projects. When unset, the
-    /// default is 影片/DogSC/项目.
+    /// Embedded in SuperWorkspace: temporary recorder sessions stay inside SuperWorkspace's
+    /// private Application Support directory and never write standalone `.dogscproject` bundles
+    /// into user folders such as Downloads or Movies/DogSC.
     static let projectsFolderDefaultsKey = "cn.laogou.dogsc.projects-folder"
 
     static var savedProjectsFolder: URL {
-        if let customPath = defaults.string(forKey: projectsFolderDefaultsKey),
-           !customPath.isEmpty,
-           FileManager.default.fileExists(atPath: customPath) {
-            return URL(fileURLWithPath: customPath, isDirectory: true)
-        }
-        let movies = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
-        return movies
-            .appendingPathComponent("DogSC", isDirectory: true)
-            .appendingPathComponent("项目", isDirectory: true)
+        return appSupport
+            .appendingPathComponent("SuperWorkspace", isDirectory: true)
+            .appendingPathComponent("RecorderSessions", isDirectory: true)
     }
 
     static func setSavedProjectsFolder(_ url: URL) throws {

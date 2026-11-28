@@ -7,6 +7,10 @@ enum AutomationCLI {
         let args = Array(CommandLine.arguments.dropFirst())
         guard args.first == "cli" else { return }
         let subargs = Array(args.dropFirst())
+        if subargs.first == "matte" {
+            runMatte(Array(subargs.dropFirst()))
+            return
+        }
         do {
             let request = try parseRequest(subargs)
             let response = try send(request, socketPath: AutomationServer.socketPath)
@@ -119,16 +123,74 @@ enum AutomationCLI {
                 return AutomationRequest(command: "record_start", args: payload)
             } else if action == "stop" {
                 var payload: [String: JSONValue] = [:]
-                if flags["motion"] != nil { payload["wantsMotion"] = .bool(true) }
+                if flags["motion"] != nil || flags["package"] != nil { payload["wantsMotion"] = .bool(true) }
+                if flags["library"] != nil { payload["toLibrary"] = .bool(true) }
                 if flags["raw"] != nil { payload["styled"] = .bool(false) }
                 if flags["styled"] != nil { payload["styled"] = .bool(true) }
                 if let prompt = flags["prompt"] { payload["editingPrompt"] = .string(prompt) }
+                if let name = flags["name"] { payload["name"] = .string(name) }
                 return AutomationRequest(command: "record_stop", args: payload)
             }
             throw CLIError.usage
         default:
             throw CLIError.usage
         }
+    }
+
+    private static func runMatte(_ args: [String]) {
+        let flags = parseFlags(args)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let inputPath = flags["input"],
+              let outputPath = flags["output"],
+              let start = flags["start"].flatMap(Double.init),
+              let end = flags["end"].flatMap(Double.init) else {
+            let failure = AutomationResponse.failure("用法：SuperWorkspace cli matte --input <source.mp4> --start <sec> --end <sec> --output <mask.mp4> [--quality balanced|accurate]")
+            if let data = try? encoder.encode(failure), let text = String(data: data, encoding: .utf8) {
+                print(text)
+            }
+            exit(1)
+        }
+        let quality = flags["quality"].flatMap(PersonMattingService.Quality.init(rawValue:)) ?? .balanced
+        final class ExitBox: @unchecked Sendable { var code: Int32 = 1 }
+        let exitBox = ExitBox()
+        let semaphore = DispatchSemaphore(value: 0)
+        Task.detached {
+            let localEncoder = JSONEncoder()
+            localEncoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            do {
+                let res = try await PersonMattingService.generateMask(
+                    sourceURL: URL(fileURLWithPath: inputPath),
+                    start: start,
+                    end: end,
+                    outputURL: URL(fileURLWithPath: outputPath),
+                    quality: quality
+                )
+                let response = AutomationResponse.success(.object([
+                    "outputPath": .string(res.outputPath),
+                    "width": .number(Double(res.width)),
+                    "height": .number(Double(res.height)),
+                    "frames": .number(Double(res.frames)),
+                    "start": .number(res.start),
+                    "end": .number(res.end),
+                    "elapsedSeconds": .number(res.elapsedSeconds),
+                ]))
+                if let data = try? localEncoder.encode(response), let text = String(data: data, encoding: .utf8) {
+                    print(text)
+                }
+                exitBox.code = 0
+            } catch {
+                let failure = AutomationResponse.failure(error.localizedDescription)
+                if let data = try? localEncoder.encode(failure), let text = String(data: data, encoding: .utf8) {
+                    print(text)
+                }
+                exitBox.code = 1
+            }
+            fflush(stdout)
+            semaphore.signal()
+        }
+        semaphore.wait()
+        exit(exitBox.code)
     }
 
     private static func parseFlags(_ args: [String]) -> [String: String] {
