@@ -52,18 +52,20 @@
 
 ## `src/sw-kit` 导出速查
 
-直接 `import { WorldCamera, StageFrame, SpokenMicroPill, VectorIcon, CornerBadge, MonoFootnote, LiquidMeter, TopStepperBar, MacWindowStage, MediaCard, PhoneMockup, defaultTheme, SAFE_ZONES, springIn, springMorph, ease, pop, stagger } from '../sw-kit'`：
+直接 `import { BrandDeckCard, EditorialRankCard, DataRuleList, QuoteEvidenceCard, QuadrantPlot, WorldCamera, StageFrame, SpokenMicroPill, VectorIcon, CornerBadge, MonoFootnote, LiquidMeter, TopStepperBar, MacWindowStage, MediaCard, PhoneMockup, defaultTheme, SAFE_ZONES, springIn, springMorph, ease, pop, stagger } from '../sw-kit'`：
 
 | 导出 | 职责与要点 |
 | :--- | :--- |
+| `<BrandDeckCard>` | **主力品牌实体卡**：纯白卡片 + 真实官方 SVG Logo（`logoSrc="assets/logos/..."`，严禁手绘 Logo）+ 底部极简分类标签，适合品牌牌阵、产品罗列与对比。 |
+| `<EditorialRankCard>` | **主力侧边/结论卡**：哑光猩红（`crimson`）/ 炭黑（`obsidian`）/ 纸面（`paper`）实体卡，带小 Logo、红黑榜徽章、要点列表与等宽溯源，零廉价霓虹发光。 |
+| `<DataRuleList>` | **杂志风细线数据条**：`1px` 分割线 + `3px` 弹簧进度条 + 等宽右对齐数字 + 底部大写等宽真实出处（`source` 必填）。 |
+| `<QuoteEvidenceCard>` | **真实引语/文档批注卡**：暖白纸面底，支持荧光黄高亮句（`highlight: true`）与右侧红色批注标签，适合展示查证的推文、官方文档或对话原文。 |
+| `<QuadrantPlot>` | **二维定位象限图**：极简细线坐标轴 + 真实官方 Logo 节点（`logoSrc`）+ 定位标签，用于模型/产品格局对比与视觉隐喻。 |
 | `<StageFrame>` | 默认按 1920 逻辑宽等比缩放（`normalizeTo1920 = true`），一次布局即可在 1080p / 3K / 4K 保持一致字号与视觉占比；`header` 槽锁定在顶部安全区。 |
 | `<WorldCamera keys={...}>` | **3D 世界相机**：每个 key 支持 `{ frame, cx, cy, scale, rotateX?, rotateY?, rotateZ? }`；默认开启 `perspective={1800}` 与轻柔云台微呼吸 `floatAmount={0.65}`；可选 `parallaxBackground` 获得 `0.42×` 远景视差。 |
 | `springIn` / `springMorph` | `springIn(frame, fps, delay?, config?)` 与 `springMorph(frame, fps, triggerFrame, from, to, config?)`：真实 Remotion 弹簧物理，用于入场与同幕重排变形。 |
-| `<SpokenMicroPill>` / `<VectorIcon>` | 液态玻璃 / 实心 999px 微胶囊与 2px 极简矢量图标（零 Emoji），支持 `dark / darkRed / darkCyan / solidRed / solidGold / solidCyan` 与 `dimmed` 单焦点降噪。 |
-| `<CornerBadge>` / `<TopStepperBar>` | 锁在 HUD 层的液态玻璃常驻话题徽章与顶部步骤路线图。 |
-| `<LiquidMeter>` | 液态玻璃动态进度条：有查证数据时跳动真实数字；无客观数字时传 `valueText` 展示定性状态，严禁编造假分。 |
 | `<MacWindowStage>` | 浅灰顶栏 macOS 真实录屏/网页展示舞台，传 `videoSrc="library/..."` 与 `loopFrames` 直接播放素材库视频。 |
-| `<MonoFootnote>` | 等宽低对比注脚，标明数据来源、版本号或官方域名。 |
+| `<MonoFootnote>` / `<CornerBadge>` / `<TopStepperBar>` | 等宽溯源注脚、常驻话题徽章与顶部步骤条；`<SpokenMicroPill>` / `<VectorIcon>` / `<LiquidMeter>` 仅作为克制点缀，勿堆砌发光胶囊。 |
 | `defaultTheme` / `SAFE_ZONES` | 深炭黑杂志风权威色板；顶部 HUD `0.12`、底部字幕安全区 `0.14`、左右边距 `0.05`。 |
 
 ## 常用命令

@@ -193,6 +193,7 @@ final class SettingsStore: ObservableObject {
         """
         以下技能正文来自 \(skill.path)，按需引用其同级 `references/` 文档。
         只在当前素材工作目录读写工程与产物；工作目录已预置 `src/sw-kit/` 与 `sw-motion.mjs`。
+        写 TSX 前必须先完成资料查证与真实资产拉取：凡口播提到的真实品牌、公司或模型，必须联网下载官方 SVG 到 `public/assets/logos/`（严禁手绘任何品牌 Logo），凡涉及榜单、数据、价格或引语必须先查证真实出处并写入 `research-facts.json`（严禁编造假数字）。
         先写出最小可渲染版本跑通，再用 edit 增量修改（单次写入控制在 250 行以内）；覆盖简报中全部可动区间。
         本次任务有工具步数和时长上限（安全边界，并非要求提前收工）；`sw-motion.mjs render` 返回 `ok: true` 后直接交付，由应用接手媒体校验。
         """
