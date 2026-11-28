@@ -105,6 +105,7 @@ struct ProjectMediaLibrary: View {
     let projectID: UUID
     @State private var importing = false
     @State private var pending = false
+    @State private var isDropTargeted = false
     @State private var notice: String?
     @State private var removing: ReferenceMedia?
     @State private var describing: ReferenceMedia?
@@ -147,8 +148,35 @@ struct ProjectMediaLibrary: View {
                         }
                     }.padding(2)
                 } else if !pending {
-                    Text("导入图片、视频或音频，或直接录制演示片段存入素材库；默认全部视频可用，也可指定必用于某条视频。")
-                        .font(.studio(.body)).foregroundStyle(palette.textSecondary)
+                    Button { importing = true } label: {
+                        VStack(spacing: Metrics.space2) {
+                            Image(systemName: "arrow.down.doc")
+                                .font(.studio(.heading))
+                                .foregroundStyle(isDropTargeted ? palette.accent : palette.textSecondary)
+                            Text("拖入图片、视频或音频，或点击导入")
+                                .font(.studio(.bodyMedium))
+                                .foregroundStyle(palette.textPrimary)
+                            Text("默认全部视频可用，也可为每条素材添加说明或指定必用于某条视频。")
+                                .font(.studio(.small))
+                                .foregroundStyle(palette.textSecondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, Metrics.space8)
+                        .padding(.horizontal, Metrics.space6)
+                        .background(
+                            RoundedRectangle(cornerRadius: Metrics.radiusL)
+                                .fill(isDropTargeted ? palette.accent.opacity(0.08) : palette.surface1)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: Metrics.radiusL)
+                                .strokeBorder(
+                                    isDropTargeted ? palette.accent : palette.hairline,
+                                    style: StrokeStyle(lineWidth: isDropTargeted ? 1.5 : 1, dash: [6, 4])
+                                )
+                        )
+                    }
+                    .buttonStyle(StudioContentButtonStyle())
+                    .disabled(project?.isFrozen == true)
                 }
             }
             .frame(maxWidth: Metrics.contentWide, alignment: .leading)
@@ -156,6 +184,30 @@ struct ProjectMediaLibrary: View {
             .frame(maxWidth: .infinity)
         }
         .foregroundStyle(palette.textPrimary).background(palette.bgBase)
+        .overlay {
+            if isDropTargeted, let project, !project.referenceMedia.isEmpty {
+                ZStack {
+                    RoundedRectangle(cornerRadius: Metrics.radiusL)
+                        .fill(palette.accent.opacity(0.08))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: Metrics.radiusL)
+                                .strokeBorder(palette.accent, style: StrokeStyle(lineWidth: 2, dash: [8, 5]))
+                        )
+                    Text("松开导入到素材库")
+                        .font(.studio(.bodyMedium))
+                        .foregroundStyle(palette.textPrimary)
+                        .padding(.horizontal, Metrics.space4)
+                        .padding(.vertical, Metrics.space2)
+                        .background(palette.island, in: Capsule())
+                        .overlay(Capsule().strokeBorder(palette.hairline, lineWidth: 1))
+                }
+                .padding(Metrics.space4)
+                .allowsHitTesting(false)
+            }
+        }
+        .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
+            handleDrop(providers)
+        }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.image, .movie, .audio], allowsMultipleSelection: true) { result in
             switch result {
             case .success(let urls): importMedia(urls)
@@ -198,7 +250,8 @@ struct ProjectMediaLibrary: View {
             .buttonStyle(StudioContentButtonStyle())
             .accessibilityLabel("打开\(media.name)")
             HStack(spacing: Metrics.space2) {
-                Image(systemName: media.kind == .image ? "photo" : "film").accessibilityHidden(true)
+                Image(systemName: media.kind == .image ? "photo" : (media.kind == .audio ? "music.note" : "film"))
+                    .accessibilityHidden(true)
                 Text(media.name).font(.studio(.bodyMedium)).lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 0)
                 if generating.contains(media.id) {
@@ -246,10 +299,32 @@ struct ProjectMediaLibrary: View {
                 .buttonStyle(StudioContentButtonStyle())
                 .help("设置这条素材是全部视频自由可用，还是必用于指定视频")
             }
-            if !media.description.isEmpty {
-                Text(media.description).font(.studio(.small))
-                    .foregroundStyle(palette.textSecondary).lineLimit(1)
+            Button { describing = media } label: {
+                HStack(alignment: .top, spacing: Metrics.space1) {
+                    if media.description.isEmpty {
+                        Image(systemName: "pencil")
+                            .font(.studio(.micro))
+                            .foregroundStyle(palette.textMuted)
+                            .padding(.top, 2)
+                        Text("添加素材说明…")
+                            .font(.studio(.small))
+                            .foregroundStyle(palette.textMuted)
+                    } else {
+                        Text(media.description)
+                            .font(.studio(.small))
+                            .foregroundStyle(palette.textSecondary)
+                            .multilineTextAlignment(.leading)
+                            .lineLimit(2)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, Metrics.space2)
+                .padding(.vertical, Metrics.space1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(palette.controlWell, in: RoundedRectangle(cornerRadius: Metrics.radiusS))
             }
+            .buttonStyle(StudioContentButtonStyle())
+            .help("点击填写或修改这条素材的说明，AI 包装和剪辑会参考此说明")
         }
     }
 
@@ -269,6 +344,45 @@ struct ProjectMediaLibrary: View {
               state.updateProject(projectID, { $0.referenceMedia.removeAll { $0.id == media.id } }) else { return }
         do { try FileManager.default.removeItem(at: ProjectLayout.reference(media, in: project)) }
         catch { notice = "已移出素材库，删除副本失败。\(error.localizedDescription)" }
+    }
+
+    private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
+        guard let project, !project.isFrozen, !pending else { return false }
+        let fileProviders = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
+        guard !fileProviders.isEmpty else { return false }
+        let group = DispatchGroup()
+        final class URLCollector: @unchecked Sendable {
+            private let lock = NSLock()
+            var urls: [URL] = []
+            func append(_ url: URL) { lock.withLock { urls.append(url) } }
+        }
+        let collector = URLCollector()
+        for provider in fileProviders {
+            group.enter()
+            provider.loadDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier) { data, _ in
+                defer { group.leave() }
+                guard let data, let url = URL(dataRepresentation: data, relativeTo: nil) else { return }
+                collector.append(url)
+            }
+        }
+        group.notify(queue: .main) {
+            let expanded = collector.urls.flatMap { Self.expandDroppedURL($0) }
+            if !expanded.isEmpty {
+                importMedia(expanded)
+            }
+        }
+        return true
+    }
+
+    private nonisolated static func expandDroppedURL(_ url: URL) -> [URL] {
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else {
+            return [url]
+        }
+        guard let children = try? FileManager.default.contentsOfDirectory(
+            at: url, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]
+        ) else { return [] }
+        return children.filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
     }
 
     private func importMedia(_ urls: [URL]) {

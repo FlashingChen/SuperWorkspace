@@ -464,7 +464,7 @@ async function cmdRender(opts) {
 
   mkdirSync(CACHE_DIR, {recursive: true});
 
-  const renderSpec = {width, height, fps};
+  const renderSpec = {width, height, fps, qualityVersion: 2};
   const renderQueue = [];
   const resolvedShots = [];
   const resolvedOverlays = [];
@@ -518,11 +518,9 @@ async function cmdRender(opts) {
       args.push(
         '--codec', 'h264',
         '--pixel-format', 'yuv420p',
-        '--crf', '18',
+        '--jpeg-quality', '95',
+        '--crf', '16',
       );
-      if (width > 2400 && width % 4 === 0 && height % 4 === 0) {
-        args.push('--scale', '0.5');
-      }
     }
     try {
       await runCmd('npx', args, {timeout: 1_200_000});
@@ -713,7 +711,7 @@ async function cmdRender(opts) {
 
     const shifted = `sv${i}`;
     const next = `b${i}`;
-    let shotChain = `[${inputIndex}:v]scale=${width}:${height},format=rgba`;
+    let shotChain = `[${inputIndex}:v]scale=${width}:${height}:flags=lanczos,format=rgba`;
     if (useEnterFade) shotChain += `,fade=t=in:st=0:d=${fadeInD}:alpha=1`;
     if (useExitFade) shotChain += `,fade=t=out:st=${fadeOutSt}:d=${fadeOutD}:alpha=1`;
     shotChain += `,setpts=PTS-STARTPTS+${s.start.toFixed(4)}/TB[${shifted}]`;
@@ -774,11 +772,11 @@ async function cmdRender(opts) {
   }
   baseArgs.push('-r', String(fps), '-pix_fmt', 'yuv420p', '-movflags', '+faststart');
 
-  const vtArgs = [...baseArgs, '-c:v', 'h264_videotoolbox', '-allow_sw', '1', '-q:v', '65', outputPath];
+  const vtArgs = [...baseArgs, '-c:v', 'h264_videotoolbox', '-profile:v', 'high', '-allow_sw', '1', '-q:v', '82', outputPath];
   try {
     await runCmd('ffmpeg', vtArgs, {timeout: 600_000});
   } catch {
-    const swArgs = [...baseArgs, '-c:v', 'libx264', '-crf', '18', '-preset', 'fast', outputPath];
+    const swArgs = [...baseArgs, '-c:v', 'libx264', '-crf', '16', '-preset', 'fast', outputPath];
     await runCmd('ffmpeg', swArgs, {timeout: 600_000});
   }
 

@@ -70,6 +70,7 @@ final class MotionAdapterTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: workspace.appendingPathComponent("src/sw-kit/StageFrame.tsx").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: workspace.appendingPathComponent("src/sw-kit/DeviceMockup.tsx").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: workspace.appendingPathComponent("src/sw-kit/EditorialUI.tsx").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: workspace.appendingPathComponent("src/sw-kit/EditorialCards.tsx").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: workspace.appendingPathComponent("src/sw-kit/theme.ts").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: workspace.appendingPathComponent("remotion.config.ts").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: workspace.appendingPathComponent("src/index.ts").path))
@@ -89,6 +90,16 @@ final class MotionAdapterTests: XCTestCase {
         XCTAssertTrue(editorialSource.contains("export const SpokenMicroPill"))
         XCTAssertTrue(editorialSource.contains("export const LiquidMeter"))
         XCTAssertTrue(editorialSource.contains("export const MacWindowStage"))
+
+        let editorialCardsSource = try String(
+            contentsOf: workspace.appendingPathComponent("src/sw-kit/EditorialCards.tsx"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(editorialCardsSource.contains("export const BrandDeckCard"))
+        XCTAssertTrue(editorialCardsSource.contains("export const EditorialRankCard"))
+        XCTAssertTrue(editorialCardsSource.contains("export const DataRuleList"))
+        XCTAssertTrue(editorialCardsSource.contains("export const QuoteEvidenceCard"))
+        XCTAssertTrue(editorialCardsSource.contains("export const QuadrantPlot"))
 
         let libSource = try String(
             contentsOf: workspace.appendingPathComponent("src/sw-kit/lib.ts"),
