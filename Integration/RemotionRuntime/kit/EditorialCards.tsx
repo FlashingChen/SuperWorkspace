@@ -4,6 +4,15 @@ import {defaultTheme} from './theme';
 
 const SPRING_SNAPPY = {damping: 18, stiffness: 210, mass: 0.7};
 
+function resolveAssetSrc(src: string): string {
+  const trimmed = src.trim();
+  if (/^(https?:|data:|\/public\/)/i.test(trimmed)) {
+    return trimmed;
+  }
+  const normalized = trimmed.replace(/^\/?public\//, '');
+  return staticFile(normalized);
+}
+
 // ---------------------------------------------------------------------------
 // 1. BrandDeckCard — Crisp pure-white physical card for official brand logos
 // ---------------------------------------------------------------------------
@@ -75,7 +84,7 @@ export const BrandDeckCard: React.FC<BrandDeckCardProps> = ({
       >
         {logoSrc ? (
           <Img
-            src={staticFile(logoSrc)}
+            src={resolveAssetSrc(logoSrc)}
             style={{width: 56, height: 56, objectFit: 'contain'}}
           />
         ) : (
@@ -244,7 +253,7 @@ export const EditorialRankCard: React.FC<EditorialRankCardProps> = ({
               flexShrink: 0,
             }}
           >
-            <Img src={staticFile(logoSrc)} style={{width: 30, height: 30, objectFit: 'contain'}} />
+            <Img src={resolveAssetSrc(logoSrc)} style={{width: 30, height: 30, objectFit: 'contain'}} />
           </div>
         ) : (
           <div />
@@ -352,6 +361,7 @@ export const DataRuleList: React.FC<DataRuleListProps> = ({
     <div
       style={{
         width,
+        boxSizing: 'border-box',
         padding: '18px 20px 14px',
         borderRadius: 12,
         background: 'rgba(10, 12, 18, 0.84)',
@@ -385,7 +395,7 @@ export const DataRuleList: React.FC<DataRuleListProps> = ({
             fps,
             config: {damping: 20, stiffness: 160, mass: 0.8},
           });
-          const fill = Math.max(0, Math.min(1, row.ratio)) * rowP;
+          const fill = Math.max(0, Math.min(1, Math.max(0, Math.min(1, row.ratio)) * rowP));
           const barColor = row.accent ?? '#38BDF8';
           return (
             <div key={idx}>
@@ -410,7 +420,15 @@ export const DataRuleList: React.FC<DataRuleListProps> = ({
                   {row.valueText}
                 </span>
               </div>
-              <div style={{height: 3, width: '100%', background: 'rgba(255, 255, 255, 0.12)', borderRadius: 2}}>
+              <div
+                style={{
+                  height: 3,
+                  width: '100%',
+                  background: 'rgba(255, 255, 255, 0.12)',
+                  borderRadius: 2,
+                  overflow: 'hidden',
+                }}
+              >
                 <div
                   style={{
                     height: '100%',
@@ -711,7 +729,7 @@ export const QuadrantPlot: React.FC<QuadrantPlotProps> = ({
               }}
             >
               {node.logoSrc ? (
-                <Img src={staticFile(node.logoSrc)} style={{width: 26, height: 26, objectFit: 'contain'}} />
+                <Img src={resolveAssetSrc(node.logoSrc)} style={{width: 26, height: 26, objectFit: 'contain'}} />
               ) : null}
               <span style={{fontSize: 18, fontWeight: 800, color: '#0F172A', whiteSpace: 'nowrap'}}>{node.label}</span>
             </div>

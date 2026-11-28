@@ -22,10 +22,10 @@ description: 为工作台的单段口播或录屏视频制作杂志纪录片级 
 - 凡口播提到任何真实公司、平台、软件或 AI 模型（如 Google、OpenAI、Anthropic、Claude、Gemini、Meta、SpaceX、GitHub、Apple、Figma、DeepSeek、Qwen、Doubao 等），**严禁自己手写 `<svg>` 凭空画 Logo 或用字母圆圈敷衍**。
 - 必须先用命令行下载真实官方 SVG 到 `public/assets/logos/<slug>.svg`：
   1. **AI 模型与科技大厂优先**（支持彩色与单色官方标）：
-     `curl -fsSL "https://raw.githubusercontent.com/lobehub/lobe-icons/master/packages/static-svg/icons/<slug>.svg" -o public/assets/logos/<slug>.svg`
+     `curl -fsSL --create-dirs "https://raw.githubusercontent.com/lobehub/lobe-icons/master/packages/static-svg/icons/<slug>.svg" -o public/assets/logos/<slug>.svg`
      常用 slug：`openai`、`anthropic`、`claude-color`、`gemini-color`、`google-color`、`meta-color`、`grok`、`deepseek-color`、`qwen-color`、`doubao-color`、`minimax-color`、`kimi-color`、`perplexity-color`、`cursor`、`github`、`vercel` 等。
   2. **通用开源/科技品牌备选**：
-     `curl -fsSL "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/<slug>.svg" -o public/assets/logos/<slug>.svg`
+     `curl -fsSL --create-dirs "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/<slug>.svg" -o public/assets/logos/<slug>.svg`
   3. **下载后必须校验**：确认文件非空且包含 `<svg`；组件内通过 `<Img src={staticFile('assets/logos/<slug>.svg')} />` 或 `BrandDeckCard` / `EditorialRankCard` 的 `logoSrc` 渲染。
   4. **兜底铁律**：如果某个小众品牌确实无法拉到官方 SVG，**只允许使用纯排版文字标（如 `BrandDeckCard` 不传 `logoSrc`）**，绝对禁止手绘山寨图形。
 
