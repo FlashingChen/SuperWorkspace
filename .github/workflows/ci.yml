@@ -32,5 +32,4 @@ jobs:
         shell: bash
         run: |
           if ! command -v ffmpeg >/dev/null; then brew install ffmpeg; fi
-          python3 scripts/prepare-recorder.py
           swift test

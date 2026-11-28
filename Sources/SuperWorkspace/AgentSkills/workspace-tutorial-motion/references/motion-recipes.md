@@ -1,94 +1,46 @@
-# 连续图解与取景
+# 3D 世界相机运镜与连续图解示例
 
-## 输入 → 处理 → 结果
+## 输入 → 处理 → 结果（3D 大世界画布）
 
-在一个比视口宽的大画布上布置三组对象，不为每个阶段重新创建画布。
+在一个连续画布上布置所有节点，用 **3D `WorldCamera`** 执行推进（Dolly In）、摇镜（Pan/Tilt）、3D 倾角（`rotateX`/`rotateY`）与拉回（Pull Back），不为每个阶段重建孤立静态卡片：
 
-| 节拍 | 对象动作 | 摄像机 |
+| 节拍 | 对象动作（`springIn` / `springMorph`） | 3D 摄像机（`WorldCamera`） |
 | --- | --- | --- |
-| 建立 | 输入对象出现，展示待处理的内容 | 较宽取景交代方向，不一开始塞满所有细节 |
-| 分解 | 输入分成少量可追踪的小单元 | 轻推近当前动作，留出下一段流向空间 |
-| 传递 | 小单元沿连线依次进入处理节点 | 沿传递方向平移瞄准点，不独立挪动所有节点假装运镜 |
-| 解释 | 节点分区依次激活，状态随处理变化 | 镜头停在可读的近景，对象接续动作 |
-| 扩展 | 结果区域出现、格子逐项填充 | 拉开或巡游到结果，保留上阶段的视觉连接 |
-| 总结 | 结果稳定，保留关键对象 | 回到关系全景，短暂停留后切回原片 |
+| 建立 | 主体弹性入场，交代方向与结构 | 略宽建立全景（`scale: 0.94`, `rotateY: 4°`） |
+| 聚焦 | 焦点模块高亮，次要项 `dimmed` 降噪 | 推近焦点（`scale: 1.22`, `rotateY: -8°`, `rotateX: 3°`） |
+| 流转 | 元素沿连线流动或用 `springMorph` 物理重排 | 沿流向平滑摇镜（改 `cx/cy` + 反转 `rotateY` 视角） |
+| 实证 | 真实录屏窗口或查证指标跳动展开 | 推近核心操作区或数据条，`MonoFootnote` 标注出处 |
+| 收束 | 关键结论高亮定格 | 拉回全景（`scale: 0.96`, `rotateY: 0°`）承接下一幕 |
 
-镜头变化一般用 0.5–1.2 秒起步，按口播节拍调整。需要留时间读图时可固定镜头并让有关对象接续动作。镜头与对象同时静止的空档最多 1 秒。镜头近景的主体应比全景明显大，位移有清晰目标。
-
-## 相机关键帧示例
-
-下面只是世界坐标接口示意，实际位置应根据对象尺寸和安全区计算；全屏图解和局部安全区都必须显式裁切。
-
-```tsx
-const camera = [
-  {frame: 0,   cx: 960,  cy: 540, scale: 1},
-  {frame: 25,  cx: 960,  cy: 540, scale: 1}, // 建立与停顿
-  {frame: 55,  cx: 1240, cy: 510, scale: 1.22}, // 跟随当前对象
-  {frame: 100, cx: 1240, cy: 510, scale: 1.22}, // 让对象完成动作
-  {frame: 135, cx: 1500, cy: 540, scale: 0.9}, // 拉开揭示关系
-];
-```
-
-主体自身仍要有分解、流动或填充等局部动作。固定标题和脚注放在 WorldCamera 的同级，不放在它里面。为镜头轨迹预留画布延展，不暴露空边，不把重要内容移出视口。
-
-跨章节回指可直接复用 [chapter-connection.tsx](chapter-connection.tsx)。把出发帧对齐说出两章关系的那一刻，让连线和镜头同时开始变化。较长的讲解可在抵达前后依次补充路径、节点接收和结果细节。
-
-## 背景与承托
-
-整帧先定背景，再放媒体与图解。背景是代码画的，不引用图片，也不用任何模糊。
-
-层级自底向上：
-
-```text
-background（画出来的背景，最先铺）
-cameraWorld（相机世界）
-  objects / connectors / packets（对象、连线、传递）
-fixedLabels（固定文字，可无；不跟相机）
-subtitles（宿主控制，最上层）
-```
-
-背景层与固定文字层在相机两侧：一个压底，一个浮顶。固定标题要不要、放哪一侧或哪一角，按内容定。
-
-### 判断标准
-
-- 主体清楚：一眼知道这一镜在讲什么。
-- 层次分明：背景、承托结构、对象能分开，不是一层平铺。
-- 文字可读：标题与说明在安全距离内清楚，不压住主体。
-- 背景解释主题：有与讲解相关的文字和图形结构，不是通用渐变加网格。
-
-### 承托素材
-
-截图、封面与录屏按原比例进承托结构：卡片、面板、分屏、窗口都可以，比例差落在承托底色或留白上。不拉伸、不裁关键信息、不放大复制，也不用模糊填比例差；承托本身不加 `backdrop-filter`。
-
-承托结构跟随 `WorldCamera`，背景与固定文字层不跟随。
-
-### 示意代码
-
-只示意层的顺序与职责。`Background` 是你按内容写的组件，尺寸、颜色、构图都自己定。
+## 3D 相机与液态玻璃 HUD 模板
 
 ```tsx
 import React from 'react';
-import {AbsoluteFill} from 'remotion';
-import {WorldCamera, type CameraKey} from './world-camera';
+import {
+  StageFrame,
+  WorldCamera,
+  CornerBadge,
+  MonoFootnote,
+  type CameraKey,
+} from '../sw-kit';
 
-const width = 1920; // 画布尺寸按实际改
-const height = 1080;
-const camera: CameraKey[] = [/* 按口播设取景起点、过渡与落点 */];
+const camera: CameraKey[] = [
+  {frame: 0,   cx: 960,  cy: 540, scale: 0.94, rotateY: 4,  rotateX: 2,  rotateZ: -0.4},
+  {frame: 50,  cx: 740,  cy: 480, scale: 1.22, rotateY: -8, rotateX: 3,  rotateZ: 0.5},
+  {frame: 140, cx: 1220, cy: 560, scale: 1.20, rotateY: 8,  rotateX: -3, rotateZ: -0.4},
+  {frame: 220, cx: 960,  cy: 540, scale: 0.96, rotateY: 0,  rotateX: 0,  rotateZ: 0},
+];
 
-export const Shot: React.FC = () => (
-  <AbsoluteFill>
-    {/* 背景层：Background 由你画，底色、分区、纹理和相关文字图形都在这层 */}
-    <Background />
-    <WorldCamera viewportWidth={width} viewportHeight={height} keys={camera}>
-      {/* 对象层：承托结构、素材、连线，位置与比例按内容布 */}
+export const DiagramShot: React.FC = () => (
+  <StageFrame header={<CornerBadge title="CORE ARCHITECTURE" subtitle="核心能力拆解" />}>
+    {/* 1. 3D 相机世界：对象、连线、真实录屏舞台随相机推拉与倾角运动，自带云台微呼吸 */}
+    <WorldCamera keys={camera} floatAmount={0.65}>
+      {/* 世界坐标对象层 */}
     </WorldCamera>
-    {/* 固定文字层：可无，放在相机外；字幕由宿主控制 */}
-  </AbsoluteFill>
+    {/* 2. 锁定 HUD 溯源注脚（不随相机；底部 14% 留给宿主字幕） */}
+    <MonoFootnote text="SOURCE: OFFICIAL DOCS" bottom={164} />
+  </StageFrame>
 );
 ```
 
-## 人物与点缀
-
-全屏人物开头可用原背景、人后少量大字、短促入场冲击和有节拍的共同镜头推拉。人物遮挡层必须与底片同帧、同尺寸、同坐标；不能用背景替换掩盖抠像问题。
-
-局部点缀可采用近景揭示一个关系、短程横移跟随一个对象、拉开收束几种构图；视口和装饰本身始终不越过安全区。录屏中已存在的镜头变化完整保留，不再叠加新的整屏运镜。
+跨章节回指可直接参考 [chapter-connection.tsx](chapter-connection.tsx)：出发帧对齐口播提到关联的那一刻，让连线生长与相机回移同步完成。

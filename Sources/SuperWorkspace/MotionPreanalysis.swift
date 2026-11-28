@@ -179,6 +179,28 @@ enum MotionPreanalysis {
         }
         runs.append((runStart, duration, runKind, nil))
         runs = mergeRuns(runs, minDuration: 1.0)
+        // Absorb brief phantom `mixed` islands (< 3.5s) sandwiched between two `aRoll` segments
+        // (typically caused when the presenter raises hands in front of their face).
+        if runs.count >= 3 {
+            var smoothed = runs
+            var changed = true
+            while changed, smoothed.count >= 3 {
+                changed = false
+                for idx in 1..<(smoothed.count - 1) {
+                    if smoothed[idx].kind == "mixed",
+                       smoothed[idx].end - smoothed[idx].start < 3.5,
+                       smoothed[idx - 1].kind == "aRoll",
+                       smoothed[idx + 1].kind == "aRoll" {
+                        smoothed[idx - 1] = (smoothed[idx - 1].start, smoothed[idx + 1].end, "aRoll", nil)
+                        smoothed.remove(at: idx + 1)
+                        smoothed.remove(at: idx)
+                        changed = true
+                        break
+                    }
+                }
+            }
+            runs = smoothed
+        }
         if runs.isEmpty { runs = [(0, duration, "screenDemo", nil)] }
 
         var segments: [Segment] = []

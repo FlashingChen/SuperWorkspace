@@ -11,6 +11,11 @@ enum EmbeddedPi {
         let bundledPaths = [node.deletingLastPathComponent().path, ToolPaths.bundledMediaDirectory?.path].compactMap { $0 }
         environment["PATH"] = (bundledPaths + ToolPaths.installDirectories
             + ["/bin", "/usr/sbin", "/sbin"]).joined(separator: ":")
+        if let execPath = Bundle.main.executablePath, FileManager.default.isExecutableFile(atPath: execPath) {
+            environment["SUPERWORKSPACE_BIN"] = execPath
+        } else if let arg0 = CommandLine.arguments.first, FileManager.default.isExecutableFile(atPath: arg0) {
+            environment["SUPERWORKSPACE_BIN"] = URL(fileURLWithPath: arg0).standardizedFileURL.path
+        }
         return environment
     }
 

@@ -9,6 +9,36 @@ struct MotionManifest: Codable, Sendable, Equatable {
         let start: Double
         let end: Double
         let files: [String]?
+        /// Optional on-demand Vision person matting mode (`"behindPerson"` or `"personForeground"`).
+        let matte: String?
+        let personScale: Double?
+        let personAnchor: String?
+        let personX: Double?
+        let personY: Double?
+
+        init(
+            id: String,
+            composition: String,
+            start: Double,
+            end: Double,
+            files: [String]? = nil,
+            matte: String? = nil,
+            personScale: Double? = nil,
+            personAnchor: String? = nil,
+            personX: Double? = nil,
+            personY: Double? = nil
+        ) {
+            self.id = id
+            self.composition = composition
+            self.start = start
+            self.end = end
+            self.files = files
+            self.matte = matte
+            self.personScale = personScale
+            self.personAnchor = personAnchor
+            self.personX = personX
+            self.personY = personY
+        }
     }
 
     struct Overlay: Codable, Sendable, Equatable {
@@ -21,6 +51,41 @@ struct MotionManifest: Codable, Sendable, Equatable {
         let width: Double?
         let height: Double?
         let files: [String]?
+        /// Optional on-demand Vision person matting mode (`"behindPerson"` or `"personForeground"`).
+        let matte: String?
+        let personScale: Double?
+        let personX: Double?
+        let personY: Double?
+
+        init(
+            id: String,
+            composition: String,
+            start: Double,
+            end: Double,
+            x: Double? = nil,
+            y: Double? = nil,
+            width: Double? = nil,
+            height: Double? = nil,
+            files: [String]? = nil,
+            matte: String? = nil,
+            personScale: Double? = nil,
+            personX: Double? = nil,
+            personY: Double? = nil
+        ) {
+            self.id = id
+            self.composition = composition
+            self.start = start
+            self.end = end
+            self.x = x
+            self.y = y
+            self.width = width
+            self.height = height
+            self.files = files
+            self.matte = matte
+            self.personScale = personScale
+            self.personX = personX
+            self.personY = personY
+        }
     }
 
     enum TargetKind: String, Sendable, Equatable {

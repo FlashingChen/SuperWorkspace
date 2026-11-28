@@ -132,6 +132,9 @@ function validateManifest(manifest, sourceMeta) {
     if (i > 0 && s.start < sortedShots[i - 1].end - 0.02) {
       errors.push(`full-screen shots overlap: ${sortedShots[i - 1].id} and ${s.id}`);
     }
+    if (s.matte != null && s.matte !== 'behindPerson' && s.matte !== 'personForeground') {
+      errors.push(`shot ${s.id} has invalid matte mode: ${s.matte} (use "behindPerson" or "personForeground")`);
+    }
   }
 
   for (let i = 0; i < manifest.overlays.length; i++) {
@@ -147,6 +150,9 @@ function validateManifest(manifest, sourceMeta) {
     }
     if (o.start < -0.01 || o.end > duration + 0.15) {
       errors.push(`overlay ${o.id} range [${o.start}, ${o.end}] exceeds source duration ${duration.toFixed(2)}s`);
+    }
+    if (o.matte != null && o.matte !== 'behindPerson' && o.matte !== 'personForeground') {
+      errors.push(`overlay ${o.id} has invalid matte mode: ${o.matte} (use "behindPerson" or "personForeground")`);
     }
     const ow = o.width ?? width;
     const oh = o.height ?? height;
@@ -395,6 +401,47 @@ async function cmdInspect(opts) {
   if (!report.ok) process.exitCode = 1;
 }
 
+function resolveSuperWorkspaceBin() {
+  if (process.env.SUPERWORKSPACE_BIN && existsSync(process.env.SUPERWORKSPACE_BIN)) {
+    return process.env.SUPERWORKSPACE_BIN;
+  }
+  const appBin = '/Applications/SuperWorkspace.app/Contents/MacOS/SuperWorkspace';
+  if (existsSync(appBin)) return appBin;
+  return null;
+}
+
+async function ensurePersonMatte(sourcePath, item) {
+  const st = statSync(sourcePath);
+  const hash = createHash('sha256')
+    .update(JSON.stringify({size: st.size, mtimeMs: Math.round(st.mtimeMs), start: item.start, end: item.end}))
+    .digest('hex')
+    .slice(0, 12);
+  const maskFile = join(CACHE_DIR, `matte-${safeFileToken(item.id)}-${hash}.mp4`);
+  if (existsSync(maskFile) && statSync(maskFile).size > 0) {
+    return maskFile;
+  }
+  const bin = resolveSuperWorkspaceBin();
+  if (!bin) {
+    throw new Error(`Person matting requested for ${item.id} (${item.matte}) but SUPERWORKSPACE_BIN is not available.`);
+  }
+  const tmpFile = join(CACHE_DIR, `matte-${safeFileToken(item.id)}-${hash}.tmp-${process.pid}.mp4`);
+  try {
+    await runCmd(bin, [
+      'cli', 'matte',
+      '--input', sourcePath,
+      '--start', Math.max(0, item.start).toFixed(4),
+      '--end', item.end.toFixed(4),
+      '--output', tmpFile,
+      '--quality', 'balanced',
+    ], {timeout: 600_000});
+    renameSync(tmpFile, maskFile);
+    return maskFile;
+  } catch (err) {
+    rmSync(tmpFile, {force: true});
+    throw err;
+  }
+}
+
 async function cmdRender(opts) {
   const started = Date.now();
   const sourcePath = join(cwd, 'source.mp4');
@@ -473,6 +520,9 @@ async function cmdRender(opts) {
         '--pixel-format', 'yuv420p',
         '--crf', '18',
       );
+      if (width > 2400 && width % 4 === 0 && height % 4 === 0) {
+        args.push('--scale', '0.5');
+      }
     }
     try {
       await runCmd('npx', args, {timeout: 1_200_000});
@@ -484,27 +534,208 @@ async function cmdRender(opts) {
     }
   });
 
-  // Composite all cached shots + alpha overlays onto source.mp4 with hardware H.264.
+  // On-demand Vision person matting ONLY for shots/overlays that declare `matte`.
+  let mattedCount = 0;
+  for (const s of resolvedShots) {
+    if (s.matte === 'behindPerson' || s.matte === 'personForeground') {
+      s.matteFile = await ensurePersonMatte(sourcePath, s);
+      mattedCount++;
+    }
+  }
+  for (const o of resolvedOverlays) {
+    if (o.matte === 'behindPerson' || o.matte === 'personForeground') {
+      o.matteFile = await ensurePersonMatte(sourcePath, o);
+      mattedCount++;
+    }
+  }
+
+  // Composite all cached shots + alpha overlays (+ optional matted person foregrounds) onto source.mp4 with hardware H.264.
+  const orderedShots = [...resolvedShots].sort((a, b) => a.start - b.start);
   const inputs = ['-i', sourcePath];
-  for (const s of resolvedShots) inputs.push('-i', s.cacheFile);
-  for (const o of resolvedOverlays) inputs.push('-i', o.cacheFile);
+  for (const s of orderedShots) {
+    inputs.push('-i', s.cacheFile);
+    if (s.matteFile) inputs.push('-i', s.matteFile);
+  }
+  for (const o of resolvedOverlays) {
+    inputs.push('-i', o.cacheFile);
+    if (o.matteFile) inputs.push('-i', o.matteFile);
+  }
 
   const filterLines = [];
   let current = '0:v';
   let inputIndex = 1;
 
-  for (let i = 0; i < resolvedShots.length; i++) {
-    const s = resolvedShots[i];
+  function resolvePersonPose(item) {
+    const scaleVal = typeof item.personScale === 'number' && Number.isFinite(item.personScale)
+      ? Math.max(0.15, Math.min(1.0, item.personScale))
+      : 1.0;
+    const pw = Math.max(2, Math.round((width * scaleVal) / 2) * 2);
+    const ph = Math.max(2, Math.round((height * scaleVal) / 2) * 2);
+    const anchor = typeof item.personAnchor === 'string' ? item.personAnchor : 'bottomRight';
+    let defaultX = 0;
+    let defaultY = 0;
+    if (scaleVal < 0.99) {
+      if (anchor === 'bottomCenter') {
+        defaultX = Math.max(0, Math.round((width - pw) / 2));
+        defaultY = Math.max(0, height - ph);
+      } else if (anchor === 'bottomLeft') {
+        defaultX = 0;
+        defaultY = Math.max(0, height - ph);
+      } else if (anchor === 'topRight') {
+        defaultX = Math.max(0, width - pw);
+        defaultY = 0;
+      } else {
+        defaultX = Math.max(0, width - pw);
+        defaultY = Math.max(0, height - ph);
+      }
+    }
+    const px = typeof item.personX === 'number' && Number.isFinite(item.personX)
+      ? Math.round(item.personX)
+      : defaultX;
+    const py = typeof item.personY === 'number' && Number.isFinite(item.personY)
+      ? Math.round(item.personY)
+      : defaultY;
+    return {scale: scaleVal, w: pw, h: ph, x: px, y: py};
+  }
+
+  function appendPersonForeground(item, maskInputIdx, tag, {fromPose, toPose, enterDelay = 0, enterDur, exitDur, exitTail = 0}) {
+    const startStr = item.start.toFixed(4);
+    const endStr = item.end.toFixed(4);
+    const dur = Math.max(0.05, item.end - item.start);
+    const pose = resolvePersonPose(item);
+    const srcSlice = `psrc_${tag}`;
+    const maskSlice = `pmask_${tag}`;
+    const merged = `pmer_${tag}`;
+    const fg = `pfg_${tag}`;
+    const next = `pmout_${tag}`;
+
+    // Static full-screen or non-animated cutout (e.g. behindPerson)
+    const isAnimated = item.matte === 'personForeground' && (enterDur > 0.01 || exitDur > 0.01 || enterDelay > 0.01 || exitTail > 0.01);
+    if (!isAnimated) {
+      filterLines.push(
+        `[0:v]trim=start=${startStr}:end=${endStr},setpts=PTS-STARTPTS,format=rgba,scale=${pose.w}:${pose.h}[${srcSlice}]`,
+      );
+      filterLines.push(
+        `[${maskInputIdx}:v]setpts=PTS-STARTPTS,format=gray,scale=${pose.w}:${pose.h},gblur=sigma=0.6[${maskSlice}]`,
+      );
+      filterLines.push(
+        `[${srcSlice}][${maskSlice}]alphamerge,setpts=PTS-STARTPTS+${startStr}/TB[${fg}]`,
+      );
+      filterLines.push(
+        `[${current}][${fg}]overlay=${pose.x}:${pose.y}:enable='between(t,${startStr},${endStr})':eof_action=pass[${next}]`,
+      );
+      current = next;
+      return;
+    }
+
+    // Two-phase zero-ghosting transition on local time t (0..dur):
+    //   1) Enter from real A-Roll: stage fades 0->1 over [0, enterFadeDur] while person stays locked at 1.0 (0,0),
+    //      then person smoothly shrinks/glides over [enterFadeDur, enterFadeDur + moveDur] -> zero double-head ghosting!
+    //   2) Adjacent personForeground glide (enterFadeDur == 0): person glides immediately over [0, enterDur].
+    //   3) Exit back to real A-Roll: person smoothly grows back to 1.0 (0,0) over [dur - exitFadeDur - exitMoveDur, dur - exitFadeDur],
+    //      then stage fades 1->0 over [dur - exitFadeDur, dur] while person stays locked at 1.0 (0,0).
+    const eDelay = Math.min(enterDelay, dur * 0.2);
+    const eMove = Math.min(enterDur, dur * 0.35);
+    const eEnd = eDelay + eMove;
+    const xTail = Math.min(exitTail, dur * 0.2);
+    const xMove = Math.min(exitDur, dur * 0.35);
+    const xStart = Math.max(eEnd, dur - xTail - xMove);
+
+    const eDelayS = eDelay.toFixed(4);
+    const eMoveS = Math.max(0.01, eMove).toFixed(4);
+    const eEndS = eEnd.toFixed(4);
+    const xStartS = xStart.toFixed(4);
+    const xMoveS = Math.max(0.01, xMove).toFixed(4);
+
+    const smooth = (u) => `((${u})*(${u})*(3-2*(${u})))`;
+    const uEnter = eMove > 0.01 ? `clip((t-${eDelayS})/${eMoveS},0,1)` : '1';
+    const uExit = xMove > 0.01 ? `clip((t-${xStartS})/${xMoveS},0,1)` : '0';
+    const sEnter = eMove > 0.01 ? smooth(uEnter) : '1';
+    const sExit = xMove > 0.01 ? smooth(uExit) : '0';
+
+    const lerpExpr = (a, b, c) =>
+      `if(lt(t,${eEndS}),${a}+(${b}-${a})*${sEnter},if(gt(t,${xStartS}),${b}+(${c}-${b})*${sExit},${b}))`;
+
+    const wExpr = `max(2,trunc((${lerpExpr(fromPose.w, pose.w, toPose.w)})/2)*2)`;
+    const hExpr = `max(2,trunc((${lerpExpr(fromPose.h, pose.h, toPose.h)})/2)*2)`;
+    // overlay evaluates `t` in global timeline time, so shift t -> (t - start)
+    const lt = `(t-${startStr})`;
+    const ugEnter = eMove > 0.01 ? `clip((${lt}-${eDelayS})/${eMoveS},0,1)` : '1';
+    const ugExit = xMove > 0.01 ? `clip((${lt}-${xStartS})/${xMoveS},0,1)` : '0';
+    const gEnter = eMove > 0.01 ? smooth(ugEnter) : '1';
+    const gExit = xMove > 0.01 ? smooth(ugExit) : '0';
+    const gLerp = (a, b, c) =>
+      `if(lt(${lt},${eEndS}),${a}+(${b}-${a})*${gEnter},if(gt(${lt},${xStartS}),${b}+(${c}-${b})*${gExit},${b}))`;
+    const xExpr = gLerp(fromPose.x, pose.x, toPose.x);
+    const yExpr = gLerp(fromPose.y, pose.y, toPose.y);
+
+    // Alpha-merge at a crisp intermediate size, then dynamically scale frame-by-frame with smoothstep easing.
+    const workW = Math.min(width, 1920);
+    const workH = Math.max(2, Math.round((workW * height) / width / 2) * 2);
+    filterLines.push(
+      `[0:v]trim=start=${startStr}:end=${endStr},setpts=PTS-STARTPTS,format=rgba,scale=${workW}:${workH}[${srcSlice}]`,
+    );
+    filterLines.push(
+      `[${maskInputIdx}:v]setpts=PTS-STARTPTS,format=gray,scale=${workW}:${workH},gblur=sigma=0.6[${maskSlice}]`,
+    );
+    filterLines.push(
+      `[${srcSlice}][${maskSlice}]alphamerge[${merged}]`,
+    );
+    filterLines.push(
+      `[${merged}]scale=w='${wExpr}':h='${hExpr}':eval=frame,setpts=PTS-STARTPTS+${startStr}/TB[${fg}]`,
+    );
+    filterLines.push(
+      `[${current}][${fg}]overlay=x='${xExpr}':y='${yExpr}':enable='between(t,${startStr},${endStr})':eof_action=pass[${next}]`,
+    );
+    current = next;
+  }
+
+  const fullPose = {scale: 1.0, w: width, h: height, x: 0, y: 0};
+  const sortedShots = [...resolvedShots].sort((a, b) => a.start - b.start);
+
+  for (let i = 0; i < sortedShots.length; i++) {
+    const s = sortedShots[i];
+    const prev = i > 0 ? sortedShots[i - 1] : null;
+    const nextShot = i + 1 < sortedShots.length ? sortedShots[i + 1] : null;
+    const adjPrev = prev && prev.matte === 'personForeground' && Math.abs(s.start - prev.end) < 0.08;
+    const adjNext = nextShot && nextShot.matte === 'personForeground' && Math.abs(nextShot.start - s.end) < 0.08;
+    const tr = typeof s.personTransitionSeconds === 'number' && Number.isFinite(s.personTransitionSeconds)
+      ? Math.max(0, Math.min(1.5, s.personTransitionSeconds))
+      : 0.45;
+    const dur = Math.max(0.05, s.end - s.start);
+    const useEnterFade = s.matte === 'personForeground' && !adjPrev && tr > 0.01 && s.personEnter !== 'none';
+    const useExitFade = s.matte === 'personForeground' && !adjNext && tr > 0.01 && s.personExit !== 'none';
+    const enterFadeDur = useEnterFade ? Math.min(0.18, tr * 0.45, dur * 0.15) : 0;
+    const exitFadeDur = useExitFade ? Math.min(0.18, tr * 0.45, dur * 0.15) : 0;
+    const fadeInD = enterFadeDur.toFixed(4);
+    const fadeOutD = exitFadeDur.toFixed(4);
+    const fadeOutSt = Math.max(0, dur - exitFadeDur).toFixed(4);
+
     const shifted = `sv${i}`;
     const next = `b${i}`;
-    filterLines.push(
-      `[${inputIndex}:v]scale=${width}:${height},setpts=PTS-STARTPTS+${s.start.toFixed(4)}/TB[${shifted}]`,
-    );
+    let shotChain = `[${inputIndex}:v]scale=${width}:${height},format=rgba`;
+    if (useEnterFade) shotChain += `,fade=t=in:st=0:d=${fadeInD}:alpha=1`;
+    if (useExitFade) shotChain += `,fade=t=out:st=${fadeOutSt}:d=${fadeOutD}:alpha=1`;
+    shotChain += `,setpts=PTS-STARTPTS+${s.start.toFixed(4)}/TB[${shifted}]`;
+    filterLines.push(shotChain);
     filterLines.push(
       `[${current}][${shifted}]overlay=0:0:enable='between(t,${s.start.toFixed(4)},${s.end.toFixed(4)})':eof_action=pass[${next}]`,
     );
     current = next;
     inputIndex++;
+    if (s.matteFile) {
+      const fromPose = adjPrev ? resolvePersonPose(prev) : fullPose;
+      const toPose = adjNext ? resolvePersonPose(s) : fullPose;
+      appendPersonForeground(s, inputIndex, `s${i}`, {
+        fromPose,
+        toPose,
+        enterDelay: enterFadeDur,
+        enterDur: s.personEnter === 'none' ? 0 : tr,
+        exitDur: (s.personExit === 'none' || adjNext) ? 0 : tr,
+        exitTail: exitFadeDur,
+      });
+      inputIndex++;
+    }
   }
 
   for (let i = 0; i < resolvedOverlays.length; i++) {
@@ -521,6 +752,15 @@ async function cmdRender(opts) {
     );
     current = next;
     inputIndex++;
+    if (o.matteFile) {
+      appendPersonForeground(o, inputIndex, `o${i}`, {
+        fromPose: fullPose,
+        toPose: fullPose,
+        enterDur: 0,
+        exitDur: 0,
+      });
+      inputIndex++;
+    }
   }
 
   const baseArgs = ['-y', ...inputs];
@@ -550,6 +790,7 @@ async function cmdRender(opts) {
     height,
     rendered: renderedCount,
     cached: cachedCount,
+    matted: mattedCount,
     elapsedSeconds: Number(((Date.now() - started) / 1000).toFixed(1)),
   };
   console.log(JSON.stringify(summary, null, 2));

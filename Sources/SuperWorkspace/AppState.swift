@@ -306,19 +306,7 @@ final class AppState: ObservableObject {
               let material = project.materials.first(where: { $0.id == id }) ?? project.materials.first(where: { $0.mediaID == id }) else { return nil }
         return (project, material)
     }
-    func record() {
-        guard let projectID = selectedProjectID else { return }
-        guard projects.first(where: { $0.id == projectID })?.isFrozen != true else {
-            showToast("项目已冻结，取消冻结后再录制。")
-            return
-        }
-        let recorder = WorkspaceRecorder.shared
-        if recorder.hasOpenSession {
-            recorder.bringToFront()
-            return
-        }
-        let transition = WorkspaceRecordingTransition.shared
-        transition.prepare()
+    private func configureRecorderStyles(_ recorder: WorkspaceRecorder) {
         recorder.returnActionStyle = { content in
             AnyView(ThemedContent {
                 content.buttonStyle(StudioButtonStyle(kind: .secondary, size: .compact))
@@ -332,29 +320,43 @@ final class AppState: ObservableObject {
         }
         recorder.exportPromptField = { prompt in
             AnyView(VStack(alignment: .leading, spacing: Metrics.space2) {
-                Text("剪辑提示词").font(.studio(.bodyMedium))
+                Text("包装提示词").font(.studio(.bodyMedium))
                 TextField("例如：讲到结论时加入关键词动效", text: prompt, axis: .vertical)
                     .textFieldStyle(StudioTextFieldStyle())
                     .lineLimit(3...5)
-                    .accessibilityLabel("剪辑提示词")
+                    .accessibilityLabel("包装提示词")
             })
         }
-        recorder.present(onPresent: transition.collapse, onReturn: transition.restore) { [weak self] id, wantsMotion, editingPrompt, wantsAIEditing in
+    }
+
+    func record() {
+        guard let projectID = selectedProjectID else { return }
+        guard projects.first(where: { $0.id == projectID })?.isFrozen != true else {
+            showToast("项目已冻结，取消冻结后再录制。")
+            return
+        }
+        let recorder = WorkspaceRecorder.shared
+        if recorder.hasOpenSession {
+            recorder.bringToFront()
+            return
+        }
+        let transition = WorkspaceRecordingTransition.shared
+        transition.prepare()
+        configureRecorderStyles(recorder)
+        recorder.present(onPresent: transition.collapse, onReturn: transition.restore, onStart: { [weak self] id, wantsMotion, editingPrompt, _ in
             guard let self, let project = self.projects.first(where: { $0.id == projectID }) else {
                 throw CocoaError(.fileNoSuchFile)
             }
             if wantsMotion, !SettingsStore.shared.hasAIConnection {
-                throw ShellError.exitStatus(-1, "AI 动效尚未配置，请先在设置中连接 API 或选择执行器。")
-            }
-            if wantsAIEditing, !project.referenceMedia.isEmpty, !SettingsStore.shared.hasAIConnection {
-                throw ShellError.exitStatus(-1, "AI 剪辑尚未配置，请先在设置中连接 API 或选择执行器。")
+                throw ShellError.exitStatus(-1, "AI 包装尚未配置，请先在设置中连接 API 或选择执行器。")
             }
             var material = Material()
             material.id = id
             material.wantsMotion = wantsMotion
             material.editingPrompt = editingPrompt
-            material.wantsAIEditing = wantsAIEditing
-            material.motionState = wantsMotion ? .queued : .idle
+            material.wantsAIEditing = false
+            // AI Packaging never auto-starts on export; it stays `.idle` until the user manually clicks Start.
+            material.motionState = .idle
             try FileManager.default.createDirectory(at: ProjectLayout.materialDirectory(material, in: project), withIntermediateDirectories: true)
             var updated = project
             updated.materials.append(material)
@@ -362,7 +364,10 @@ final class AppState: ObservableObject {
             try ProjectLayout.save(updated)
             if let i = self.projects.firstIndex(where: { $0.id == projectID }) { self.projects[i] = updated }
             return ProjectLayout.source(material, in: project)
-        } onFinish: { [weak self] id, result in
+        }, archivePackageURL: { [weak self] id in
+            guard let self, let (project, material) = self.pair(projectID, id) else { return nil }
+            return ProjectLayout.roughCutPackage(material, in: project)
+        }, onFinish: { [weak self] id, result in
             guard let self else { return }
             switch result {
             case .success(let url):
@@ -375,18 +380,309 @@ final class AppState: ObservableObject {
                     self.updateMaterial(projectID, id) { $0.duration = duration; $0.exportState = .complete }
                     await self.lockCanvas(projectID)
                     self.processMaterial(projectID, id)
-                    self.startAIEditing(projectID, id)
-                    self.showToast("素材已添加，后台处理中")
+                    let preparedPackaging = self.pair(projectID, id)?.1.wantsMotion == true
+                    self.showToast(preparedPackaging ? "视频已添加，字幕就绪后可点击「开始 AI 包装」" : "视频已添加，后台识别字幕中")
                 }
             case .failure(let error):
                 self.updateMaterial(projectID, id) { $0.exportState = .failed; $0.exportError = error.localizedDescription }
             }
+        })
+    }
+
+    /// Opens the Rough Cutting recorder to capture a standalone demo video directly into the project's media library.
+    func recordLibraryMedia(_ projectID: UUID, onImported: (@MainActor (ReferenceMedia) -> Void)? = nil) {
+        if projects.first(where: { $0.id == projectID })?.isFrozen == true {
+            showToast("项目已冻结，取消冻结后再录制素材。")
+            return
         }
+        let recorder = WorkspaceRecorder.shared
+        if recorder.hasOpenSession {
+            recorder.bringToFront()
+            return
+        }
+        let transition = WorkspaceRecordingTransition.shared
+        transition.prepare()
+        configureRecorderStyles(recorder)
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent("sw-library-record", isDirectory: true)
+        recorder.presentForLibrary(
+            onPresent: transition.collapse,
+            onReturn: transition.restore,
+            onStart: { jobID in
+                try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+                let formatter = DateFormatter()
+                formatter.dateFormat = "HHmmss"
+                let stamp = formatter.string(from: Date())
+                return tempRoot.appendingPathComponent("录屏素材-\(stamp)-\(jobID.uuidString.prefix(4)).mp4")
+            },
+            onFinish: { [weak self] _, result in
+                guard let self else { return }
+                switch result {
+                case .success(let tempURL):
+                    Task {
+                        defer { try? FileManager.default.removeItem(at: tempURL) }
+                        guard let project = self.projects.first(where: { $0.id == projectID }) else { return }
+                        do {
+                            let media = try await ReferenceMediaImport.copy(tempURL, into: project)
+                            if self.updateProject(projectID, { $0.referenceMedia.append(media) }) {
+                                self.showToast("已录制并存入素材库")
+                                onImported?(media)
+                            } else {
+                                try? FileManager.default.removeItem(at: ProjectLayout.reference(media, in: project))
+                            }
+                        } catch {
+                            self.showToast("存入素材库失败：\(error.localizedDescription)")
+                        }
+                    }
+                case .failure(let error):
+                    self.showToast("录制素材失败：\(error.localizedDescription)")
+                }
+            }
+        )
+    }
+
+    /// Resumes an existing material in the Rough Cutting Panel (in-place rough-cut re-edit).
+    /// Activates the AI Motion Layer ONLY when this material already has AI motion outputs.
+    func resumeRoughCut(_ projectID: UUID, _ materialID: UUID) {
+        guard let (project, material) = pair(projectID, materialID) else { return }
+        guard project.isFrozen != true else {
+            showToast("项目已冻结，取消冻结后再进行粗剪。")
+            return
+        }
+        guard material.sourceReady else {
+            showToast("素材尚未就绪，暂不能进入粗剪面板。")
+            return
+        }
+        let sourceURL = ProjectLayout.source(material, in: project)
+        guard FileManager.default.fileExists(atPath: sourceURL.path) else {
+            showToast("找不到原始素材文件。")
+            return
+        }
+        let recorder = WorkspaceRecorder.shared
+        if recorder.hasOpenSession {
+            recorder.bringToFront()
+            return
+        }
+        let packageURL = ProjectLayout.roughCutPackage(material, in: project)
+        let motionLayer = Self.buildRoughCutMotionLayer(for: material, in: project)
+        let index = project.materials.firstIndex(where: { $0.id == material.id }) ?? 0
+        let title = material.displayTitle(index: index)
+
+        let transition = WorkspaceRecordingTransition.shared
+        transition.prepare()
+        configureRecorderStyles(recorder)
+
+        var pendingWantsMotion = false
+        var pendingPrompt: String?
+        do {
+            RoughCutMotionLayerStore.shared.onRequestRefinement = { [weak self] clip, instruction in
+                self?.refineRoughCutMotionClip(projectID, materialID, clip: clip, instruction: instruction)
+            }
+            try recorder.resume(
+                packageURL: packageURL,
+                fallbackSourceURL: sourceURL,
+                title: title,
+                motionLayer: motionLayer,
+                onPresent: transition.collapse,
+                onReturn: transition.restore,
+                onStart: { [weak self] jobID, wantsMotion, editingPrompt, _ in
+                    guard let self, let (currentProject, currentMaterial) = self.pair(projectID, materialID) else {
+                        throw CocoaError(.fileNoSuchFile)
+                    }
+                    if wantsMotion, !SettingsStore.shared.hasAIConnection {
+                        throw ShellError.exitStatus(-1, "AI 包装尚未配置，请先在设置中连接 API 或选择执行器。")
+                    }
+                    pendingWantsMotion = wantsMotion
+                    pendingPrompt = editingPrompt
+                    self.updateMaterial(projectID, materialID) {
+                        $0.exportState = .running
+                        $0.exportError = nil
+                    }
+                    let dir = ProjectLayout.materialDirectory(currentMaterial, in: currentProject)
+                    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                    return dir.appendingPathComponent("roughcut-export-\(jobID.uuidString).mp4")
+                },
+                onFinish: { [weak self] _, result in
+                    guard let self else { return }
+                    switch result {
+                    case .success(let exportedURL):
+                        Task {
+                            let duration = await RoughCutService.duration(of: exportedURL) ?? 0
+                            guard duration > 0, duration.isFinite else {
+                                try? FileManager.default.removeItem(at: exportedURL)
+                                self.updateMaterial(projectID, materialID) {
+                                    $0.exportState = .complete
+                                    $0.exportError = "粗剪导出的视频无法读取，已保留原素材。"
+                                }
+                                return
+                            }
+                            if let (latestProject, latestMaterial) = self.pair(projectID, materialID) {
+                                let targetSource = ProjectLayout.source(latestMaterial, in: latestProject)
+                                do {
+                                    if FileManager.default.fileExists(atPath: targetSource.path) {
+                                        _ = try FileManager.default.replaceItemAt(targetSource, withItemAt: exportedURL)
+                                    } else {
+                                        try FileManager.default.moveItem(at: exportedURL, to: targetSource)
+                                    }
+                                } catch {
+                                    try? FileManager.default.removeItem(at: exportedURL)
+                                    self.updateMaterial(projectID, materialID) {
+                                        $0.exportState = .complete
+                                        $0.exportError = "更新素材失败：\(error.localizedDescription)"
+                                    }
+                                    return
+                                }
+                            }
+                            self.updateMaterial(projectID, materialID) {
+                                $0.duration = duration
+                                $0.exportState = .complete
+                                $0.exportError = nil
+                                if pendingWantsMotion {
+                                    $0.wantsMotion = true
+                                    $0.editingPrompt = pendingPrompt ?? $0.editingPrompt
+                                    $0.wantsAIEditing = false
+                                    $0.motionState = .idle
+                                }
+                            }
+                            self.showToast(pendingWantsMotion ? "粗剪修改已保存，可在工作台点击「开始 AI 包装」" : "粗剪修改已保存并更新素材")
+                        }
+                    case .failure(let error):
+                        self.updateMaterial(projectID, materialID) {
+                            $0.exportState = .complete
+                            $0.exportError = error.localizedDescription
+                        }
+                    }
+                }
+            )
+        } catch {
+            transition.restore(from: nil)
+            showToast("无法打开粗剪面板：\(error.localizedDescription)")
+        }
+    }
+
+    /// Dispatches a shot-level AI motion refinement from the Rough Cutting Panel's read-only AI Motion track popover.
+    func refineRoughCutMotionClip(
+        _ projectID: UUID,
+        _ materialID: UUID,
+        clip: RoughCutMotionClip,
+        instruction: String
+    ) {
+        guard let (project, material) = pair(projectID, materialID) else {
+            RoughCutMotionLayerStore.shared.failRefinement("找不到对应素材。")
+            return
+        }
+        guard project.isFrozen != true else {
+            RoughCutMotionLayerStore.shared.failRefinement("项目已冻结，取消冻结后再修改动效。")
+            return
+        }
+        guard SettingsStore.shared.hasAIConnection else {
+            RoughCutMotionLayerStore.shared.failRefinement("AI 动效尚未配置，请先在设置中连接 API 或选择执行器。")
+            return
+        }
+        guard motionTasks[material.mediaID] == nil,
+              !motionQueue.contains(where: { $0.1 == material.mediaID }) else {
+            RoughCutMotionLayerStore.shared.failRefinement("该素材的动效正在处理中，请等待完成。")
+            return
+        }
+        let dir = ProjectLayout.materialDirectory(material, in: project)
+        let manifest = MotionManifest.load(in: dir)
+        if let target = manifest?.target(id: clip.targetID) ?? manifest?.targets(at: clip.start + 0.1).first {
+            let directive = MotionManifest.refinementBrief(target: target, instruction: instruction)
+            refineMotionShot(projectID, materialID, directive: directive)
+        } else {
+            regenerateMotion(projectID, materialID, instruction: instruction)
+        }
+    }
+
+    /// Builds the read-only AI Motion overlay layer context for a material ONLY if AI motion outputs already exist.
+    /// Returns `nil` for materials without AI motion so the layer stays hidden.
+    static func buildRoughCutMotionLayer(for material: Material, in project: VideoProject) -> RoughCutMotionLayerContext? {
+        let dir = ProjectLayout.materialDirectory(material, in: project)
+        let motionURL = ProjectLayout.motion(material, in: project)
+        let hasMotionFile = FileManager.default.fileExists(atPath: motionURL.path)
+        let manifest = MotionManifest.load(in: dir)
+
+        guard material.motionState == .complete || hasMotionFile || manifest != nil else {
+            return nil
+        }
+
+        let cacheDir = dir.appendingPathComponent(".sw-cache", isDirectory: true)
+        let cachedFiles = ((try? FileManager.default.contentsOfDirectory(
+            at: cacheDir,
+            includingPropertiesForKeys: [.contentModificationDateKey]
+        )) ?? []).sorted { lhs, rhs in
+            let lDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            let rDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            return lDate > rDate
+        }
+
+        func findCachedFile(prefix: String, allowedExtensions: Set<String>) -> URL? {
+            cachedFiles.first { url in
+                url.lastPathComponent.hasPrefix(prefix) && allowedExtensions.contains(url.pathExtension.lowercased())
+            }
+        }
+
+        var clips: [RoughCutMotionClip] = []
+        if let manifest {
+            for overlay in manifest.overlays {
+                if let url = findCachedFile(prefix: "overlay-\(overlay.id)-", allowedExtensions: ["mov", "mp4"]) {
+                    clips.append(RoughCutMotionClip(
+                        id: "overlay:\(overlay.id)",
+                        targetID: overlay.id,
+                        title: overlay.composition,
+                        kind: .overlay,
+                        start: overlay.start,
+                        end: overlay.end,
+                        mediaPath: url.path,
+                        x: overlay.x,
+                        y: overlay.y,
+                        width: overlay.width,
+                        height: overlay.height
+                    ))
+                }
+            }
+            for shot in manifest.shots {
+                if let url = findCachedFile(prefix: "shot-\(shot.id)-", allowedExtensions: ["mp4", "mov"]) {
+                    clips.append(RoughCutMotionClip(
+                        id: "shot:\(shot.id)",
+                        targetID: shot.id,
+                        title: shot.composition,
+                        kind: .shot,
+                        start: shot.start,
+                        end: shot.end,
+                        mediaPath: url.path
+                    ))
+                }
+            }
+        }
+
+        if clips.isEmpty, hasMotionFile {
+            let totalEnd = max(material.duration, 0.1)
+            clips.append(RoughCutMotionClip(
+                id: "motion:full",
+                targetID: "",
+                title: "AI 动效层",
+                kind: .full,
+                start: 0,
+                end: totalEnd,
+                mediaPath: motionURL.path
+            ))
+        }
+
+        guard !clips.isEmpty else { return nil }
+        clips.sort { $0.start < $1.start }
+
+        return RoughCutMotionLayerContext(
+            materialID: material.id,
+            clips: clips,
+            canvasWidth: manifest?.width.map(Double.init),
+            canvasHeight: manifest?.height.map(Double.init)
+        )
     }
     func processMaterial(_ projectID: UUID, _ id: UUID) {
         guard let (_, material) = pair(projectID, id), material.exportState == .complete else { return }
         if material.transcriptState != .complete { transcribe(projectID, id) }
-        if material.wantsMotion && material.motionState != .complete { enqueueMotion(projectID, id) }
+        // AI Packaging is intentionally manually triggered from the workspace so the user can
+        // review subtitles and complete the media library first.
     }
     /// The recorder sheet's "AI 剪辑" choice is fixed onto the material while this recording
     /// finishes, so the final assembly uses the chosen cutaways instead of planning again.
@@ -457,7 +753,13 @@ final class AppState: ObservableObject {
         let language = SettingsStore.shared.whisperLanguage
         let correction = SettingsStore.shared.transcriptCorrectionConfiguration()
         transcriptTasks[taskID] = Task { [self] in
-            defer { transcriptTasks[taskID] = nil; taskPhases[taskID] = nil }
+            defer {
+                transcriptTasks[taskID] = nil
+                taskPhases[taskID] = nil
+                if motionQueue.contains(where: { $0.1 == taskID }) {
+                    runNextMotion()
+                }
+            }
             do {
                 let directory = ProjectLayout.materialDirectory(material, in: project)
                 let result = try await TranscriptService.transcribe(video: ProjectLayout.source(material, in: project), directory: directory, whisperModel: model, language: language, correction: correction, onPhase: { [weak self] phase in
@@ -489,7 +791,13 @@ final class AppState: ObservableObject {
         taskPhases[taskID] = "校正字幕"
         updateMaterial(projectID, taskID) { $0.transcriptState = .running; $0.transcriptWarning = nil; $0.transcriptError = nil }
         transcriptTasks[taskID] = Task { [self] in
-            defer { transcriptTasks[taskID] = nil; taskPhases[taskID] = nil }
+            defer {
+                transcriptTasks[taskID] = nil
+                taskPhases[taskID] = nil
+                if motionQueue.contains(where: { $0.1 == taskID }) {
+                    runNextMotion()
+                }
+            }
             do {
                 let directory = ProjectLayout.materialDirectory(material, in: project)
                 let raw = directory.appendingPathComponent("transcript-raw.json")
@@ -510,22 +818,39 @@ final class AppState: ObservableObject {
             }
         }
     }
-    func enqueueMotion(_ projectID: UUID, _ id: UUID) {
+    func enqueueMotion(_ projectID: UUID, _ id: UUID, prompt: String? = nil) {
         guard let (project, material) = pair(projectID, id), material.sourceReady,
               motionTasks[material.mediaID] == nil, !motionQueue.contains(where: { $0.1 == material.mediaID }) else { return }
-        guard !project.isFrozen else { showToast("项目已冻结，取消冻结后再处理动效。"); return }
+        guard !project.isFrozen else { showToast("项目已冻结，取消冻结后再处理 AI 包装。"); return }
+        guard SettingsStore.shared.hasAIConnection else {
+            showToast("AI 包装尚未配置，请先在设置中连接 API 或选择执行器。")
+            return
+        }
         motionBudgetHolds[material.mediaID] = nil
         try? FileManager.default.removeItem(at: Self.motionControlURL(material, in: project))
         motionAttempts[material.mediaID] = 0
         motionStartedAt[material.mediaID] = Date()
-        updateMaterial(projectID, id) { $0.wantsMotion = true; $0.useOriginal = false; $0.motionState = .queued; $0.motionError = nil }
+        updateMaterial(projectID, id) {
+            $0.wantsMotion = true
+            $0.useOriginal = false
+            $0.motionState = .queued
+            $0.motionError = nil
+            if let prompt {
+                let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                $0.editingPrompt = trimmed.isEmpty ? nil : trimmed
+            }
+        }
         motionQueue.append((projectID, material.mediaID))
+        if transcriptTasks[material.mediaID] != nil {
+            motionPhases[material.mediaID] = "等待字幕完成"
+        }
         runNextMotion()
     }
     private func runNextMotion() {
         let limit = max(1, min(4, SettingsStore.shared.motionConcurrency))
         guard !motionQueue.isEmpty, activeMotions.count < limit else { return }
-        let (projectID, id) = motionQueue.removeFirst()
+        guard let readyIndex = motionQueue.firstIndex(where: { transcriptTasks[$0.1] == nil }) else { return }
+        let (projectID, id) = motionQueue.remove(at: readyIndex)
         guard let (project, material) = pair(projectID, id) else { runNextMotion(); return }
         activeMotions.insert(id)
         activeMotion = id
@@ -557,8 +882,12 @@ final class AppState: ObservableObject {
                 if let direction = material.editingPrompt?.trimmingCharacters(in: .whitespacesAndNewlines), !direction.isEmpty {
                     description += "\n剪辑提示词：\(direction)"
                 }
-                if let subtitles = Self.subtitleExcerpt(material.subtitles, limit: 2000), !subtitles.isEmpty {
+                if let subtitles = Self.subtitleExcerpt(material.subtitles, limit: 12000), !subtitles.isEmpty {
                     description += "\n已有字幕（按时间顺序，仅用于理解内容，不要重新识别）：\n\(subtitles)"
+                    let srtPath = directory.appendingPathComponent("transcript.srt").path
+                    if FileManager.default.fileExists(atPath: srtPath) {
+                        description += "\n完整字幕文件：\(srtPath)"
+                    }
                 }
                 // Pre-analyse the picture and hand over frames, so the agent never scans the clip itself.
                 let supportsImages = settings.selectedAgent == .api && settings.aiAPIImages
@@ -576,11 +905,8 @@ final class AppState: ObservableObject {
                     description += "\n口播语言：未识别，画面文字按口播实际语言写，不要默认中文。"
                         + "若口播为中文，画面文字一律使用简体中文，不得出现繁体字或繁体用词。"
                 }
-                // Facts come from the analyser; what may be drawn where comes from the policy.
-                    // Keeping them apart means a new editorial rule is a one-line change here.
-                    var policy = MotionPreanalysis.MotionPolicy.standard
-                    // Quality first: let the whole clip animate, keeping a sane ceiling.
-                    policy.maxOnScreenSeconds = min(600.0, max(20.0, analysis.duration * 0.6))
+                    // Facts come from the analyser; what may be drawn where comes from the policy.
+                    let policy = MotionPreanalysis.MotionPolicy.standard
                     description += "\n" + policy.prompt(for: analysis)
                     if supportsImages {
                         attachments = analysis.keyframes.prefix(12).map {
@@ -592,28 +918,59 @@ final class AppState: ObservableObject {
                         }
                     }
                 }
-                // Library assets travel with the motion task: the agent designs their背景 and
-                // animation inside the composition, so the picture is ready at material stage.
-                let libraryAssets = project.referenceMedia
-                if !libraryAssets.isEmpty {
-                    var lines: [String] = []
+                // Library assets travel with AI Packaging: stage into `public/library/` for direct Remotion
+                // loading via `staticFile('library/...')`, separating mandatory (pinned) vs optional assets.
+                let visualLibraryAssets = project.referenceMedia.filter { $0.kind == .image || $0.kind == .video }
+                let requiredAssets = visualLibraryAssets.filter { $0.isRequired(for: material.mediaID) }
+                let optionalAssets = visualLibraryAssets.filter { !$0.isRequired(for: material.mediaID) }
+                if !visualLibraryAssets.isEmpty {
+                    let publicLibrary = directory.appendingPathComponent("public/library", isDirectory: true)
+                    try? FileManager.default.createDirectory(at: publicLibrary, withIntermediateDirectories: true)
+                    var stagedNames: [UUID: String] = [:]
+                    for media in visualLibraryAssets {
+                        let srcURL = ProjectLayout.reference(media, in: project)
+                        guard FileManager.default.fileExists(atPath: srcURL.path) else { continue }
+                        let stagedName = srcURL.lastPathComponent
+                        let destURL = publicLibrary.appendingPathComponent(stagedName)
+                        if !FileManager.default.fileExists(atPath: destURL.path) {
+                            try? FileManager.default.createSymbolicLink(at: destURL, withDestinationURL: srcURL)
+                        }
+                        stagedNames[media.id] = stagedName
+                    }
+
                     var libraryImages: [EmbeddedPi.ImageAttachment] = []
-                    for media in libraryAssets.prefix(4) where supportsImages && libraryImages.count < 4 {
+                    var imageNumberByID: [UUID: Int] = [:]
+                    let previewCandidates = requiredAssets + optionalAssets
+                    for media in previewCandidates where supportsImages && libraryImages.count < 6 {
                         let url = ProjectLayout.reference(media, in: project)
                         if let frame = await ReferenceMediaPreview.frame(media, at: url, maxSize: 720),
                            let jpeg = NSBitmapImageRep(cgImage: frame).representation(using: .jpeg,
                                                                                       properties: [.compressionFactor: 0.8]) {
                             libraryImages.append(.init(data: jpeg, mimeType: "image/jpeg"))
-                            lines.append("素材库图片 \(libraryImages.count)：\(media.name)"
-                                + (media.description.isEmpty ? "" : "（\(media.description)）"))
+                            imageNumberByID[media.id] = libraryImages.count
                         }
+                    }
+
+                    func formatAssetLine(_ media: ReferenceMedia) -> String {
+                        let kindLabel = media.kind == .video ? "视频" : "图片"
+                        let durText = media.duration.map { String(format: "，时长 %.1fs", $0) } ?? ""
+                        let descText = media.description.isEmpty ? "" : "（\(media.description)）"
+                        let refPath = stagedNames[media.id].map { "staticFile('library/\($0)')" } ?? media.name
+                        let imgTag = imageNumberByID[media.id].map { "，对应素材预览图 #\($0)" } ?? ""
+                        return "- [\(kindLabel)] \(media.name)\(descText)\(durText) → \(refPath)\(imgTag)"
+                    }
+
+                    if !requiredAssets.isEmpty {
+                        description += "\n【必须使用的素材库素材（硬性要求：以下每一条都必须体现在本条视频的 AI 包装镜头中，不得遗漏）】：\n"
+                            + requiredAssets.map(formatAssetLine).joined(separator: "\n")
+                    }
+                    if !optionalAssets.isEmpty {
+                        description += "\n【可选素材库素材（按口播内容自由调用，合适时直接渲染进镜头）】：\n"
+                            + optionalAssets.map(formatAssetLine).joined(separator: "\n")
                     }
                     if !libraryImages.isEmpty {
                         let base = attachments.count
-                        description += "\n素材库（这些内容属于本条素材，需要时直接渲染进镜头，不要等后期合成）：\n"
-                            + lines.joined(separator: "\n")
-                        description += "\n附件第 \(base + 1)–\(base + libraryImages.count) 张依次对应上面列出的素材库图片。"
-                        description += "\n用到素材库图片时自己设计背景与入退场动画，保持原图比例、不得拉伸，禁止纯黑底直接贴图。"
+                        description += "\n附件第 \(base + 1)–\(base + libraryImages.count) 张依次对应上面标注的素材预览图 #1–#\(libraryImages.count)。"
                         attachments += libraryImages
                     }
                 }
@@ -653,6 +1010,11 @@ final class AppState: ObservableObject {
                             guard let label = AppState.motionPhaseLabel(progress) else { return }
                             if progress.type == "budget" { self.motionBudgetHolds[id] = nil }
                             self.motionPhases[id] = label
+                            if let ctxMatID = RoughCutMotionLayerStore.shared.context?.materialID,
+                               let (_, m) = self.pair(projectID, ctxMatID),
+                               m.mediaID == id {
+                                RoughCutMotionLayerStore.shared.updateRefinementProgress(label)
+                            }
                         }
                     }
                 }
@@ -673,6 +1035,7 @@ final class AppState: ObservableObject {
                                                  timeout: motionTimeout,
                                                  budgetMinutes: budget.minutes, budgetToolCalls: budget.toolCalls,
                                                  controlPath: controlURL.path,
+                                                 webSearch: true,
                                                  onProgress: onProgress)
                     try? reply.data(using: .utf8)?.write(to: directory.appendingPathComponent("agent-response.txt"), options: .atomic)
                 } else {
@@ -702,6 +1065,13 @@ final class AppState: ObservableObject {
                 motionAttempts[id] = nil
                 motionStartedAt[id] = nil
                 updateMaterial(projectID, id) { $0.motionState = .complete }
+                if let ctxMatID = RoughCutMotionLayerStore.shared.context?.materialID,
+                   let (updatedProject, updatedMaterial) = pair(projectID, ctxMatID),
+                   updatedMaterial.mediaID == id {
+                    RoughCutMotionLayerStore.shared.reloadAfterRefinement(
+                        Self.buildRoughCutMotionLayer(for: updatedMaterial, in: updatedProject)
+                    )
+                }
             } catch {
                 let message = error.localizedDescription
                 motionPhases[id] = nil
@@ -727,6 +1097,11 @@ final class AppState: ObservableObject {
                 motionAttempts[id] = nil
                 motionStartedAt[id] = nil
                 updateMaterial(projectID, id) { $0.motionState = .failed; $0.motionError = message }
+                if let ctxMatID = RoughCutMotionLayerStore.shared.context?.materialID,
+                   let (_, failedMat) = pair(projectID, ctxMatID),
+                   failedMat.mediaID == id {
+                    RoughCutMotionLayerStore.shared.failRefinement(message)
+                }
             }
         }
     }
@@ -1836,4 +2211,123 @@ final class AppState: ObservableObject {
         progress.phase = "正在导出"
         return try await ExportService.export(project: output, progress: progress, inserts: inserts)
     }
+
+    func registerHeadlessRecording(
+        projectID: UUID,
+        materialID: UUID,
+        outputURL: URL,
+        duration: Double,
+        wantsMotion: Bool,
+        editingPrompt: String?
+    ) async throws {
+        guard let index = projects.firstIndex(where: { $0.id == projectID }) else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        if wantsMotion, !SettingsStore.shared.hasAIConnection {
+            throw ShellError.exitStatus(-1, "AI 动效尚未配置，请先在设置中连接 API 或选择执行器。")
+        }
+        var project = projects[index]
+        var material = Material()
+        material.id = materialID
+        material.duration = duration
+        material.exportState = .complete
+        material.wantsMotion = wantsMotion
+        material.editingPrompt = editingPrompt?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        material.motionState = .idle
+        let expected = ProjectLayout.source(material, in: project)
+        if outputURL.standardizedFileURL != expected.standardizedFileURL {
+            try FileManager.default.createDirectory(at: expected.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? FileManager.default.removeItem(at: expected)
+            try FileManager.default.copyItem(at: outputURL, to: expected)
+        }
+        project.materials.append(material)
+        project.updatedAt = Date()
+        try ProjectLayout.save(project)
+        projects[index] = project
+        await lockCanvas(projectID)
+        processMaterial(projectID, materialID)
+        showToast("AI 录制视频已入库")
+    }
+
+    func registerHeadlessLibraryRecording(
+        projectID: UUID,
+        outputURL: URL,
+        preferredName: String? = nil
+    ) async throws -> ReferenceMedia {
+        guard let project = projects.first(where: { $0.id == projectID }) else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        let targetURL: URL
+        var tempCopy: URL?
+        if let preferredName = preferredName?.trimmingCharacters(in: .whitespacesAndNewlines), !preferredName.isEmpty {
+            let sanitized = preferredName
+                .replacingOccurrences(of: "/", with: "-")
+                .replacingOccurrences(of: "\\", with: "-")
+                .replacingOccurrences(of: ":", with: "-")
+                .trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+            if !sanitized.isEmpty {
+                let safeName = sanitized.lowercased().hasSuffix(".mp4") ? sanitized : "\(sanitized).mp4"
+                let staging = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+                try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+                let named = staging.appendingPathComponent(safeName)
+                try FileManager.default.copyItem(at: outputURL, to: named)
+                targetURL = named
+                tempCopy = staging
+            } else {
+                targetURL = outputURL
+            }
+        } else {
+            targetURL = outputURL
+        }
+        defer {
+            if let tempCopy { try? FileManager.default.removeItem(at: tempCopy) }
+        }
+        let media = try await ReferenceMediaImport.copy(targetURL, into: project)
+        guard updateProject(projectID, { $0.referenceMedia.append(media) }) else {
+            try? FileManager.default.removeItem(at: ProjectLayout.reference(media, in: project))
+            throw CocoaError(.fileWriteUnknown)
+        }
+        showToast("AI 录制素材已存入素材库")
+        return media
+    }
+
+    func exportProjectHeadless(
+        projectID: UUID,
+        includeSubtitles: Bool,
+        exportSRT: Bool
+    ) async throws -> URL {
+        guard let index = projects.firstIndex(where: { $0.id == projectID }) else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        var project = projects[index]
+        guard !project.isFrozen else {
+            throw ShellError.exitStatus(-1, "项目已冻结，请先取消冻结。")
+        }
+        guard !project.materials.isEmpty, project.materials.allSatisfy(\.isReady) else {
+            throw ShellError.exitStatus(-1, "项目素材尚未全部就绪。")
+        }
+        if includeSubtitles || exportSRT {
+            guard project.materials.allSatisfy({ $0.transcriptState == .complete }) else {
+                throw ShellError.exitStatus(-1, "部分素材字幕尚未完成，请等待字幕识别完成或关闭字幕选项。")
+            }
+        }
+        project.includeSubtitles = includeSubtitles
+        project.exportSRT = exportSRT
+        let progress = ExportProgress()
+        let url = try await exportMovie(project, progress: progress)
+        let srtURL = url.deletingPathExtension().appendingPathExtension("srt")
+        let srtName = (exportSRT && FileManager.default.fileExists(atPath: srtURL.path)) ? srtURL.lastPathComponent : nil
+        project.lastExportName = url.lastPathComponent
+        project.lastExportSRTName = srtName
+        project.updatedAt = Date()
+        try ProjectLayout.save(project)
+        if let latest = projects.firstIndex(where: { $0.id == projectID }) {
+            projects[latest] = project
+        }
+        return url
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

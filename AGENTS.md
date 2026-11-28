@@ -82,8 +82,8 @@
 
 ### 3.1 构建
 
-- `python3 scripts/prepare-recorder.py` 获取并适配固定版本的录制依赖，然后运行 `swift test`；打包使用 `./build-app.sh`。
-- 录制器以同进程库集成，不恢复独立应用入口或独立应用代理。
+- 直接运行 `swift test`；打包使用 `./build-app.sh`。
+- 录制器（`Sources/RecorderCore` 与 `Sources/RecorderKit`）已收编为仓库内同进程模块，不恢复独立应用入口、独立设置窗或独立应用代理。
 
 ### 3.2 提交与合并（强制 PR）
 
@@ -109,7 +109,7 @@
 - 常规按钮使用 `StudioButtonStyle`；工具栏和辅助操作使用 compact 尺寸；缩略图、导航等自定义内容按钮使用 `StudioContentButtonStyle`，不得用裸 `.plain` 或 `.borderless` 代替交互反馈。
 - 新增控件缺少对应组件时，先完善共享组件，再接入界面。禁止逐页面复制样式；浅色、深色、悬停、按下、禁用和键盘焦点均须可用，保留快捷键和辅助功能语义。
 - `.plain`、`.borderlessButton` 等底层样式仅可在共享组件内部用于绘制实现。系统菜单内容、文件选择器及权限提示保留 macOS 管理的行为和呈现，不重画系统界面。
-- 录制器的自有集成面板通过宿主提供的样式桥接接入共享组件；已有第三方定制控件保持其专用设计系统，不直接修改忽略目录或生成副本。
+- 录制器的悬浮控制岛与粗剪台通过共享 `StudioTheme` 模块对齐 `Theme.swift` 权威色板并同步应用外观（`NSApp.appearance`），不另立独立外观开关或独立色板。
 
 ## 5. 文档分层
 

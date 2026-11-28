@@ -18,20 +18,20 @@ export interface MotionTheme {
 }
 
 export const defaultTheme: MotionTheme = {
-  name: 'studio-editorial-dark',
-  bg: '#090d14',
-  bgElevated: '#0f1622',
-  surface: 'rgba(20, 28, 42, 0.92)',
-  surfaceAlt: 'rgba(28, 39, 58, 0.92)',
-  border: 'rgba(148, 163, 184, 0.22)',
-  borderStrong: 'rgba(148, 163, 184, 0.42)',
-  text: '#f1f5f9',
+  name: 'obsidian-editorial-dark',
+  bg: '#0a0c12',
+  bgElevated: '#111520',
+  surface: 'rgba(18, 22, 33, 0.94)',
+  surfaceAlt: 'rgba(26, 32, 48, 0.94)',
+  border: 'rgba(255, 255, 255, 0.12)',
+  borderStrong: 'rgba(255, 255, 255, 0.28)',
+  text: '#f8fafc',
   textMuted: '#cbd5e1',
-  textDim: '#94a3b8',
-  cyan: '#5fe0dc',
-  lime: '#a3e635',
-  amber: '#fb923c',
-  rose: '#fb7185',
+  textDim: '#64748b',
+  cyan: '#38bdf8',
+  lime: '#34d399',
+  amber: '#fbbf24',
+  rose: '#f87171',
   fontSans:
     '-apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Inter", sans-serif',
   fontMono:

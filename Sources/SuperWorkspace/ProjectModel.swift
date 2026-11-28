@@ -64,10 +64,11 @@ struct Material: Identifiable, Codable, Equatable, Sendable {
     var motionLabel: String? {
         guard wantsMotion else { return nil }
         switch motionState {
-        case .idle, .queued: return "动效排队中"
-        case .running: return "添加动效中"
-        case .complete: return "动效已完成"
-        case .failed: return "动效失败"
+        case .idle: return "待开始包装"
+        case .queued: return "AI 包装排队中"
+        case .running: return "AI 包装中"
+        case .complete: return "AI 包装已完成"
+        case .failed: return "AI 包装失败"
         }
     }
 }
@@ -79,6 +80,27 @@ struct ReferenceMedia: Identifiable, Codable, Equatable, Sendable {
     let kind: Kind
     var description = ""
     var duration: Double?
+    /// Video `mediaID`s where AI Packaging MUST feature this library asset.
+    /// Empty / nil means freely available to all videos.
+    var requiredForMediaIDs: [UUID]?
+
+    func isRequired(for mediaID: UUID) -> Bool {
+        requiredForMediaIDs?.contains(mediaID) == true
+    }
+
+    var hasRequiredTargets: Bool {
+        !(requiredForMediaIDs ?? []).isEmpty
+    }
+
+    mutating func setRequired(_ required: Bool, for mediaID: UUID) {
+        var current = requiredForMediaIDs ?? []
+        if required {
+            if !current.contains(mediaID) { current.append(mediaID) }
+        } else {
+            current.removeAll { $0 == mediaID }
+        }
+        requiredForMediaIDs = current.isEmpty ? nil : current
+    }
 }
 
 struct AudioClip: Identifiable, Codable, Equatable, Sendable {
@@ -244,6 +266,12 @@ enum ProjectLayout {
     }
     static func motion(_ material: Material, in project: VideoProject) -> URL {
         materialDirectory(material, in: project).appendingPathComponent("motion.mp4")
+    }
+    static func roughCutPackage(_ material: Material, in project: VideoProject) -> URL {
+        materialDirectory(material, in: project).appendingPathComponent("roughcut.dogscproject", isDirectory: true)
+    }
+    static func roughCutMotionLayerState(_ material: Material, in project: VideoProject) -> URL {
+        materialDirectory(material, in: project).appendingPathComponent("roughcut-motion-layer.json")
     }
     static func picture(_ material: Material, in project: VideoProject) -> URL {
         material.wantsMotion && material.useOriginal != true && material.motionState == .complete ? motion(material, in: project) : source(material, in: project)

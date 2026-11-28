@@ -108,6 +108,7 @@ struct ProjectMediaLibrary: View {
     @State private var notice: String?
     @State private var removing: ReferenceMedia?
     @State private var describing: ReferenceMedia?
+    @State private var assigning: ReferenceMedia?
     @State private var generating: Set<UUID> = []
     @State private var descriptionFailures: Set<UUID> = []
 
@@ -117,10 +118,20 @@ struct ProjectMediaLibrary: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Metrics.space5) {
-                HStack {
+                HStack(spacing: Metrics.space2) {
                     Text("素材库").font(.studio(.heading))
                     Spacer()
-                    Button("添加素材", systemImage: "plus") { importing = true }
+                    Button("录制素材", systemImage: "record.circle") {
+                        state.recordLibraryMedia(projectID) { media in
+                            if settings.aiAutoDescribeMedia {
+                                generateDescriptions(for: [media], missingOnly: true)
+                            }
+                        }
+                    }
+                    .buttonStyle(StudioButtonStyle(kind: .secondary))
+                    .disabled(pending || project?.isFrozen == true)
+                    .help("用粗剪面板录一段演示画面，直接存入当前项目素材库")
+                    Button("导入素材", systemImage: "plus") { importing = true }
                         .buttonStyle(StudioButtonStyle(kind: .primary))
                         .disabled(pending)
                 }
@@ -136,7 +147,7 @@ struct ProjectMediaLibrary: View {
                         }
                     }.padding(2)
                 } else if !pending {
-                    Text("导入图片、视频或音频（BGM / 音效），供动效与 AI 剪辑使用。")
+                    Text("导入图片、视频或音频，或直接录制演示片段存入素材库；默认全部视频可用，也可指定必用于某条视频。")
                         .font(.studio(.body)).foregroundStyle(palette.textSecondary)
                 }
             }
@@ -156,6 +167,16 @@ struct ProjectMediaLibrary: View {
                 state.updateProject(projectID) { project in
                     guard let index = project.referenceMedia.firstIndex(where: { $0.id == media.id }) else { return }
                     project.referenceMedia[index].description = description
+                }
+            }
+        }
+        .sheet(item: $assigning) { media in
+            if let project {
+                ReferenceAssignmentSheet(media: media, materials: project.materials) { selectedMediaIDs in
+                    state.updateProject(projectID) { updated in
+                        guard let index = updated.referenceMedia.firstIndex(where: { $0.id == media.id }) else { return }
+                        updated.referenceMedia[index].requiredForMediaIDs = selectedMediaIDs.isEmpty ? nil : selectedMediaIDs
+                    }
                 }
             }
         }
@@ -190,6 +211,9 @@ struct ProjectMediaLibrary: View {
                         .help("未能生成素材描述，可重试")
                 }
                 Menu {
+                    if media.kind != .audio {
+                        Button("指定必用视频…") { assigning = media }
+                    }
                     Button("编辑素材说明") { describing = media }
                     Button(generateTitle) { generateDescriptions(for: [media], missingOnly: false) }
                     .disabled(!canDescribeMedia || generating.contains(media.id))
@@ -204,11 +228,40 @@ struct ProjectMediaLibrary: View {
                 .fixedSize()
                 .accessibilityLabel("\(media.name) 的操作")
             }
+            if media.kind != .audio {
+                let targetNames = assignmentSummary(for: media, in: project)
+                Button { assigning = media } label: {
+                    HStack(spacing: Metrics.space1) {
+                        Image(systemName: media.hasRequiredTargets ? "pin.fill" : "sparkles")
+                            .font(.studio(.micro))
+                        Text(targetNames)
+                            .font(.studio(.caption, weight: media.hasRequiredTargets ? .medium : .regular))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(media.hasRequiredTargets ? palette.ai : palette.textSecondary)
+                    .padding(.horizontal, Metrics.space2)
+                    .padding(.vertical, 2)
+                    .background((media.hasRequiredTargets ? palette.ai.opacity(0.12) : palette.controlWell), in: Capsule())
+                }
+                .buttonStyle(StudioContentButtonStyle())
+                .help("设置这条素材是全部视频自由可用，还是必用于指定视频")
+            }
             if !media.description.isEmpty {
                 Text(media.description).font(.studio(.small))
                     .foregroundStyle(palette.textSecondary).lineLimit(1)
             }
         }
+    }
+
+    private func assignmentSummary(for media: ReferenceMedia, in project: VideoProject) -> String {
+        guard let ids = media.requiredForMediaIDs, !ids.isEmpty else { return "全部视频可用" }
+        var seen = Set<UUID>()
+        var labels: [String] = []
+        for (idx, material) in project.materials.enumerated() where ids.contains(material.mediaID) {
+            guard seen.insert(material.mediaID).inserted else { continue }
+            labels.append(material.displayTitle(index: idx))
+        }
+        return labels.isEmpty ? "全部视频可用" : "必用：\(labels.joined(separator: "、"))"
     }
 
     private func remove(_ media: ReferenceMedia) {
@@ -298,5 +351,71 @@ private struct ReferenceDescriptionSheet: View {
         .padding(Metrics.space7).frame(width: 440)
         .foregroundStyle(palette.textPrimary).background(palette.bgBase)
         .onAppear { description = media.description; focused = true }
+    }
+}
+
+private struct ReferenceAssignmentSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.palette) private var palette
+    let media: ReferenceMedia
+    let materials: [Material]
+    let save: ([UUID]) -> Bool
+    @State private var selected: Set<UUID> = []
+
+    private var uniqueVideos: [(mediaID: UUID, title: String)] {
+        var seen = Set<UUID>()
+        var list: [(UUID, String)] = []
+        for (idx, m) in materials.enumerated() where seen.insert(m.mediaID).inserted {
+            list.append((m.mediaID, m.displayTitle(index: idx)))
+        }
+        return list
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Metrics.space4) {
+            Text("指定必用视频").font(.studio(.heading))
+            Text("不勾选任何视频时，这条素材默认「全部视频可用」；勾选后，对应视频在 AI 包装时必须体现这条素材。")
+                .font(.studio(.small))
+                .foregroundStyle(palette.textSecondary)
+            if uniqueVideos.isEmpty {
+                Text("当前项目还没有已录制的视频。")
+                    .font(.studio(.body))
+                    .foregroundStyle(palette.textSecondary)
+                    .padding(.vertical, Metrics.space2)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(uniqueVideos.enumerated()), id: \.element.mediaID) { idx, video in
+                        if idx > 0 {
+                            Rectangle().fill(palette.hairline).frame(height: 1)
+                        }
+                        Toggle(video.title, isOn: Binding(
+                            get: { selected.contains(video.mediaID) },
+                            set: { on in
+                                if on { selected.insert(video.mediaID) } else { selected.remove(video.mediaID) }
+                            }
+                        ))
+                    }
+                }
+                .toggleStyle(StudioToggleStyle())
+                .studioTile(cornerRadius: Metrics.radiusIsland, padding: Metrics.space2)
+            }
+            HStack {
+                Button { dismiss() } label: { Text(verbatim: "取消") }
+                    .buttonStyle(StudioButtonStyle()).keyboardShortcut(.cancelAction)
+                Spacer()
+                if !selected.isEmpty {
+                    Button("恢复全部可用") { selected.removeAll() }
+                        .buttonStyle(StudioButtonStyle(kind: .quiet))
+                }
+                Button {
+                    let ordered = uniqueVideos.map(\.mediaID).filter { selected.contains($0) }
+                    if save(ordered) { dismiss() }
+                } label: { Text(verbatim: "保存") }
+                    .buttonStyle(StudioButtonStyle(kind: .primary)).keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(Metrics.space7).frame(width: 440)
+        .foregroundStyle(palette.textPrimary).background(palette.bgBase)
+        .onAppear { selected = Set(media.requiredForMediaIDs ?? []) }
     }
 }

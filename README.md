@@ -23,12 +23,12 @@ SuperWorkspace 是一个原生 macOS 视频工作台。以项目为单位，把�
 
 | 环节 | 能力 |
 | --- | --- |
-| 录制与素材 | 同进程录制屏幕、窗口与可选摄像头，支持麦克风与系统声音；在内置粗剪后导出为项目素材 |
-| 素材库 | 导入图片与视频作为补充画面，手写说明或由视觉模型生成一句描述 |
+| 录制与粗剪面板 | 同进程录制屏幕、窗口与可选摄像头，支持麦克风与系统声音；在独立全功能粗剪面板（Rough Cutting Panel）完成视觉与静音气口粗剪后导出并归档工程包，任一素材均可随时重新打开（Resume）原位修改；已添加 AI 动效的素材在粗剪面板中自动以只读覆盖层叠在原画面之上，点击动效片段即可弹窗让 AI 定向修改该段动画 |
+| 素材库 | 导入图片、视频与音频，或在素材库内直接复用粗剪面板录制演示片段入库；支持手写/自动生成说明，默认全部视频自由可用，也可指定必用于某条或多条视频 |
 | 字幕 | whisper.cpp 本地识别，自动按显示宽度拆条；可选 AI 结合画面文字与联网查证校正；拼装阶段 AI 复核会整轨重建字幕（文字、断句与时间），并支持手动增删、合并、分割 |
-| AI 动效 | 先在本机分析画面分区与切点，再由内置 Pi 或 Claude CLI 用 Remotion 渲染；支持分镜级增量微调与缓存复用，校验时长与音轨后回填，内置 Pi 下时间上限到点可选择继续 |
-| AI 剪辑 | 依据字幕、剪辑提示词和素材库挑选补充画面，可在录制导出时规划，也可在成片导出时统一规划 |
+| AI 包装 | 合并动效生成与素材库调用为统一「AI 包装」：粗剪导出后先跑完字幕，回到工作台确认素材齐备后手动点击开始；内置 Pi 或 Claude CLI 用 Remotion 渲染，支持按需本地 Vision 人物抠像（人后大字与人物无框站舞台前）、分镜级增量微调与缓存复用，完成后可随时一键切换原片/包装版 |
 | AI 对话编辑 | 拼装页用自然语言读取与修改项目：改字幕、裁剪、调速、静音分析、排序、补充画面、即时 HTML/CSS/SVG 动效、花字标注、背景音乐与音效，以及分镜级重做动效；修改与手动编辑一样可撤销 |
+| 外部 Agent 自动化录制 | 内置本地 Unix Socket 控制桥与 CLI（`superworkspace` / `SuperWorkspace cli`），支持外部 Agent 枚举窗口、截屏定位、平滑键鼠演示、无弹窗录制、自动套用壁纸与 Auto-Zoom 渲染 60fps 粗剪成片并导出；附带开放格式 [Agent Skill](skills/superworkspace-recorder/SKILL.md) |
 | 拼装与导出 | 视频与字幕双轨时间线、排序、裁剪、分割、调速、字幕增删与复核、撤销重做；导出 MP4（高帧率素材保留 60 fps），可选嵌入字幕并另存 SRT |
 | 项目打包 | 把源素材合集、动效合集与成片压缩成一个 ZIP；成片完成后可冻结项目，清理可重建的运行时依赖，取消冻结时重建 |
 
@@ -53,7 +53,7 @@ cd SuperWorkspace
 ./install-app.sh
 ```
 
-首次构建会获取固定版本的 DogSC 源码，适配为同进程录制库，再准备 Pi、FFmpeg、whisper.cpp 与语音模型，最后编译、签名并启动应用。依赖目录留在本地，不纳入本仓库。
+首次构建会准备 Pi、FFmpeg、whisper.cpp 与语音模型，最后编译、签名并启动应用。运行时依赖目录留在本地，不纳入本仓库。
 
 ```bash
 ./build-app.sh release                 # 只构建 .app
@@ -129,21 +129,22 @@ AI 连接同时服务字幕校正与复核、素材描述、AI 剪辑与 Remotio
 ## 开发
 
 ```bash
-python3 scripts/prepare-recorder.py
 swift test
 python3 scripts/audit-public.py
 ```
 
-`prepare-recorder.py` 自动获取并核验固定依赖版本，再生成忽略目录内的 `RecorderKit`。已有依赖版本不符或存在本地修改时会停止，不自动替换。发布前运行公开内容检查，并人工检查全部待发布文件与可达历史；自动扫描不能代替内容审阅。
+发布前运行公开内容检查，并人工检查全部待发布文件与可达历史；自动扫描不能代替内容审阅。
 
 | 目录 | 内容 |
 | --- | --- |
 | `Sources/SuperWorkspace` | 原生界面、项目状态、字幕、AI 任务、拼装与导出 |
+| `Sources/StudioTheme` | 共享 Graphite / Soft Silver 色板权威定义 |
+| `Sources/RecorderCore` / `Sources/RecorderKit` | 同进程录制与单段粗剪引擎（自动缩放、3D 透视、壁纸、摄像头画中画、马赛克、自动剪气口） |
 | `Sources/AudioWriterBridge` | 录音写入桥接 |
-| `Integration` | 录制组件宿主适配、Pi 运行时与 Remotion 依赖清单 |
-| `Resources` | 应用元数据与权限声明 |
-| `scripts` | 依赖获取与适配、图标生成、签名、打包与公开内容检查 |
-| `Tests` | 录制集成、任务状态、字幕编辑与重建校验、素材库、AI 规划与视频合成测试 |
+| `Integration` | Pi 运行时与 Remotion 依赖清单 |
+| `Resources` | 应用元数据、多语言字符串、权限声明与第三方许可 |
+| `scripts` | 运行时依赖准备、图标生成、签名、打包与公开内容检查 |
+| `Tests` | 录制集成、静音剪气口、任务状态、字幕编辑与重建校验、素材库、AI 规划与视频合成测试 |
 
 构建脚本把 Pi、Node.js、FFmpeg、whisper.cpp、语音模型与 Remotion 依赖清单放入应用包；测试包含无界面端到端验收路径。应用图标与侧栏标识共用 `WorkspaceBrand` 矢量源，打包时生成多尺寸 ICNS。
 
@@ -151,4 +152,4 @@ python3 scripts/audit-public.py
 
 ## 许可证与致谢
 
-本仓库代码采用 [MIT License](LICENSE)。录制与粗剪基于 [DogSC](https://github.com/laogou717/dogsc)，其源码以固定版本在构建时获取；打包时保留原始 MIT 许可证与字体许可。完整依赖说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+本仓库代码采用 [MIT License](LICENSE)。同进程录制与单段粗剪引擎基于 MIT 许可的 [DogSC](https://github.com/laogou717/dogsc) 核心收编并精简，保留原始 MIT 许可证于 [Resources/Recorder-LICENSE](Resources/Recorder-LICENSE)。完整依赖说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
