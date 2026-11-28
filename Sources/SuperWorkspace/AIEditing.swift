@@ -58,7 +58,7 @@ enum AIEditing {
 
     static func plan(_ project: VideoProject, in directory: URL) async throws -> Plan {
         let settings = SettingsStore.shared
-        let supportsImages = settings.selectedAgent == .api && settings.aiAPIImages
+        let supportsImages = settings.selectedGeneralAgent == .api && settings.aiAPIImages
         var references: [ReferenceContext] = []
         var attachments: [EmbeddedPi.ImageAttachment] = []
         for media in project.referenceMedia {
@@ -103,13 +103,12 @@ enum AIEditing {
             try Task.checkCancellation()
             let useImages = supportsImages && attempt == 0
             let output: String
-            if settings.selectedAgent == .api {
+            if settings.selectedGeneralAgent == .api {
                 output = try await EmbeddedPi.run(settings.apiConnection(), system: instructions, prompt: prompt,
                                                   directory: directory, tools: false, images: useImages,
                                                   attachments: useImages ? attachments : [], timeout: 180)
             } else {
-                let launch = settings.resolvedLaunchPath()
-                guard launch != "/bin/true" else { throw ShellError.exitStatus(-1, "请先在设置中连接 AI。") }
+                guard let launch = settings.resolvedClaudePath() else { throw ShellError.exitStatus(-1, "请先在设置中连接 AI。") }
                 output = try await Shell.run(launch, arguments: ["-p", "--no-session-persistence", "--tools", "",
                     "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}", "--setting-sources", "",
                     "--output-format", "text", "--system-prompt", instructions], workingDirectory: directory,

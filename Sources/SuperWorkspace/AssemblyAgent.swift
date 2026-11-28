@@ -64,13 +64,8 @@ final class AssemblyAgent: ObservableObject {
             started = false
             return
         }
-        guard SettingsStore.shared.selectedAgent == .api else {
-            failure = "AI 对话需要使用内置 Pi。请在设置里选择「内置 Pi」并填写连接信息。"
-            started = false
-            return
-        }
         guard let connection = try? SettingsStore.shared.apiConnection() else {
-            failure = "请先在设置里连接 AI（基础地址、模型与密钥）。"
+            failure = "AI 对话需要内置 Pi 连接。请先在设置里填写 API 基础地址、模型与密钥。"
             started = false
             return
         }
