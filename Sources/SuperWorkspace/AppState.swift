@@ -1015,10 +1015,12 @@ final class AppState: ObservableObject {
                     motionPhases[id] = "提取关键帧"
                     let frames = await MotionInput.keyframes(from: source)
                     if supportsInlineImages {
-                        attachments = frames.map { EmbeddedPi.ImageAttachment(data: $0.data, mimeType: "image/jpeg") } + attachments
+                        let base = attachments.count
+                        attachments += frames.map { EmbeddedPi.ImageAttachment(data: $0.data, mimeType: "image/jpeg") }
                         if !frames.isEmpty {
                             let times = frames.map { String(format: "%.1f", $0.time) }.joined(separator: "、")
-                            description += "\n附件前 \(frames.count) 张依次为 t=\(times)s 的源帧（取自输入视频，已转正）。"
+                            let rangeText = base == 0 ? "附件依次" : "附件第 \(base + 1)–\(base + frames.count) 张依次"
+                            description += "\n\(rangeText)为 t=\(times)s 的源帧（取自输入视频，已转正）。"
                         }
                     } else if supportsStagedImages, !frames.isEmpty {
                         var stagedRefs: [String] = []
