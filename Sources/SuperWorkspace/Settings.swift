@@ -2,6 +2,19 @@ import Foundation
 import SwiftUI
 
 enum MotionAgent: String, CaseIterable, Identifiable {
+    case api, antigravity, claude
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .api: "内置 Pi"
+        case .antigravity: "Antigravity CLI"
+        case .claude: "Claude CLI"
+        }
+    }
+}
+
+/// 字幕校对、复核、AI 剪辑与素材描述使用的后端（与 Remotion 动效独立选择）。
+enum GeneralAgent: String, CaseIterable, Identifiable {
     case api, claude
     var id: String { rawValue }
     var label: String {
@@ -18,8 +31,12 @@ final class SettingsStore: ObservableObject {
     static let shared = SettingsStore()
 
     @AppStorage("aiMotionAgent") var aiMotionAgent: String = MotionAgent.api.rawValue
+    @AppStorage("aiGeneralAgent") var aiGeneralAgent: String = GeneralAgent.api.rawValue
     @AppStorage("aiMotionLaunchPath") var aiMotionLaunchPath: String = ""
     @AppStorage("aiMotionExtraArgs") var aiMotionExtraArgs: String = ""
+    @AppStorage("aiAntigravityModel") var aiAntigravityModel: String = ""
+    @AppStorage("aiAntigravityLaunchPath") var aiAntigravityLaunchPath: String = ""
+    @AppStorage("aiAntigravityExtraArgs") var aiAntigravityExtraArgs: String = ""
     @AppStorage("whisperModelPath") var whisperModelPath: String = ""
     @AppStorage("whisperLanguage") var whisperLanguage: String = "auto"
     @AppStorage("transcriptAICorrection") var transcriptAICorrection = true
@@ -32,6 +49,9 @@ final class SettingsStore: ObservableObject {
     /// How many motion tasks may run at once. Rendering is CPU bound, so the default is 1.
     @AppStorage("motionConcurrency") var motionConcurrency = 1
     @AppStorage("aiAutoDescribeMedia") var aiAutoDescribeMedia = false
+
+    @Published private(set) var antigravityAccount: AntigravityCLI.AccountState = .unknown
+    @Published private(set) var antigravityModels: [AntigravityCLI.Model] = []
 
     func transcriptCorrectionConfiguration() -> TranscriptCorrectionConfiguration? {
         guard transcriptAICorrection else { return nil }
@@ -46,12 +66,11 @@ final class SettingsStore: ObservableObject {
     }
 
     private func aiConfiguration() -> TranscriptCorrectionConfiguration? {
-        if selectedAgent == .api {
+        if selectedGeneralAgent == .api {
             guard EmbeddedPi.isAvailable else { return nil }
             return (try? apiConnection()).map(TranscriptCorrectionConfiguration.pi)
         }
-        let launch = resolvedLaunchPath()
-        guard launch != "/bin/true" else { return nil }
+        guard let launch = resolvedClaudePath() else { return nil }
         return TranscriptCorrectionConfiguration(launchPath: launch, arguments: TranscriptCorrectionConfiguration.claudeArguments)
     }
 
@@ -64,14 +83,30 @@ final class SettingsStore: ObservableObject {
     }
 
     var selectedAgent: MotionAgent { MotionAgent(rawValue: aiMotionAgent) ?? .api }
+    var selectedGeneralAgent: GeneralAgent { GeneralAgent(rawValue: aiGeneralAgent) ?? .api }
+
+    var hasAPIConnection: Bool {
+        EmbeddedPi.isAvailable && (try? apiConnection()) != nil
+    }
 
     var hasAIConnection: Bool {
-        selectedAgent == .api ? EmbeddedPi.isAvailable && (try? apiConnection()) != nil : resolvedLaunchPath() != "/bin/true"
+        switch selectedAgent {
+        case .api: hasAPIConnection
+        case .antigravity: resolvedAntigravityPath() != nil
+        case .claude: resolvedClaudePath() != nil
+        }
+    }
+
+    var hasGeneralAIConnection: Bool {
+        switch selectedGeneralAgent {
+        case .api: hasAPIConnection
+        case .claude: resolvedClaudePath() != nil
+        }
     }
 
     /// Describing library media means sending a picture, so only the built-in Pi
     /// route with image input can do it; the Claude CLI path never receives images.
-    var canDescribeMedia: Bool { selectedAgent == .api && aiAPIImages && hasAIConnection }
+    var canDescribeMedia: Bool { selectedGeneralAgent == .api && aiAPIImages && hasAPIConnection }
 
     func apiConnection() throws -> AIConnection {
         try apiConnection(baseURL: aiAPIBaseURL, model: aiAPIModel, key: "")
@@ -93,12 +128,63 @@ final class SettingsStore: ObservableObject {
         objectWillChange.send()
     }
 
-    func resolvedLaunchPath() -> String {
-        guard selectedAgent == .claude else { return "/bin/true" }
+    func resolvedClaudePath() -> String? {
         if URL(fileURLWithPath: aiMotionLaunchPath).lastPathComponent == "claude", Shell.check(aiMotionLaunchPath) {
             return aiMotionLaunchPath
         }
-        return ToolPaths.locate("claude") ?? "/bin/true"
+        return ToolPaths.locate("claude")
+    }
+
+    func resolvedAntigravityPath() -> String? {
+        AntigravityCLI.locate(customPath: aiAntigravityLaunchPath)
+    }
+
+    func resolvedLaunchPath() -> String {
+        switch selectedAgent {
+        case .api: return "/bin/true"
+        case .antigravity: return resolvedAntigravityPath() ?? "/bin/true"
+        case .claude: return resolvedClaudePath() ?? "/bin/true"
+        }
+    }
+
+    func refreshAntigravityAccount() {
+        guard antigravityAccount != .checking else { return }
+        guard let executable = resolvedAntigravityPath() else {
+            antigravityAccount = .unknown
+            antigravityModels = []
+            return
+        }
+        antigravityAccount = .checking
+        Task {
+            let (state, models) = await AntigravityCLI.discoverModels(executable: executable)
+            self.antigravityAccount = state
+            if !models.isEmpty {
+                self.antigravityModels = models
+            } else if state != .signedIn {
+                self.antigravityModels = []
+            }
+        }
+    }
+
+    func signInAntigravity() {
+        guard let executable = resolvedAntigravityPath() else { return }
+        antigravityAccount = .signingIn
+        AntigravityCLI.openTerminalSignIn(executable: executable)
+    }
+
+    func antigravityMotionExtraArguments(source1: URL, source2: URL, brief: URL) -> [String] {
+        guard !aiAntigravityExtraArgs.isEmpty else { return [] }
+        return aiAntigravityExtraArgs
+            .split(separator: "\n")
+            .map {
+                String($0)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .replacingOccurrences(of: "{source1}", with: source1.path)
+                    .replacingOccurrences(of: "{source2}", with: source2.path)
+                    .replacingOccurrences(of: "{brief}", with: brief.path)
+                    .replacingOccurrences(of: "{workdir}", with: source1.deletingLastPathComponent().path)
+            }
+            .filter { !$0.isEmpty }
     }
 
     func motionSkillURL() throws -> URL { try IntegratedMotionSkill.bundledURL() }

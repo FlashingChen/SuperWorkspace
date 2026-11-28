@@ -65,19 +65,157 @@ struct SettingsView: View {
 
     private var motionSettings: some View {
         VStack(alignment: .leading, spacing: Metrics.space4) {
-            settingLabel("AI 连接")
-            StudioChoice(title: "AI 连接", selection: Binding(
+            settingLabel("Remotion 动效")
+            StudioChoice(title: "Remotion 动效", selection: Binding(
                 get: { settings.selectedAgent.rawValue }, set: { settings.aiMotionAgent = $0 }),
                 options: MotionAgent.allCases.map { ($0.rawValue, $0.label) })
-            if settings.selectedAgent == .api { apiSettings }
-            else { cliSettings }
+
+            settingLabel("字幕与剪辑分析")
+            StudioChoice(title: "字幕与剪辑分析", selection: Binding(
+                get: { settings.selectedGeneralAgent.rawValue }, set: { settings.aiGeneralAgent = $0 }),
+                options: GeneralAgent.allCases.map { ($0.rawValue, $0.label) })
+
+            Rectangle().fill(palette.surface2).frame(height: 1)
+            motionBudgetSettings
+
+            if settings.selectedAgent == .antigravity {
+                Rectangle().fill(palette.surface2).frame(height: 1)
+                antigravitySettings
+            }
+            if settings.selectedAgent == .api || settings.selectedGeneralAgent == .api {
+                Rectangle().fill(palette.surface2).frame(height: 1)
+                apiSettings
+            }
+            if settings.selectedAgent == .claude || settings.selectedGeneralAgent == .claude {
+                Rectangle().fill(palette.surface2).frame(height: 1)
+                cliSettings
+            }
         }
+    }
+
+    private var motionBudgetSettings: some View {
+        VStack(alignment: .leading, spacing: Metrics.space3) {
+            HStack(spacing: Metrics.space3) {
+                settingLabel("单条动效时长上限")
+                Menu("\(settings.motionTimeLimitMinutes) 分钟") {
+                    ForEach([20, 30, 40, 60, 90, 120], id: \.self) { minutes in
+                        Button("\(minutes) 分钟") {
+                            settings.motionTimeLimitMinutes = minutes
+                            settings.objectWillChange.send()
+                        }
+                    }
+                }
+                .menuStyle(StudioMenuStyle())
+                .fixedSize()
+                Spacer()
+            }
+            HStack(spacing: Metrics.space3) {
+                settingLabel("同时处理条数")
+                Menu("\(settings.motionConcurrency) 条") {
+                    ForEach([1, 2, 3], id: \.self) { count in
+                        Button("\(count) 条") {
+                            settings.motionConcurrency = count
+                            settings.objectWillChange.send()
+                        }
+                    }
+                }
+                .menuStyle(StudioMenuStyle())
+                .fixedSize()
+                Spacer()
+            }
+        }
+    }
+
+    private var antigravitySettings: some View {
+        VStack(alignment: .leading, spacing: Metrics.space4) {
+            let installed = settings.resolvedAntigravityPath() != nil
+            HStack(spacing: Metrics.space3) {
+                settingLabel("Antigravity CLI")
+                Text(antigravityStatusLabel(installed: installed))
+                    .font(.studio(.small))
+                    .foregroundStyle(settings.antigravityAccount == .signedOut ? palette.danger : palette.textSecondary)
+                Spacer()
+                if installed {
+                    if settings.antigravityAccount == .checking {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        if settings.antigravityAccount == .signedOut || settings.antigravityAccount == .unknown {
+                            Button("登录") { settings.signInAntigravity() }
+                                .buttonStyle(StudioButtonStyle(size: .compact))
+                        }
+                        Button(settings.antigravityAccount == .signingIn ? "已登录" : "刷新") {
+                            settings.refreshAntigravityAccount()
+                        }
+                        .buttonStyle(StudioButtonStyle(kind: .quiet, size: .compact))
+                    }
+                }
+            }
+            if installed {
+                HStack(spacing: Metrics.space3) {
+                    settingLabel("模型")
+                    Menu(selectedAntigravityModelTitle) {
+                        Button("CLI 默认") {
+                            settings.aiAntigravityModel = ""
+                            settings.objectWillChange.send()
+                        }
+                        ForEach(settings.antigravityModels) { model in
+                            Button(model.name) {
+                                settings.aiAntigravityModel = model.slug
+                                settings.objectWillChange.send()
+                            }
+                        }
+                    }
+                    .menuStyle(StudioMenuStyle())
+                    .fixedSize()
+                    Spacer()
+                }
+            }
+            DisclosureGroup("高级配置") {
+                field("执行文件", text: $settings.aiAntigravityLaunchPath, prompt: "留空自动寻找 agy")
+                VStack(alignment: .leading, spacing: Metrics.space2) {
+                    settingLabel("追加参数（每行一个）")
+                    TextField("追加参数", text: $settings.aiAntigravityExtraArgs, axis: .vertical)
+                        .lineLimit(3...6)
+                }
+                Text("支持 {source1}、{source2}、{brief} 和 {workdir}。")
+                    .font(.studio(.small)).foregroundStyle(palette.textSecondary)
+            }
+            Text("仅用于 Remotion 动效，通过本机 agy 官方流式接口调用，不读取或转发账号凭据。")
+                .font(.studio(.small)).foregroundStyle(palette.textSecondary)
+        }
+        .onAppear {
+            if settings.resolvedAntigravityPath() != nil,
+               settings.antigravityAccount == .unknown || settings.antigravityModels.isEmpty {
+                settings.refreshAntigravityAccount()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            if settings.antigravityAccount == .signingIn {
+                settings.refreshAntigravityAccount()
+            }
+        }
+    }
+
+    private func antigravityStatusLabel(installed: Bool) -> String {
+        guard installed else { return "未找到 agy" }
+        switch settings.antigravityAccount {
+        case .signedIn: return "已连接"
+        case .signedOut: return "未登录"
+        case .signingIn: return "等待终端登录"
+        case .checking: return "检查中…"
+        case .unknown: return "已安装"
+        }
+    }
+
+    private var selectedAntigravityModelTitle: String {
+        let slug = settings.aiAntigravityModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !slug.isEmpty else { return "CLI 默认" }
+        return settings.antigravityModels.first { $0.slug == slug }?.name ?? slug
     }
 
     private var cliSettings: some View {
         VStack(alignment: .leading, spacing: Metrics.space4) {
-            LabeledContent("执行器", value: settings.resolvedLaunchPath() == "/bin/true" ? "未找到 Claude CLI" : "已找到")
-            LabeledContent("动效风格", value: "内置教程动效")
+            LabeledContent("Claude CLI", value: settings.resolvedClaudePath() == nil ? "未找到" : "已找到")
             DisclosureGroup("高级配置") {
                 field("执行文件", text: $settings.aiMotionLaunchPath, prompt: "留空自动寻找")
                 VStack(alignment: .leading, spacing: Metrics.space2) {
@@ -88,8 +226,6 @@ struct SettingsView: View {
                 Text("支持 {source1}、{source2}、{brief} 和 {workdir}。")
                     .font(.studio(.small)).foregroundStyle(palette.textSecondary)
             }
-            Text("动效处理期间可以使用原片。完成后可在时间线中对比并选择。")
-                .font(.studio(.small)).foregroundStyle(palette.textSecondary)
         }
     }
 
@@ -119,38 +255,6 @@ struct SettingsView: View {
                     get: { settings.aiAutoDescribeMedia },
                     set: { settings.aiAutoDescribeMedia = $0; settings.objectWillChange.send() }))
                     .disabled(!settings.canDescribeMedia)
-                HStack(spacing: Metrics.space3) {
-                    settingLabel("单条动效时长上限")
-                    Menu("\(settings.motionTimeLimitMinutes) 分钟") {
-                        ForEach([20, 30, 40, 60, 90, 120], id: \.self) { minutes in
-                            Button("\(minutes) 分钟") {
-                                settings.motionTimeLimitMinutes = minutes
-                                settings.objectWillChange.send()
-                            }
-                        }
-                    }
-                    .menuStyle(StudioMenuStyle())
-                    .fixedSize()
-                    Spacer()
-                }
-                Text("到达上限后可选择延长继续或停止；工具调用次数到点直接中止。")
-                    .font(.studio(.small)).foregroundStyle(palette.textSecondary)
-                HStack(spacing: Metrics.space3) {
-                    settingLabel("同时处理条数")
-                    Menu("\(settings.motionConcurrency) 条") {
-                        ForEach([1, 2, 3], id: \.self) { count in
-                            Button("\(count) 条") {
-                                settings.motionConcurrency = count
-                                settings.objectWillChange.send()
-                            }
-                        }
-                    }
-                    .menuStyle(StudioMenuStyle())
-                    .fixedSize()
-                    Spacer()
-                }
-                Text("动效渲染吃满 CPU，并行会互相抢核心；素材多时再调高。")
-                    .font(.studio(.small)).foregroundStyle(palette.textSecondary)
                 if !settings.canDescribeMedia {
                     Text("需要开启「模型支持图片」，并保存可用的 API 连接。")
                         .font(.studio(.small)).foregroundStyle(palette.textSecondary)
@@ -278,12 +382,12 @@ struct SettingsView: View {
                 options: [("zh", "中文"), ("en", "English"), ("auto", "自动检测")])
             Toggle("AI 校正字幕", isOn: $settings.transcriptAICorrection)
             if settings.transcriptAICorrection {
-                Text(!settings.hasAIConnection ? "未配置 AI 连接，当前仅使用本地字幕。" : "校正会将字幕和提取的画面文字发送给已配置的模型服务。")
+                Text(!settings.hasGeneralAIConnection ? "未配置 AI 连接，当前仅使用本地字幕。" : "校正会将字幕和提取的画面文字发送给已配置的模型服务。")
                     .font(.studio(.small)).foregroundStyle(palette.textSecondary)
             }
             Toggle("AI 复核字幕", isOn: $settings.transcriptAIReview)
             if settings.transcriptAIReview {
-                Text(!settings.hasAIConnection ? "未配置 AI 连接，复核只做时长、重叠与边界检查。" : "复核会按素材重建整条字幕轨：改错字、重新断句、调整时间。字幕长短与断句由模型按语义决定，整次可一步撤销。")
+                Text(!settings.hasGeneralAIConnection ? "未配置 AI 连接，复核只做时长、重叠与边界检查。" : "复核会按素材重建整条字幕轨：改错字、重新断句、调整时间。字幕长短与断句由模型按语义决定，整次可一步撤销。")
                     .font(.studio(.small)).foregroundStyle(palette.textSecondary)
             }
             DisclosureGroup("高级配置") {

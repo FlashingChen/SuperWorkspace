@@ -890,7 +890,14 @@ final class AppState: ObservableObject {
                     }
                 }
                 // Pre-analyse the picture and hand over frames, so the agent never scans the clip itself.
-                let supportsImages = settings.selectedAgent == .api && settings.aiAPIImages
+                let supportsInlineImages = settings.selectedAgent == .api && settings.aiAPIImages
+                let supportsStagedImages = settings.selectedAgent == .antigravity
+                let supportsImages = supportsInlineImages || supportsStagedImages
+                let refsDirectory = directory.appendingPathComponent(".sw-refs", isDirectory: true)
+                if supportsStagedImages {
+                    try? FileManager.default.removeItem(at: refsDirectory)
+                    try? FileManager.default.createDirectory(at: refsDirectory, withIntermediateDirectories: true)
+                }
                 motionPhases[id] = "预分析画面"
                 let analysis = await MotionPreanalysis.analyze(source: source)
                 var attachments: [EmbeddedPi.ImageAttachment] = []
@@ -909,12 +916,23 @@ final class AppState: ObservableObject {
                     let policy = MotionPreanalysis.MotionPolicy.standard
                     description += "\n" + policy.prompt(for: analysis)
                     if supportsImages {
-                        attachments = analysis.keyframes.prefix(12).map {
-                            EmbeddedPi.ImageAttachment(data: $0.data, mimeType: "image/jpeg")
-                        }
-                        if !analysis.keyframes.isEmpty {
-                            let times = analysis.keyframes.prefix(12).map { String(format: "%.1f", $0.time) }.joined(separator: "、")
-                            description += "\n附件依次为 t=\(times)s 的源帧，每个画面分区一张，无需再抽帧。"
+                        let selectedFrames = Array(analysis.keyframes.prefix(12))
+                        if supportsInlineImages {
+                            attachments = selectedFrames.map {
+                                EmbeddedPi.ImageAttachment(data: $0.data, mimeType: "image/jpeg")
+                            }
+                            if !selectedFrames.isEmpty {
+                                let times = selectedFrames.map { String(format: "%.1f", $0.time) }.joined(separator: "、")
+                                description += "\n附件依次为 t=\(times)s 的源帧，每个画面分区一张，无需再抽帧。"
+                            }
+                        } else if supportsStagedImages, !selectedFrames.isEmpty {
+                            var stagedRefs: [String] = []
+                            for (idx, frame) in selectedFrames.enumerated() {
+                                let name = String(format: "frame-%02d.jpg", idx + 1)
+                                try? frame.data.write(to: refsDirectory.appendingPathComponent(name), options: .atomic)
+                                stagedRefs.append(".sw-refs/\(name) (t=\(String(format: "%.1f", frame.time))s)")
+                            }
+                            description += "\n源视频关键帧已保存在工作目录，按需直接查看，无需再抽帧：" + stagedRefs.joined(separator: "、")
                         }
                     }
                 }
@@ -969,12 +987,22 @@ final class AppState: ObservableObject {
                             + optionalAssets.map(formatAssetLine).joined(separator: "\n")
                     }
                     if !libraryImages.isEmpty {
-                        let base = attachments.count
-                        description += "\n附件第 \(base + 1)–\(base + libraryImages.count) 张依次对应上面标注的素材预览图 #1–#\(libraryImages.count)。"
-                        attachments += libraryImages
+                        if supportsInlineImages {
+                            let base = attachments.count
+                            description += "\n附件第 \(base + 1)–\(base + libraryImages.count) 张依次对应上面标注的素材预览图 #1–#\(libraryImages.count)。"
+                            attachments += libraryImages
+                        } else if supportsStagedImages {
+                            var stagedLibraryRefs: [String] = []
+                            for (idx, image) in libraryImages.enumerated() {
+                                let name = String(format: "library-%02d.jpg", idx + 1)
+                                try? image.data.write(to: refsDirectory.appendingPathComponent(name), options: .atomic)
+                                stagedLibraryRefs.append("#\(idx + 1) → .sw-refs/\(name)")
+                            }
+                            description += "\n素材预览图已保存在工作目录：" + stagedLibraryRefs.joined(separator: "、")
+                        }
                     }
                 }
-                if supportsImages, attachments.isEmpty {
+                if supportsInlineImages, attachments.isEmpty {
                     motionPhases[id] = "提取关键帧"
                     let frames = await MotionInput.keyframes(from: source)
                     attachments = frames.map { EmbeddedPi.ImageAttachment(data: $0.data, mimeType: "image/jpeg") }
@@ -1026,11 +1054,12 @@ final class AppState: ObservableObject {
                 // (capped at 240 minutes), so the shell timeout must outlive that.
                 let maxBudgetMinutes = min(240, max(budget.minutes, budget.minutes * 3))
                 let motionTimeout = TimeInterval(maxBudgetMinutes * 60 + 600)
-                if settings.selectedAgent == .api {
+                switch settings.selectedAgent {
+                case .api:
                     let connection = try settings.apiConnection()
                     let request = try settings.motionRequest(source1: source, source2: temporary, brief: brief)
                     let reply = try await EmbeddedPi.run(connection, system: request.system, prompt: request.prompt,
-                                                 directory: directory, tools: true, images: supportsImages,
+                                                 directory: directory, tools: true, images: supportsInlineImages,
                                                  attachments: attachments,
                                                  timeout: motionTimeout,
                                                  budgetMinutes: budget.minutes, budgetToolCalls: budget.toolCalls,
@@ -1038,7 +1067,24 @@ final class AppState: ObservableObject {
                                                  webSearch: true,
                                                  onProgress: onProgress)
                     try? reply.data(using: .utf8)?.write(to: directory.appendingPathComponent("agent-response.txt"), options: .atomic)
-                } else {
+                case .antigravity:
+                    guard let launch = settings.resolvedAntigravityPath() else {
+                        throw ShellError.exitStatus(-1, "未找到 Antigravity CLI（agy），请先安装并在设置中完成登录。")
+                    }
+                    let request = try settings.motionRequest(source1: source, source2: temporary, brief: brief)
+                    let extra = settings.antigravityMotionExtraArguments(source1: source, source2: temporary, brief: brief)
+                    let reply = try await AntigravityCLI.runMotion(
+                        executable: launch,
+                        model: settings.aiAntigravityModel,
+                        extraArgs: extra,
+                        system: request.system,
+                        prompt: request.prompt,
+                        directory: directory,
+                        timeout: motionTimeout,
+                        onProgress: onProgress
+                    )
+                    try? reply.data(using: .utf8)?.write(to: directory.appendingPathComponent("agent-response.txt"), options: .atomic)
+                case .claude:
                     let launch = settings.resolvedLaunchPath()
                     guard launch != "/bin/true" else { throw ShellError.exitStatus(-1, "请在设置中连接内置 Pi 或配置 Claude。") }
                     let reply = try await Shell.run(launch, arguments: settings.claudeMotionArguments(source1: source, source2: temporary, brief: brief),
