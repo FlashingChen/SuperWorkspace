@@ -189,6 +189,9 @@ struct SettingsView: View {
                 settings.refreshAntigravityAccount()
             }
         }
+        .onChange(of: settings.aiAntigravityLaunchPath) { _, _ in
+            settings.refreshAntigravityAccount()
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             if settings.antigravityAccount == .signingIn {
                 settings.refreshAntigravityAccount()
@@ -256,7 +259,9 @@ struct SettingsView: View {
                     set: { settings.aiAutoDescribeMedia = $0; settings.objectWillChange.send() }))
                     .disabled(!settings.canDescribeMedia)
                 if !settings.canDescribeMedia {
-                    Text("需要开启「模型支持图片」，并保存可用的 API 连接。")
+                    Text(settings.selectedGeneralAgent != .api
+                         ? "需要「字幕与剪辑分析」使用内置 Pi、开启「模型支持图片」并保存可用的 API 连接。"
+                         : "需要开启「模型支持图片」，并保存可用的 API 连接。")
                         .font(.studio(.small)).foregroundStyle(palette.textSecondary)
                 } else if settings.aiAutoDescribeMedia {
                     Text("导入素材时会发送一张截图，用于生成一句中文描述。")

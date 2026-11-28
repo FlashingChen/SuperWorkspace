@@ -96,6 +96,7 @@ final class AntigravityCLITests: XCTestCase {
         read -r line
         echo '{"event":"init","conversation_id":"c-1"}'
         echo '{"event":"step_update","step_update":{"step_index":1,"step_type":"tool","state":"RUNNING","tool_name":"run_command","tool_info":{"parameters":{"CommandLine":"node sw-motion.mjs render"}}}}'
+        echo '{"event":"step_update","step_update":{"step_index":1,"step_type":"tool","state":"RUNNING","tool_name":"run_command","tool_info":{"parameters":{"CommandLine":"node sw-motion.mjs render"}}}}'
         echo '{"event":"step_update","step_update":{"step_index":1,"step_type":"tool","state":"DONE","tool_name":"run_command"}}'
         echo '{"event":"result","result":{"status":"SUCCESS","response":"motion ready"}}'
         """

@@ -901,6 +901,7 @@ final class AppState: ObservableObject {
                 motionPhases[id] = "预分析画面"
                 let analysis = await MotionPreanalysis.analyze(source: source)
                 var attachments: [EmbeddedPi.ImageAttachment] = []
+                var hasSourceKeyframes = false
                 if let analysis {
                     if let json = analysis.json {
                         try? json.write(to: directory.appendingPathComponent("motion-analysis.json"))
@@ -922,6 +923,7 @@ final class AppState: ObservableObject {
                                 EmbeddedPi.ImageAttachment(data: $0.data, mimeType: "image/jpeg")
                             }
                             if !selectedFrames.isEmpty {
+                                hasSourceKeyframes = true
                                 let times = selectedFrames.map { String(format: "%.1f", $0.time) }.joined(separator: "、")
                                 description += "\n附件依次为 t=\(times)s 的源帧，每个画面分区一张，无需再抽帧。"
                             }
@@ -929,10 +931,14 @@ final class AppState: ObservableObject {
                             var stagedRefs: [String] = []
                             for (idx, frame) in selectedFrames.enumerated() {
                                 let name = String(format: "frame-%02d.jpg", idx + 1)
-                                try? frame.data.write(to: refsDirectory.appendingPathComponent(name), options: .atomic)
-                                stagedRefs.append(".sw-refs/\(name) (t=\(String(format: "%.1f", frame.time))s)")
+                                if (try? frame.data.write(to: refsDirectory.appendingPathComponent(name), options: .atomic)) != nil {
+                                    stagedRefs.append(".sw-refs/\(name) (t=\(String(format: "%.1f", frame.time))s)")
+                                }
                             }
-                            description += "\n源视频关键帧已保存在工作目录，按需直接查看，无需再抽帧：" + stagedRefs.joined(separator: "、")
+                            if !stagedRefs.isEmpty {
+                                hasSourceKeyframes = true
+                                description += "\n源视频关键帧已保存在工作目录，按需直接查看，无需再抽帧：" + stagedRefs.joined(separator: "、")
+                            }
                         }
                     }
                 }
@@ -995,20 +1001,36 @@ final class AppState: ObservableObject {
                             var stagedLibraryRefs: [String] = []
                             for (idx, image) in libraryImages.enumerated() {
                                 let name = String(format: "library-%02d.jpg", idx + 1)
-                                try? image.data.write(to: refsDirectory.appendingPathComponent(name), options: .atomic)
-                                stagedLibraryRefs.append("#\(idx + 1) → .sw-refs/\(name)")
+                                if (try? image.data.write(to: refsDirectory.appendingPathComponent(name), options: .atomic)) != nil {
+                                    stagedLibraryRefs.append("#\(idx + 1) → .sw-refs/\(name)")
+                                }
                             }
-                            description += "\n素材预览图已保存在工作目录：" + stagedLibraryRefs.joined(separator: "、")
+                            if !stagedLibraryRefs.isEmpty {
+                                description += "\n素材预览图已保存在工作目录：" + stagedLibraryRefs.joined(separator: "、")
+                            }
                         }
                     }
                 }
-                if supportsInlineImages, attachments.isEmpty {
+                if supportsImages, !hasSourceKeyframes {
                     motionPhases[id] = "提取关键帧"
                     let frames = await MotionInput.keyframes(from: source)
-                    attachments = frames.map { EmbeddedPi.ImageAttachment(data: $0.data, mimeType: "image/jpeg") }
-                    if !frames.isEmpty {
-                        let times = frames.map { String(format: "%.1f", $0.time) }.joined(separator: "、")
-                        description += "\n附件依次为 t=\(times)s 的源帧（取自输入视频，已转正）。"
+                    if supportsInlineImages {
+                        attachments = frames.map { EmbeddedPi.ImageAttachment(data: $0.data, mimeType: "image/jpeg") } + attachments
+                        if !frames.isEmpty {
+                            let times = frames.map { String(format: "%.1f", $0.time) }.joined(separator: "、")
+                            description += "\n附件前 \(frames.count) 张依次为 t=\(times)s 的源帧（取自输入视频，已转正）。"
+                        }
+                    } else if supportsStagedImages, !frames.isEmpty {
+                        var stagedRefs: [String] = []
+                        for (idx, frame) in frames.enumerated() {
+                            let name = String(format: "frame-%02d.jpg", idx + 1)
+                            if (try? frame.data.write(to: refsDirectory.appendingPathComponent(name), options: .atomic)) != nil {
+                                stagedRefs.append(".sw-refs/\(name) (t=\(String(format: "%.1f", frame.time))s)")
+                            }
+                        }
+                        if !stagedRefs.isEmpty {
+                            description += "\n源视频关键帧已保存在工作目录（取自输入视频，已转正）：" + stagedRefs.joined(separator: "、")
+                        }
                     }
                 }
                 try description.write(to: brief, atomically: true, encoding: .utf8)

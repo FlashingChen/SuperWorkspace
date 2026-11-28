@@ -28,6 +28,7 @@ enum AntigravityCLI {
         var toolName: String?
         var toolDetail: String?
         var finishedTool: Bool = false
+        var toolFailed: Bool = false
         var textDelta: String?
         var responseText: String?
         var status: String?
@@ -56,7 +57,13 @@ enum AntigravityCLI {
                     if let params = info?["parameters"] as? [String: Any] {
                         update.toolDetail = Self.compactDetail(from: params)
                     }
-                    if state == "DONE" { update.finishedTool = true }
+                    let upperState = state?.uppercased()
+                    if upperState == "DONE" {
+                        update.finishedTool = true
+                    } else if upperState == "ERROR" || upperState == "FAILED" {
+                        update.finishedTool = true
+                        update.toolFailed = true
+                    }
                 } else if step["step_type"] as? String == "agent_response", let index = update.stepIndex {
                     if let delta = step["text_delta"] as? String, !delta.isEmpty {
                         steps[index, default: ""] += delta
@@ -184,8 +191,11 @@ enum AntigravityCLI {
     /// Opens macOS Terminal so the user can authenticate natively inside `agy`.
     @MainActor
     static func openTerminalSignIn(executable: String) {
-        let escaped = executable.replacingOccurrences(of: "'", with: "'\\''")
-        let script = "tell application \"Terminal\" to do script \"'\(escaped)'\"\ntell application \"Terminal\" to activate"
+        let shellEscaped = "'" + executable.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        let appleScriptEscaped = shellEscaped
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let script = "tell application \"Terminal\" to do script \"\(appleScriptEscaped)\"\ntell application \"Terminal\" to activate"
         NSAppleScript(source: script)?.executeAndReturnError(nil)
     }
 
@@ -205,6 +215,16 @@ enum AntigravityCLI {
         return arguments
     }
 
+    private static func locateNode() -> URL? {
+        if let bundled = EmbeddedPi.bundledNode { return bundled }
+        if let path = ToolPaths.locate("node") { return URL(fileURLWithPath: path) }
+        for dir in searchDirectories {
+            let candidate = "\(dir)/node"
+            if Shell.check(candidate) { return URL(fileURLWithPath: candidate) }
+        }
+        return nil
+    }
+
     static func runMotion(
         executable: String,
         model: String,
@@ -217,7 +237,10 @@ enum AntigravityCLI {
         onProgress: (@Sendable (EmbeddedPi.Progress) -> Void)? = nil
     ) async throws -> String {
         var environment = ProcessInfo.processInfo.environment
-        let node = EmbeddedPi.bundledNode ?? ToolPaths.locate("node").map { URL(fileURLWithPath: $0) }
+        let node = locateNode()
+        if prepareRemotion, node == nil {
+            throw ShellError.exitStatus(-1, "未找到 Node 运行时，无法准备 Remotion 动效环境。")
+        }
         var pathEntries: [String] = []
         if let node {
             let piEnv = EmbeddedPi.runtimeEnvironment(node: node)
@@ -277,12 +300,18 @@ enum AntigravityCLI {
         let state = StreamRunState(onProgress: onProgress)
         stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            guard !data.isEmpty else { return }
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+                return
+            }
             state.ingestStdout(data)
         }
         stderrPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            guard !data.isEmpty else { return }
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+                return
+            }
             state.ingestStderr(data)
         }
 
@@ -300,6 +329,7 @@ enum AntigravityCLI {
             try stdinPipe.fileHandleForWriting.write(contentsOf: payload)
             var closedInput = false
             var resultSeenAt: Date?
+            var terminatedAt: Date?
             while process.isRunning {
                 try Task.checkCancellation()
                 if Date().timeIntervalSince(startedAt) >= timeout {
@@ -310,18 +340,30 @@ enum AntigravityCLI {
                         try? stdinPipe.fileHandleForWriting.close()
                         closedInput = true
                         resultSeenAt = Date()
-                    } else if let seen = resultSeenAt, Date().timeIntervalSince(seen) >= 2.0 {
+                    } else if terminatedAt == nil, let seen = resultSeenAt, Date().timeIntervalSince(seen) >= 2.0 {
                         process.terminate()
+                        terminatedAt = Date()
+                    } else if let term = terminatedAt, Date().timeIntervalSince(term) >= 1.5 {
+                        _ = Darwin.kill(process.processIdentifier, SIGKILL)
+                        try? await Task.sleep(for: .milliseconds(200))
                         break
                     }
                 }
                 try await Task.sleep(for: .milliseconds(150))
             }
         } catch {
-            if process.isRunning { process.terminate() }
+            if process.isRunning {
+                process.terminate()
+                try? await Task.sleep(for: .milliseconds(200))
+                if process.isRunning {
+                    _ = Darwin.kill(process.processIdentifier, SIGKILL)
+                }
+            }
             try? stdinPipe.fileHandleForWriting.close()
             stdoutPipe.fileHandleForReading.readabilityHandler = nil
             stderrPipe.fileHandleForReading.readabilityHandler = nil
+            try? stdoutPipe.fileHandleForReading.close()
+            try? stderrPipe.fileHandleForReading.close()
             throw error
         }
 
@@ -329,22 +371,27 @@ enum AntigravityCLI {
         stdoutPipe.fileHandleForReading.readabilityHandler = nil
         stderrPipe.fileHandleForReading.readabilityHandler = nil
 
-        let trailingOut = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        if !trailingOut.isEmpty { state.ingestStdout(trailingOut) }
-        let trailingErr = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-        if !trailingErr.isEmpty { state.ingestStderr(trailingErr) }
+        if !process.isRunning {
+            let trailingOut = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+            if !trailingOut.isEmpty { state.ingestStdout(trailingOut) }
+            let trailingErr = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+            if !trailingErr.isEmpty { state.ingestStderr(trailingErr) }
+        }
+        try? stdoutPipe.fileHandleForReading.close()
+        try? stderrPipe.fileHandleForReading.close()
         state.finish()
 
+        let exitCode: Int32 = process.isRunning ? -1 : process.terminationStatus
         let outcome = state.outcome()
         if let error = outcome.error {
-            throw ShellError.exitStatus(process.terminationStatus == 0 ? -1 : process.terminationStatus, error)
+            throw ShellError.exitStatus(exitCode == 0 ? -1 : exitCode, error)
         }
         if outcome.status == "SUCCESS" {
             return outcome.response
         }
-        if process.terminationStatus != 0 {
+        if exitCode != 0 {
             let detail = outcome.diagnostics.isEmpty ? "Antigravity CLI 异常退出。" : outcome.diagnostics
-            throw ShellError.exitStatus(process.terminationStatus, String(detail.suffix(2000)))
+            throw ShellError.exitStatus(exitCode, String(detail.suffix(2000)))
         }
         if !outcome.response.isEmpty {
             return outcome.response
@@ -364,6 +411,7 @@ private final class StreamRunState: @unchecked Sendable {
     private var responseValue = ""
     private var errorValue: String?
     private var toolCount = 0
+    private var startedToolSteps = Set<Int>()
 
     init(onProgress: (@Sendable (EmbeddedPi.Progress) -> Void)?) {
         self.onProgress = onProgress
@@ -423,10 +471,13 @@ private final class StreamRunState: @unchecked Sendable {
         }
         if let toolName = update.toolName, !toolName.isEmpty {
             if update.finishedTool {
-                emit(type: "tool_end", name: toolName, ok: true)
+                emit(type: "tool_end", name: toolName, ok: !update.toolFailed)
             } else {
-                toolCount += 1
-                emit(type: "tool", n: toolCount, name: toolName, detail: update.toolDetail)
+                let isNewStep = update.stepIndex.map { startedToolSteps.insert($0).inserted } ?? true
+                if isNewStep {
+                    toolCount += 1
+                    emit(type: "tool", n: toolCount, name: toolName, detail: update.toolDetail)
+                }
             }
         }
         if let text = update.responseText, !text.isEmpty {
