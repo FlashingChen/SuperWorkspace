@@ -136,70 +136,96 @@ enum PersonMattingService {
         writer.startSession(atSourceTime: .zero)
 
         let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
         let request = VNGeneratePersonSegmentationRequest()
         request.qualityLevel = quality.vnLevel
         request.outputPixelFormat = kCVPixelFormatType_OneComponent8
 
         let startTime = CMTime(seconds: clampedStart, preferredTimescale: 600)
+        let bounds = CGRect(x: 0, y: 0, width: width, height: height)
         var frameCount = 0
         var lastPTS = CMTime.invalid
 
-        while let sample = readerOutput.copyNextSampleBuffer() {
-            try Task.checkCancellation()
-            guard let srcBuffer = CMSampleBufferGetImageBuffer(sample) else { continue }
-            var pts = CMTimeSubtract(CMSampleBufferGetPresentationTimeStamp(sample), startTime)
-            if pts < .zero { pts = .zero }
-            if lastPTS.isValid, pts <= lastPTS {
-                pts = CMTimeAdd(lastPTS, CMTime(value: 1, timescale: 600))
-            }
+        func cleanupAfterFailure() {
+            reader.cancelReading()
+            writer.cancelWriting()
+            try? FileManager.default.removeItem(at: outputURL)
+        }
 
-            let handler = VNImageRequestHandler(cvPixelBuffer: srcBuffer, options: [:])
-            try handler.perform([request])
-
-            guard let pool = adaptor.pixelBufferPool else {
-                throw MattingError.encodingFailed("Missing pixelBufferPool")
-            }
-            var outBufferOpt: CVPixelBuffer?
-            let status = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &outBufferOpt)
-            guard status == kCVReturnSuccess, let outBuffer = outBufferOpt else {
-                throw MattingError.encodingFailed("Failed to allocate pixel buffer (\(status))")
-            }
-
-            if let maskBuffer = request.results?.first?.pixelBuffer {
-                let bounds = CGRect(x: 0, y: 0, width: width, height: height)
-                var maskImage = CIImage(cvPixelBuffer: maskBuffer)
-                let scaleX = CGFloat(width) / max(1, maskImage.extent.width)
-                let scaleY = CGFloat(height) / max(1, maskImage.extent.height)
-                maskImage = maskImage
-                    .transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
-                    .clampedToExtent()
-                    .applyingGaussianBlur(sigma: 1.0)
-                    .cropped(to: bounds)
-                ciContext.render(
-                    maskImage,
-                    to: outBuffer,
-                    bounds: bounds,
-                    colorSpace: CGColorSpaceCreateDeviceRGB()
-                )
-            } else {
-                let black = CIImage(color: .black).cropped(to: CGRect(x: 0, y: 0, width: width, height: height))
-                ciContext.render(
-                    black,
-                    to: outBuffer,
-                    bounds: CGRect(x: 0, y: 0, width: width, height: height),
-                    colorSpace: CGColorSpaceCreateDeviceRGB()
-                )
-            }
-
-            while !writerInput.isReadyForMoreMediaData {
+        do {
+            while let sample = readerOutput.copyNextSampleBuffer() {
                 try Task.checkCancellation()
-                try await Task.sleep(for: .milliseconds(2))
+                guard let srcBuffer = CMSampleBufferGetImageBuffer(sample) else { continue }
+                var pts = CMTimeSubtract(CMSampleBufferGetPresentationTimeStamp(sample), startTime)
+                if pts < .zero { pts = .zero }
+                if lastPTS.isValid, pts <= lastPTS {
+                    pts = CMTimeAdd(lastPTS, CMTime(value: 1, timescale: 600))
+                }
+
+                let outBuffer: CVPixelBuffer = try autoreleasepool {
+                    let handler = VNImageRequestHandler(cvPixelBuffer: srcBuffer, options: [:])
+                    try handler.perform([request])
+
+                    guard let pool = adaptor.pixelBufferPool else {
+                        throw MattingError.encodingFailed("Missing pixelBufferPool")
+                    }
+                    var outBufferOpt: CVPixelBuffer?
+                    let status = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &outBufferOpt)
+                    guard status == kCVReturnSuccess, let buffer = outBufferOpt else {
+                        throw MattingError.encodingFailed("Failed to allocate pixel buffer (\(status))")
+                    }
+
+                    if let maskBuffer = request.results?.first?.pixelBuffer {
+                        var maskImage = CIImage(cvPixelBuffer: maskBuffer)
+                        if !preferredTransform.isIdentity {
+                            let rot = CGAffineTransform(
+                                a: preferredTransform.a,
+                                b: -preferredTransform.b,
+                                c: -preferredTransform.c,
+                                d: preferredTransform.d,
+                                tx: 0,
+                                ty: 0
+                            )
+                            let oriented = maskImage.transformed(by: rot)
+                            maskImage = oriented.transformed(
+                                by: CGAffineTransform(translationX: -oriented.extent.minX, y: -oriented.extent.minY)
+                            )
+                        }
+                        let scaleX = CGFloat(width) / max(1, maskImage.extent.width)
+                        let scaleY = CGFloat(height) / max(1, maskImage.extent.height)
+                        maskImage = maskImage
+                            .transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+                            .clampedToExtent()
+                            .applyingGaussianBlur(sigma: 1.0)
+                            .cropped(to: bounds)
+                        ciContext.render(maskImage, to: buffer, bounds: bounds, colorSpace: colorSpace)
+                    } else {
+                        let black = CIImage(color: .black).cropped(to: bounds)
+                        ciContext.render(black, to: buffer, bounds: bounds, colorSpace: colorSpace)
+                    }
+                    return buffer
+                }
+
+                while !writerInput.isReadyForMoreMediaData {
+                    try Task.checkCancellation()
+                    try await Task.sleep(for: .milliseconds(2))
+                }
+                guard adaptor.append(outBuffer, withPresentationTime: pts) else {
+                    throw MattingError.encodingFailed(writer.error?.localizedDescription ?? "append failed")
+                }
+                lastPTS = pts
+                frameCount += 1
             }
-            guard adaptor.append(outBuffer, withPresentationTime: pts) else {
-                throw MattingError.encodingFailed(writer.error?.localizedDescription ?? "append failed")
+
+            if reader.status == .failed {
+                throw MattingError.unreadableVideo(reader.error?.localizedDescription ?? sourceURL.path)
             }
-            lastPTS = pts
-            frameCount += 1
+            guard frameCount > 0 else {
+                throw MattingError.encodingFailed("No video frames decoded in [\(clampedStart), \(clampedEnd)]")
+            }
+        } catch {
+            cleanupAfterFailure()
+            throw error
         }
 
         writerInput.markAsFinished()

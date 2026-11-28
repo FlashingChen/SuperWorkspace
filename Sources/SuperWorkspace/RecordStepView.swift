@@ -337,12 +337,12 @@ private struct MaterialCardStatus: View {
 
     private var status: (symbol: String, title: String, color: Color)? {
         if material.exportState == .failed { return ("exclamationmark.circle", "导出失败", palette.danger) }
-        if material.motionState == .failed { return ("exclamationmark.circle", "动效失败", palette.danger) }
+        if material.motionState == .failed { return ("exclamationmark.circle", "AI 包装失败", palette.danger) }
         if material.transcriptState == .failed { return ("exclamationmark.circle", "字幕失败", palette.danger) }
         if material.transcriptWarning != nil { return ("exclamationmark.triangle", "字幕需复查", palette.warning) }
         if material.exportState == .running { return ("hourglass", "正在导出", palette.textSecondary) }
         if material.motionState == .running || state.motionPhases[material.mediaID] != nil {
-            return ("hourglass", state.motionPhases[material.mediaID] ?? "添加动效中", palette.ai)
+            return ("hourglass", state.motionPhases[material.mediaID] ?? "AI 包装中", palette.ai)
         }
         if let phase = state.taskPhases[material.mediaID] {
             return ("hourglass", phase, palette.textSecondary)
@@ -350,7 +350,7 @@ private struct MaterialCardStatus: View {
         if material.transcriptState == .running {
             return ("hourglass", "处理字幕中", palette.textSecondary)
         }
-        if material.motionState == .queued { return ("hourglass", "动效排队中", palette.ai) }
+        if material.motionState == .queued { return ("hourglass", "AI 包装排队中", palette.ai) }
         return nil
     }
 
@@ -388,8 +388,8 @@ private struct MaterialCardStatus: View {
             Image(systemName: "wand.and.stars")
                 .font(.studio(.small))
                 .foregroundStyle(palette.ai)
-                .help("动效已完成")
-                .accessibilityLabel("动效已完成")
+                .help("AI 包装已完成")
+                .accessibilityLabel("AI 包装已完成")
         }
     }
 

@@ -47,6 +47,7 @@ public final class WorkspaceRecorder {
         onReturn: @escaping (NSRect?) -> Void,
         onStart: @escaping (UUID, Bool, String?, Bool) throws -> URL,
         archivePackageURL: ((UUID) -> URL?)? = nil,
+        isLibraryMode: Bool = false,
         onFinish: @escaping (UUID, Result<URL, Error>) -> Void
     ) {
         if let model {
@@ -55,7 +56,7 @@ public final class WorkspaceRecorder {
             return
         }
         self.isResumeMode = false
-        self.isLibraryMode = false
+        self.isLibraryMode = isLibraryMode
         self.onStart = onStart
         self.archivePackageURL = archivePackageURL
         self.onFinish = onFinish
@@ -105,9 +106,9 @@ public final class WorkspaceRecorder {
             onReturn: onReturn,
             onStart: { id, _, _, _ in try onStart(id) },
             archivePackageURL: nil,
+            isLibraryMode: true,
             onFinish: onFinish
         )
-        self.isLibraryMode = true
     }
 
     /// Resumes an existing SuperWorkspace material directly inside the Rough Cutting Panel.
@@ -214,6 +215,7 @@ public final class WorkspaceRecorder {
         archivePackageURL = nil
         onFinish = nil
         isResumeMode = false
+        isLibraryMode = false
         returnsAfterEditorClose = false
         phaseObserver = nil
         activationObserver = nil

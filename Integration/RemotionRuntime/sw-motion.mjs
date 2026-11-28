@@ -429,7 +429,7 @@ async function ensurePersonMatte(sourcePath, item) {
     await runCmd(bin, [
       'cli', 'matte',
       '--input', sourcePath,
-      '--start', item.start.toFixed(4),
+      '--start', Math.max(0, item.start).toFixed(4),
       '--end', item.end.toFixed(4),
       '--output', tmpFile,
       '--quality', 'balanced',

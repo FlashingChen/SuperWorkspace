@@ -2260,13 +2260,22 @@ final class AppState: ObservableObject {
         let targetURL: URL
         var tempCopy: URL?
         if let preferredName = preferredName?.trimmingCharacters(in: .whitespacesAndNewlines), !preferredName.isEmpty {
-            let safeName = preferredName.hasSuffix(".mp4") ? preferredName : "\(preferredName).mp4"
-            let staging = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-            try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
-            let named = staging.appendingPathComponent(safeName)
-            try FileManager.default.copyItem(at: outputURL, to: named)
-            targetURL = named
-            tempCopy = staging
+            let sanitized = preferredName
+                .replacingOccurrences(of: "/", with: "-")
+                .replacingOccurrences(of: "\\", with: "-")
+                .replacingOccurrences(of: ":", with: "-")
+                .trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+            if !sanitized.isEmpty {
+                let safeName = sanitized.lowercased().hasSuffix(".mp4") ? sanitized : "\(sanitized).mp4"
+                let staging = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+                try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+                let named = staging.appendingPathComponent(safeName)
+                try FileManager.default.copyItem(at: outputURL, to: named)
+                targetURL = named
+                tempCopy = staging
+            } else {
+                targetURL = outputURL
+            }
         } else {
             targetURL = outputURL
         }

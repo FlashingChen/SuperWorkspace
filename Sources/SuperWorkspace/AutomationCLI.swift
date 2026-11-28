@@ -271,7 +271,7 @@ enum AutomationCLI {
         var errorDescription: String? {
             switch self {
             case .usage:
-                "用法: SuperWorkspace cli <status|windows|resize|record start|record stop|project|export>"
+                "用法: SuperWorkspace cli <status|windows|resize|record start|record stop|input|screenshot|matte|project|export>"
             case .appNotRunning:
                 "SuperWorkspace 未运行或控制接口未就绪，请先启动 SuperWorkspace.app。"
             case let .socketFailed(msg):
